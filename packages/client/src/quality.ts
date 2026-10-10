@@ -34,7 +34,7 @@ export interface RtcQualityStats {
   readonly candidateProtocol?: string | null;
 }
 export const simulcastEncodings: readonly RTCRtpEncodingParameters[] = [
-  { active: true, maxBitrate: 500_000, maxFramerate: 30, rid: "q", scaleResolutionDownBy: 3 },
+  { active: true, maxBitrate: 150_000, maxFramerate: 30, rid: "q", scaleResolutionDownBy: 3 },
   { active: true, maxBitrate: 1_500_000, maxFramerate: 30, rid: "h", scaleResolutionDownBy: 1.5 },
   { active: true, maxBitrate: 4_000_000, maxFramerate: 30, rid: "f", scaleResolutionDownBy: 1 },
 ];
@@ -86,6 +86,7 @@ export const normalizeRtcStats = (
     if (
       !fresh(entry) ||
       entry.isRemote ||
+      entry.trackIdentifier === "probator" ||
       entry.active === false ||
       (typeof entry.transportId === "string" &&
         activeTransports.size > 0 &&

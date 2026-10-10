@@ -13,6 +13,7 @@ export type RoomLocalTrackType = Exclude<Track["type"], "data">;
 export interface RoomInputSnapshot {
   readonly source: MediaSourceKind;
   readonly enabled: boolean;
+  readonly pending: boolean;
   readonly muted: boolean;
   readonly deviceId: string | null;
   readonly track: MediaStreamTrack | null;
@@ -30,6 +31,7 @@ export interface RoomInputControl {
 }
 
 export interface RoomScreenSnapshot extends ScreenShareSnapshot {
+  readonly pending: boolean;
   readonly muted: boolean;
   readonly videoPublication: Track | null;
   readonly audioPublication: Track | null;

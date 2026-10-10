@@ -11,13 +11,16 @@ describe("RTC auto quality", () => {
   });
 
   it("normalizes transport and RTP stats", () => {
+    const timestamp = Date.now();
     const entries = new Map<string, Record<string, unknown>>([
       [
         "pair",
         {
+          id: "pair",
           type: "candidate-pair",
+          selected: true,
           state: "succeeded",
-          timestamp: 10,
+          timestamp,
           availableIncomingBitrate: 2_000_000,
           availableOutgoingBitrate: 1_000_000,
           currentRoundTripTime: 0.1,
@@ -26,15 +29,16 @@ describe("RTC auto quality", () => {
       [
         "in",
         {
+          id: "in",
           type: "inbound-rtp",
-          timestamp: 11,
+          timestamp,
           bytesReceived: 500,
           packetsLost: 2,
           packetsReceived: 98,
           jitter: 0.02,
         },
       ],
-      ["out", { type: "outbound-rtp", timestamp: 12, bytesSent: 300 }],
+      ["out", { id: "out", type: "outbound-rtp", timestamp, bytesSent: 300 }],
     ]);
 
     expect(normalizeRtcStats(entries as unknown as RTCStatsReport)).toEqual(
@@ -49,5 +53,19 @@ describe("RTC auto quality", () => {
         roundTripTime: 0.1,
       }),
     );
+  });
+
+  it("excludes the bandwidth probing stream from media loss and jitter", () => {
+    const timestamp = Date.now();
+    const report = new Map<string, Record<string, unknown>>([
+      ["media", { id: "media", type: "inbound-rtp", timestamp, trackIdentifier: "camera", bytesReceived: 500, packetsReceived: 98, packetsLost: 2, jitter: 0.01 }],
+      ["probe", { id: "probe", type: "inbound-rtp", timestamp, trackIdentifier: "probator", bytesReceived: 1000, packetsReceived: 8, packetsLost: 80, jitter: 0.5 }],
+    ]);
+    expect(normalizeRtcStats(report as unknown as RTCStatsReport)).toEqual(expect.objectContaining({
+      bytesReceived: 500,
+      packetsReceived: 98,
+      packetsLost: 2,
+      jitter: 0.01,
+    }));
   });
 });

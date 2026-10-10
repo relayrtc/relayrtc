@@ -70,7 +70,21 @@ export class RoomRtc {
       this.#sendTransport.getStats(),
     ]);
     this.#assertOpen();
-    this.#receiveStats = normalizeRtcStats(receive, this.#receiveStats);
+    const activeTracks = new Set(
+      [...this.#subscriptions.values()].map(({ subscription }) => subscription.track.id),
+    );
+    const activeReceive = new Map<string, RTCStats>();
+    receive.forEach((entry, id) => {
+      const inbound = entry as RTCInboundRtpStreamStats;
+      if (
+        entry.type === "inbound-rtp" &&
+        typeof inbound.trackIdentifier === "string" &&
+        !activeTracks.has(inbound.trackIdentifier)
+      )
+        return;
+      activeReceive.set(id, entry);
+    });
+    this.#receiveStats = normalizeRtcStats(activeReceive as RTCStatsReport, this.#receiveStats);
     this.#sendStats = normalizeRtcStats(send, this.#sendStats);
     return {
       ...this.#receiveStats,

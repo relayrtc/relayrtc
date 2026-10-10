@@ -79,12 +79,14 @@ abstract class MediaControl<Snapshot> {
         "Wait for the current local media operation to finish",
       );
     this.busy = true;
+    this.emit();
     try {
       return await operation(this.revision);
     } catch (error) {
       throw this.report(error);
     } finally {
       this.busy = false;
+      this.emit();
     }
   }
 
@@ -113,7 +115,9 @@ abstract class MediaControl<Snapshot> {
       })
       .finally(() => {
         this.cleanup = undefined;
+        this.emit();
       });
+    this.emit();
     return this.cleanup;
   }
 
@@ -141,6 +145,7 @@ class RoomInput extends MediaControl<RoomInputSnapshot> implements RoomInputCont
     return {
       source: this.source,
       enabled: !!this.#publication,
+      pending: this.busy || !!this.cleanup,
       muted: this.#publication?.muted ?? false,
       deviceId: capture?.deviceId ?? null,
       track: capture?.track ?? null,
@@ -272,6 +277,7 @@ class RoomScreen extends MediaControl<RoomScreenSnapshot> implements RoomScreenC
     const capture = this.#capture?.current;
     return {
       active: !!this.#video && !!capture?.active,
+      pending: this.busy || !!this.cleanup,
       videoTrack: capture?.videoTrack ?? null,
       audioTrack: capture?.audioTrack ?? null,
       muted: this.#video?.muted ?? false,
