@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import { createMediaControlToken } from "@relayrtc/protocol/media-control";
 import type { RoomTerminationConfig } from "./resource-deletion.js";
+import { setAuditContext } from "./audit.js";
 
 export interface RuntimeOperationView extends Record<string, unknown> {
   id: string;
@@ -143,6 +144,7 @@ export async function processRuntimeOperation(
     }
     deadline.throwIfAborted();
     await database.transaction(async (transaction) => {
+      await setAuditContext(transaction, { type: "SYSTEM", name: "Runtime operation worker" }, operation.id);
       await transaction.execute(sql`SET LOCAL lock_timeout = '3s'`);
       await transaction.execute(sql`SET LOCAL statement_timeout = '10s'`);
       const leases = await transaction.execute(sql`SELECT id FROM runtime_operation
