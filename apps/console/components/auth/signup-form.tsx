@@ -36,7 +36,7 @@ export function SignupForm({ callbackURL, errorCallbackURL, loginHref }: { callb
       setPending(false)
       return
     }
-    router.replace(callbackURL)
+    router.replace(result.data?.token ? callbackURL : `/auth/verify-email?email=${encodeURIComponent(validation.data.email)}&redirect=${encodeURIComponent(callbackURL)}`)
     router.refresh()
   }
 
