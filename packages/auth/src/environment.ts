@@ -21,6 +21,7 @@ export interface AuthEnvironment {
   };
   oauthProviders: OAuthProviderCredentials;
   secret: string;
+  skipEmailVerification?: boolean;
   trustedOrigins: string[];
 }
 
@@ -80,6 +81,8 @@ export const readAuthEnvironment = (source: AuthEnvironmentSource): AuthEnvironm
   }
 
   const baseUrl = parseHttpOrigin(readRequired(source, "BETTER_AUTH_URL"), "BETTER_AUTH_URL");
+  const skipEmailVerification = source.SKIP_EMAIL_VERIFICATION?.trim().toLowerCase() ?? "false";
+  if (!["true", "false"].includes(skipEmailVerification)) throw new Error("SKIP_EMAIL_VERIFICATION must be true or false");
   const trustedOrigins = (source.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -104,6 +107,7 @@ export const readAuthEnvironment = (source: AuthEnvironmentSource): AuthEnvironm
       },
     },
     secret,
+    skipEmailVerification: skipEmailVerification === "true",
     trustedOrigins: [...new Set([baseUrl, ...trustedOrigins])],
   };
 };

@@ -204,6 +204,20 @@
       "when": 1791583200015,
       "tag": "0028_quality_event_outbox",
       "breakpoints": false
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791932400000,
+      "tag": "0029_account_security_audit",
+      "breakpoints": false
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792000800000,
+      "tag": "0030_audit_optional_context",
+      "breakpoints": false
     }
   ]
 }

@@ -1,4 +1,6 @@
 export * from "./auth.js";
+export * from "./audit-event.js";
+export * from "./account-security.js";
 export * from "./api-key.js";
 export * from "./organization.js";
 export * from "./participant.js";

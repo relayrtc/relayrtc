@@ -3,6 +3,8 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { OrgGeneral } from '@/components/settings/org-general'
 import { ProfileSettings } from '@/components/settings/profile-settings'
+import { AccountAuditLog } from '@/components/settings/account-audit-log'
+import { AccountSessions } from '@/components/settings/account-sessions'
 import { TeamMembers } from '@/components/settings/team-members'
 import { getAuthRuntime } from '@/lib/auth-server'
 
@@ -30,6 +32,13 @@ export default async function OrgSettingsPage({
       params,
       searchParams,
     ])
+
+  // Personal account data and actions are fetched by the browser from Fastify.
+  // The surrounding console layout continues to enforce shell access.
+  if (query.tab === 'profile') return <ProfileSettings />
+  if (query.tab === 'profile-sessions') return <AccountSessions />
+  if (query.tab === 'profile-audit-logs') return <AccountAuditLog />
+  if (query.tab === 'audit-logs') return <AccountAuditLog organizationId={orgId} />
 
   const runtime = getAuthRuntime()
   const requestHeaders =
@@ -61,19 +70,6 @@ export default async function OrgSettingsPage({
 
   if (!organization) {
     redirect('/')
-  }
-
-  if (query.tab === 'profile') {
-    return (
-      <ProfileSettings
-        user={{
-          id: session.user.id,
-          name: session.user.name,
-          email: session.user.email,
-          image: session.user.image,
-        }}
-      />
-    )
   }
 
   const memberResult =
@@ -116,6 +112,7 @@ export default async function OrgSettingsPage({
           )
         : []
 
+    // eslint-disable-next-line react-hooks/purity -- Evaluate invitation expiry once per server request.
     const now = Date.now()
 
     const pendingInvitations =

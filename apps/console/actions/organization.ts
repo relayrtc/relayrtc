@@ -1,6 +1,7 @@
 "use server"
 
 import { getAuthRuntime } from "@/lib/auth-server"
+import { proxyAccountRequest } from "@/lib/account-proxy"
 import { schema } from "@relayrtc/database"
 import {
   authError,
@@ -9,6 +10,7 @@ import {
   getRuntimeOperation,
   toAuthError,
   transferOrganizationOwnership,
+  setUserAuditContext,
   type TransferOrganizationOwnershipResult,
 } from "@relayrtc/auth"
 import { createOrganizationInputSchema, deleteOrganizationInputSchema, organizationIdSchema, transferOrganizationOwnershipInputSchema } from "@relayrtc/validation"
@@ -71,6 +73,7 @@ export async function deleteOrganizationAction(input: unknown) {
 
     const database = owned.runtime.database
     await database.transaction(async (transaction) => {
+      await setUserAuditContext(transaction, owned.userId)
       const [organization] = await transaction
         .select({ name: schema.organization.name })
         .from(schema.organization)
@@ -107,11 +110,15 @@ export async function createOrganizationAction(input: unknown) {
   if (!validation.success) return { data: null, error: authError("INVALID_ORGANIZATION_NAME") }
 
   try {
-    const runtime = getAuthRuntime()
-    const organization = await runtime.auth.api.createOrganization({
-      body: { name: validation.data.name, slug: generateResourceSlug(validation.data.name, "organization") },
-      headers: await headers(),
-    })
+    const requestHeaders = new Headers(await headers())
+    requestHeaders.set("content-type", "application/json")
+    requestHeaders.set("origin", new URL(process.env.BETTER_AUTH_URL!).origin)
+    const response = await proxyAccountRequest(new Request(new URL("/api/auth/organization/create", process.env.BETTER_AUTH_URL!), {
+      method: "POST", headers: requestHeaders,
+      body: JSON.stringify({ name: validation.data.name, slug: generateResourceSlug(validation.data.name, "organization") }),
+    }))
+    const organization = await response.json() as { id?: string; code?: string; description?: string }
+    if (!response.ok || !organization.id) return { data: null, error: toAuthError(organization, response.status) }
     revalidatePath("/", "layout")
     return { data: { id: organization.id }, error: null }
   } catch (error) {

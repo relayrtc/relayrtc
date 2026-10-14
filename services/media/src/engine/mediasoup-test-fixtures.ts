@@ -37,6 +37,7 @@ const createTransport = (
         close: vi.fn(),
         id: `consumer-${id}-${String(consumerIndex++)}`,
         kind: producer.kind,
+        type: (producer.rtpParameters.encodings?.length ?? 0) > 1 ? "simulcast" : "simple",
         observer: { once: vi.fn() },
         producerId: options.producerId,
         paused: options.paused ?? false,

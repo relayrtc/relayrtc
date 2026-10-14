@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setAuditContext, setUserAuditContext } from "@relayrtc/auth/server";
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
 import {
   createWebhookSecretVault,
@@ -53,6 +54,11 @@ export async function authorizeWebhookScope(
   scope: WebhookScope,
   writing: boolean,
 ) {
+  if (principal.type === "session") await setUserAuditContext(transaction, principal.userId);
+  else {
+    const [key] = await transaction.select({ name: schema.apiKey.name }).from(schema.apiKey).where(eq(schema.apiKey.id, principal.key.keyId));
+    await setAuditContext(transaction, { type: "API_KEY", id: principal.key.keyId, name: key?.name ?? "API key" });
+  }
   const requiredScope = writing ? "webhooks:write" : "webhooks:read";
   if (principal.type === "apiKey") {
     const key = principal.key;

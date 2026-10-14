@@ -20,6 +20,8 @@ import { registerWebhookDeliveryWorker } from "./modules/webhooks/webhook-worker
 import { registerRuntimeOperationWorker } from "./runtime/runtime-operation-worker.js";
 import { registerUsageRetention } from "./modules/reporting/usage-retention-worker.js";
 import { registerUsageAggregation } from "./modules/reporting/usage-aggregation-worker.js";
+import { accountRoutes } from "./modules/account/account.routes.js";
+import { registerAdministrativeAudit } from "./modules/account/administrative-audit.js";
 
 interface BuildAppOptions {
   closeDatabase?: () => Promise<void>;
@@ -42,6 +44,9 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
     },
     logger: {
       level: options.config.logLevel,
+      serializers: {
+        req: (request) => ({ method: request.method, url: (request.url.split("?")[0] ?? "").replace(/(\/api\/auth\/reset-password\/)[^/]+/u, "$1[REDACTED]") }),
+      },
       redact: {
         censor: "[REDACTED]",
         paths: [
@@ -49,6 +54,12 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
           "req.headers.cookie",
           "request.headers.authorization",
           "request.headers.cookie",
+          'res.headers["set-cookie"]',
+          "req.body.password",
+          "req.body.currentPassword",
+          "req.body.newPassword",
+          "req.body.otp",
+          "req.body.code",
         ],
       },
     },
@@ -85,6 +96,10 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
 
   registerErrorHandling(app);
   registerRequestLimits(app, options.config.requestLimits ?? readRequestLimits({}));
+  if (options.config.accountAuth) {
+    registerAdministrativeAudit(app, options.database);
+    void app.register(accountRoutes, { database: options.database, environment: options.config.accountAuth });
+  }
 
   app.addHook("onRequest", async (request, reply) => {
     reply.header("x-request-id", request.id);

@@ -1,5 +1,6 @@
 import type { RelayKitDatabase } from "@relayrtc/database"
 import { schema } from "@relayrtc/database"
+import { setUserAuditContext } from "@relayrtc/auth"
 import type {
   ApiKeyScope,
   CreateApiKeyInput,
@@ -85,6 +86,7 @@ const getLockedProjectAccess = async (
   projectId: string,
   userId: string
 ) => {
+  await setUserAuditContext(transaction, userId)
   const [project] = await transaction
     .select({ id: schema.project.id, organizationId: schema.project.organizationId })
     .from(schema.project)

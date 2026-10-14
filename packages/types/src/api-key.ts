@@ -33,7 +33,7 @@ export interface ApiKey {
   readonly lastUsedAt: IsoDateTime | null;
   readonly expiresAt: IsoDateTime | null;
   readonly revokedAt: IsoDateTime | null;
-  readonly createdBy: UserId;
+  readonly createdBy: UserId | null;
 }
 
 export interface StoredApiKey extends ApiKey {

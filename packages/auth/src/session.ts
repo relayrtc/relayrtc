@@ -1,6 +1,7 @@
 export const sessionExpiresInSeconds = 60 * 60 * 24 * 7;
 export const sessionUpdateAgeSeconds = 60 * 60 * 24;
-export const sessionFreshAgeSeconds = 60 * 15;
+// Better Auth uses zero to disable recent-login requirements for valid sessions.
+export const sessionFreshAgeSeconds = 0;
 
 export const relayKitSessionPolicy = {
   cookieCache: {

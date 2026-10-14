@@ -8,7 +8,7 @@ import type {
   UpdateEnvironmentInput,
   UpdateProjectInput,
 } from "@relayrtc/validation"
-import { generateResourceSlug } from "@relayrtc/auth"
+import { generateResourceSlug, setUserAuditContext } from "@relayrtc/auth"
 import {
   getResourceDeletionImpact,
   getRuntimeOperation,
@@ -74,6 +74,7 @@ const getLockedMembership = async (
   organizationId: string,
   userId: string
 ) => {
+  await setUserAuditContext(transaction, userId)
   const [organization] = await transaction.select({ status: schema.organization.status })
     .from(schema.organization).where(eq(schema.organization.id, organizationId)).for("share")
   if (organization?.status !== "active") return undefined

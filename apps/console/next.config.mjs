@@ -6,6 +6,7 @@ const nextConfig = {
   outputFileTracingRoot: path.join(import.meta.dirname, '../..'),
   poweredByHeader: false,
   images: { unoptimized: true },
+  logging: { incomingRequests: { ignore: [/^\/api\/auth\//, /^\/auth\/reset-password/] } },
   async redirects() {
     return [
       {

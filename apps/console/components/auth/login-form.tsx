@@ -37,8 +37,16 @@ export function LoginForm({ callbackURL, errorCallbackURL, initialError, signUpH
     setPending(true)
     const result = await authClient.signIn.email(validation.data)
     if (result.error) {
+      if (result.error.code === 'EMAIL_NOT_VERIFIED') {
+        router.replace(`/auth/verify-email?email=${encodeURIComponent(validation.data.email)}&redirect=${encodeURIComponent(callbackURL)}`)
+        return
+      }
       setError(toAuthError(result.error))
       setPending(false)
+      return
+    }
+    if (result.data && 'twoFactorRedirect' in result.data && result.data.twoFactorRedirect) {
+      router.replace(`/auth/two-factor?redirect=${encodeURIComponent(callbackURL)}`)
       return
     }
     router.replace(callbackURL)
@@ -57,6 +65,7 @@ export function LoginForm({ callbackURL, errorCallbackURL, initialError, signUpH
           <AuthErrorMessage error={error} />
           <div className="grid gap-2"><Label htmlFor="email">Email</Label><Input id="email" name="email" type="email" autoComplete="email" placeholder="you@company.com" className="h-11 rounded-xl px-3.5" required /></div>
           <div className="grid gap-2"><Label htmlFor="password">Password</Label><PasswordInput id="password" name="password" autoComplete="current-password" minLength={8} maxLength={128} required /></div>
+          <Link href="/auth/forgot-password" className="text-right text-sm text-muted-foreground underline underline-offset-4">Forgot password?</Link>
           <Button type="submit" size="lg" disabled={pending} className="h-11 rounded-full text-sm">{pending ? <LoaderCircle className="animate-spin" /> : null}{pending ? 'Please wait…' : 'Sign in'}</Button>
         </form>
       </div>
