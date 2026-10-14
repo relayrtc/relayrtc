@@ -15,7 +15,7 @@ import {
   type RuntimeOperationView,
   type ResourceDeletionImpact,
 } from "@relayrtc/auth"
-import { and, asc, desc, eq, sql } from "drizzle-orm"
+import { and, asc, desc, eq, notInArray, sql } from "drizzle-orm"
 
 import {
   projectError,
@@ -127,7 +127,7 @@ export const listOrganizationProjects = async (
     const projects = await transaction
       .select()
       .from(schema.project)
-      .where(eq(schema.project.organizationId, organizationId))
+      .where(and(eq(schema.project.organizationId, organizationId), notInArray(schema.project.status, ["deleting", "deleted"])))
       .orderBy(desc(schema.project.createdAt))
 
     return success(projects)

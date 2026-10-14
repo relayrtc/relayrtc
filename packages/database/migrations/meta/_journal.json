@@ -218,6 +218,13 @@
       "when": 1792000800000,
       "tag": "0030_audit_optional_context",
       "breakpoints": false
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792011600000,
+      "tag": "0031_legacy_deletion_audit",
+      "breakpoints": false
     }
   ]
 }
