@@ -1,6 +1,6 @@
 'use client'
 
-import { ChartNoAxesCombined, ChevronLeft, MailPlus, SlidersHorizontal, UserRound, Users } from 'lucide-react'
+import { ChartNoAxesCombined, ChevronLeft, History, Monitor, SlidersHorizontal, UserRound, Users } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
@@ -13,6 +13,7 @@ import { routes } from '@/lib/routes'
 export const orgSettingsTabs = [
   { value: 'general', label: 'General', icon: SlidersHorizontal },
   { value: 'team-members', label: 'Team Members', icon: Users },
+  { value: 'audit-logs', label: 'Audit Logs', icon: History },
 ] as const
 
 type Props = {
@@ -48,6 +49,8 @@ function SettingsSidebar({ orgId, backHref, organizations, user, onNavigate }: O
             <LetterAvatar name={user.name} className="rounded-full" />
             <span className="truncate">{user.name}</span>
           </Link>
+          <NavItem href={routes.orgSettings(orgId, 'profile-sessions')} label="Sessions" icon={Monitor} active={!onUsagePage && activeTab === 'profile-sessions'} {...(onNavigate ? { onNavigate } : {})} />
+          <NavItem href={routes.orgSettings(orgId, 'profile-audit-logs')} label="Audit Logs" icon={History} active={!onUsagePage && activeTab === 'profile-audit-logs'} {...(onNavigate ? { onNavigate } : {})} />
         </NavSection>
       </nav>
       <div className="flex items-center gap-2 border-t px-2 pt-3 text-xs text-muted-foreground"><UserRound className="size-4" /><span className="truncate">{user.email}</span></div>
