@@ -101,4 +101,17 @@ jobs:
             --label "org.opencontainers.image.version=$version" \
             --tag "$image" \
             "$BUILD_CONTEXT"
-          docker push "$image"
+          # Registry uploads can fail after some layers have been accepted.
+          # Retry the same built image, and still fail if publishing never succeeds.
+          for attempt in 1 2 3; do
+            if docker push "$image"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              printf 'Image publishing failed after %s attempts: %s\n' "$attempt" "$image" >&2
+              exit 1
+            fi
+            delay=$((attempt * 15))
+            printf 'Push attempt %s failed; retrying in %s seconds\n' "$attempt" "$delay" >&2
+            sleep "$delay"
+          done
