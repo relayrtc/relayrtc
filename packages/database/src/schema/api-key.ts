@@ -22,8 +22,7 @@ export const apiKey = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdBy: text("created_by")
-      .notNull()
-      .references(() => user.id),
+      .references(() => user.id, { onDelete: "set null" }),
   },
   (table) => [
     index("api_key_project_id_idx").on(table.projectId),

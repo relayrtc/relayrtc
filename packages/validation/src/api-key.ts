@@ -69,7 +69,7 @@ const apiKeyShape = {
   lastUsedAt: isoDateTimeSchema.nullable(),
   expiresAt: isoDateTimeSchema.nullable(),
   revokedAt: isoDateTimeSchema.nullable(),
-  createdBy: userIdSchema,
+  createdBy: userIdSchema.nullable(),
 };
 
 function hasValidApiKeyAccess(value: {
