@@ -10,4 +10,7 @@ export * from "./resource-deletion.js";
 export * from "./ownership.js";
 export * from "./session.js";
 export * from "./server.js";
+export * from "./audit.js";
+export * from "./account-email.js";
+export * from "./account-delivery.js";
 export * from "./runtime-operations.js";

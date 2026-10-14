@@ -2,6 +2,7 @@ import { schema, type RelayKitDatabase } from "@relayrtc/database";
 import { APIError } from "better-auth/api";
 import { and, eq, inArray } from "drizzle-orm";
 import { generateResourceSlug } from "./resource-slug.js";
+import { recordAudit, setUserAuditContext } from "./audit.js";
 
 import { authError, type AuthError, type AuthErrorCode } from "./errors.js";
 
@@ -78,6 +79,7 @@ export const transferOrganizationOwnership = async ({
 }: TransferOrganizationOwnershipOptions): Promise<TransferOrganizationOwnershipResult> => {
   try {
     return await database.transaction(async (transaction) => {
+      await setUserAuditContext(transaction, currentUserId);
       const organizations = await transaction
         .select({ id: schema.organization.id })
         .from(schema.organization)
@@ -139,6 +141,10 @@ export const transferOrganizationOwnership = async ({
           ),
         );
 
+      const [actor] = await transaction.select({ name: schema.user.name }).from(schema.user).where(eq(schema.user.id, currentUserId));
+      await recordAudit(transaction, { actor: { type: "USER", id: currentUserId, name: actor?.name ?? "User" },
+        organizationId, resourceType: "organization", resourceId: organizationId,
+        action: "organization.ownership_transferred", outcome: "SUCCESS" });
       return {
         data: {
           newOwnerMemberId: targetMember.id,
