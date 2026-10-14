@@ -1,4 +1,3 @@
-import { getAuthRuntime } from '@/lib/auth-server'
-
-const handleAuthRequest = (request: Request) => getAuthRuntime().handler(request)
+import { proxyAccountRequest } from '@/lib/account-proxy'
+const handleAuthRequest = proxyAccountRequest
 export { handleAuthRequest as GET, handleAuthRequest as POST }
