@@ -26,8 +26,12 @@ const redirectSchema = z
     }
 
     try {
+      const url = new URL(value, "https://app.relayrtc.com")
+      const pathname = decodeURIComponent(url.pathname)
+      // Cleanup belongs to a previous account/resource, never a post-auth destination.
+      if (pathname === "/cleanup" || pathname.startsWith("/cleanup/")) return false
       return (
-        new URL(value, "https://app.relayrtc.com").origin ===
+        url.origin ===
         "https://app.relayrtc.com"
       )
     } catch {

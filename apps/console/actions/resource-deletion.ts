@@ -31,7 +31,7 @@ export async function getDeletionOperationAction(input: unknown) {
     const observers = Array.isArray(operation.payload.observers) ? operation.payload.observers : []
     const authorized = roles.includes('owner') || (parsed.data.kind !== 'organization' && roles.includes('admin'))
       || (operation.status === 'completed' && (operation.payload.requestedBy === session.user.id || observers.includes(session.user.id)))
-    if (!authorized) return { data: null, error: 'You do not have access to this deletion.' }
+    if (!authorized) return { data: null, error: 'You do not have access to this deletion.', code: 'DELETION_ACCESS_DENIED' as const }
     if (operation.status !== 'completed') {
       await runtime.database.execute(sql`UPDATE runtime_operation SET payload = payload || jsonb_build_object('requestedBy', ${session.user.id}::text)
         WHERE id = ${operationId} AND NOT (payload ? 'requestedBy')`)
