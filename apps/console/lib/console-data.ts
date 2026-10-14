@@ -4,6 +4,8 @@ import { getProjectDetails, listOrganizationProjects } from '@/lib/projects/proj
 import type { ConsoleInvitation, ConsoleOrganization, ConsoleOrganizationMember } from '@/lib/console-types'
 import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
+import { schema } from '@relayrtc/database'
+import { eq } from 'drizzle-orm'
 
 export async function requireConsoleSession(redirectPath = '/') {
   const session = await getCurrentSession()
@@ -29,6 +31,10 @@ export async function requireOrganization(orgId: string) {
   const organizations = await getConsoleOrganizations()
   const organization = organizations.find((candidate) => candidate.id === orgId)
   if (!organization) notFound()
+  const [state] = await getAuthRuntime().database.select({ status: schema.organization.status })
+    .from(schema.organization).where(eq(schema.organization.id, orgId))
+  if (!state) notFound()
+  if (state.status === 'deleting') redirect(`/cleanup/organization/${encodeURIComponent(orgId)}`)
   return { session, organizations, organization }
 }
 
@@ -47,6 +53,7 @@ export async function requireProject(orgId: string, projectId: string) {
     projectId,
   )
   if (!result.data || result.data.project.organizationId !== orgId) notFound()
+  if (result.data.project.status === 'deleting') redirect(`/cleanup/project/${encodeURIComponent(projectId)}`)
   const projects = await getOrganizationProjects(orgId, session.user.id)
   return {
     session,
