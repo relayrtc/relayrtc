@@ -5,6 +5,7 @@ RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/console/package.json apps/console/package.json
 COPY packages/auth/package.json packages/auth/package.json
+COPY packages/client/package.json packages/client/package.json
 COPY packages/database/package.json packages/database/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/types/package.json packages/types/package.json
