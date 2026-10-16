@@ -1,0 +1,37 @@
+groups:
+  - name: relayrtc-streaming
+    rules:
+      - alert: StreamingControlUnavailable
+        expr: up{job=~"streaming-runtime|streaming-worker|streaming-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Streaming control or media service is unavailable
+      - alert: StreamingQueueStalled
+        expr: relayrtc_streaming_queue_delay_seconds > 30
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming source is waiting for a worker
+      - alert: StreamingLeaseExpired
+        expr: relayrtc_streaming_expired_leases > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming worker leases remain expired
+      - alert: StreamingEncoderFailures
+        expr: increase(relayrtc_streaming_encoder_failures_total[5m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming encoder is repeatedly failing
+      - alert: StreamingCleanupBacklog
+        expr: relayrtc_streaming_expired_objects > 100 or relayrtc_streaming_pending_uploads > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming media cleanup or uploads are stalled
