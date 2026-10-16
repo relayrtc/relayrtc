@@ -225,6 +225,13 @@
       "when": 1792011600000,
       "tag": "0031_legacy_deletion_audit",
       "breakpoints": false
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792108800000,
+      "tag": "0032_streaming_foundation",
+      "breakpoints": false
     }
   ]
 }
