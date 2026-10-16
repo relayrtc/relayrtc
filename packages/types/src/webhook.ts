@@ -9,6 +9,12 @@ import type {
 } from "./common.js";
 
 export const webhookEventTypes = [
+  "stream.created",
+  "stream.starting",
+  "stream.live",
+  "stream.reconnecting",
+  "stream.ended",
+  "stream.failed",
   "room.created",
   "room.started",
   "room.ended",
@@ -92,7 +98,12 @@ export interface WebhookDeliveryRecord {
   readonly updatedAt: IsoDateTime;
 }
 
-export const webhookDeliveryAttemptStatuses = ["started", "succeeded", "failed", "abandoned"] as const;
+export const webhookDeliveryAttemptStatuses = [
+  "started",
+  "succeeded",
+  "failed",
+  "abandoned",
+] as const;
 export type WebhookDeliveryAttemptStatus = (typeof webhookDeliveryAttemptStatuses)[number];
 
 export interface WebhookDeliveryAttempt {

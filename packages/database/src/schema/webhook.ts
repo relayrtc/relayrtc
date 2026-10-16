@@ -18,7 +18,7 @@ export const webhookEvent = pgTable("webhook_event", {
   unique().on(table.id, table.projectId, table.environmentId),
   index("webhook_event_retention_idx").on(table.recordedAt),
   check("webhook_event_payload_check", sql`jsonb_typeof(${table.payload}) = 'object' and octet_length(${table.payload}::text) <= 1048576 and octet_length(${table.body}) <= 1048576`),
-  check("webhook_event_type_check", sql`${table.eventType} in ('room.created', 'room.started', 'room.ended', 'participant.joined', 'participant.left', 'participant.reconnected', 'track.published', 'track.unpublished', 'connection.degraded', 'connection.recovered')`),
+  check("webhook_event_type_check", sql`${table.eventType} in ('room.created', 'room.started', 'room.ended', 'participant.joined', 'participant.left', 'participant.reconnected', 'track.published', 'track.unpublished', 'connection.degraded', 'connection.recovered', 'stream.created', 'stream.starting', 'stream.live', 'stream.reconnecting', 'stream.ended', 'stream.failed')`),
 ]);
 
 export const webhookDelivery = pgTable("webhook_delivery", {
@@ -109,7 +109,7 @@ export const webhookEndpoint = pgTable(
     check("webhook_endpoint_secret_version_check", sql`${table.signingSecretVersion} > 0`),
     check(
       "webhook_endpoint_events_check",
-      sql`cardinality(${table.eventTypes}) between 1 and 10 and ${table.eventTypes} <@ ARRAY['room.created', 'room.started', 'room.ended', 'participant.joined', 'participant.left', 'participant.reconnected', 'track.published', 'track.unpublished', 'connection.degraded', 'connection.recovered']::text[] and array_position(${table.eventTypes}, NULL) is null`,
+      sql`cardinality(${table.eventTypes}) between 1 and 16 and ${table.eventTypes} <@ ARRAY['room.created', 'room.started', 'room.ended', 'participant.joined', 'participant.left', 'participant.reconnected', 'track.published', 'track.unpublished', 'connection.degraded', 'connection.recovered', 'stream.created', 'stream.starting', 'stream.live', 'stream.reconnecting', 'stream.ended', 'stream.failed']::text[] and array_position(${table.eventTypes}, NULL) is null`,
     ),
     check(
       "webhook_endpoint_deleted_check",
