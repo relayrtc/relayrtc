@@ -6,6 +6,7 @@ import type { MediaConfig } from "./config/environment.js";
 import type { MediaEngine } from "./engine/media-engine.js";
 import { healthRoutes } from "./routes/health.js";
 import { mediaRoutes } from "./routes/media.js";
+import { streamingMediaRoutes } from "./routes/streaming.js";
 
 interface BuildAppOptions {
   qualityDelivery?: () => Record<string, number>;
@@ -51,6 +52,11 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   });
   if (options.engine) {
     void app.register(mediaRoutes, {
+      engine: options.engine,
+      internalSecret: options.config.internalSecret,
+      prefix: "/internal/v1",
+    });
+    void app.register(streamingMediaRoutes, {
       engine: options.engine,
       internalSecret: options.config.internalSecret,
       prefix: "/internal/v1",
