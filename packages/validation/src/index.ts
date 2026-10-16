@@ -10,3 +10,4 @@ export * from "./usage.js";
 export * from "./reporting.js";
 export * from "./public-usage.js";
 export * from "./webhook.js";
+export * from "./streaming.js";
