@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { enforceCredentialPolicy, readInternalSecret } from "@relayrtc/protocol/credential-policy";
 import { webhookEncryptionKeyValid } from "@relayrtc/protocol/webhook-security";
 import { z } from "zod";
+import { readStreamingConfig, type StreamingConfig } from "../modules/streaming/config.js";
 import { readAuthEnvironment, type AuthEnvironment } from "@relayrtc/auth/server";
 
 export type ApiEnvironmentSource = Readonly<Record<string, string | undefined>>;
@@ -78,6 +79,7 @@ const environmentSchema = z
   .strict();
 
 export interface ApiConfig {
+  streaming?: StreamingConfig;
   accountAuth?: AuthEnvironment;
   requestLimits?: RequestLimits;
   consoleAuth?: { baseUrl: string; secret: string };
@@ -104,6 +106,7 @@ export interface ApiConfig {
 }
 
 export const readApiEnvironment = (source: ApiEnvironmentSource): ApiConfig => {
+  const streaming = readStreamingConfig(source);
   enforceCredentialPolicy(source, [
     "DATABASE_URL",
     "RELAYRTC_INTERNAL_SECRET",
@@ -186,7 +189,10 @@ export const readApiEnvironment = (source: ApiEnvironmentSource): ApiConfig => {
     throw new Error("API_TRUSTED_PROXY_CIDRS is required when API_TRUST_PROXY is true");
   }
   return {
-    ...(source.RELAYRTC_ACCOUNT_API_ENABLED === "true" ? { accountAuth: readAuthEnvironment(source) } : {}),
+    ...(streaming ? { streaming } : {}),
+    ...(source.RELAYRTC_ACCOUNT_API_ENABLED === "true"
+      ? { accountAuth: readAuthEnvironment(source) }
+      : {}),
     ...(authSecret && authUrl ? { consoleAuth: { baseUrl: authUrl, secret: authSecret } } : {}),
     ...([
       "API_REQUESTS_PER_NODE_PER_MINUTE",
