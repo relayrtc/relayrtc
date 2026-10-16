@@ -144,7 +144,11 @@ export async function processRuntimeOperation(
     }
     deadline.throwIfAborted();
     await database.transaction(async (transaction) => {
-      await setAuditContext(transaction, { type: "SYSTEM", name: "Runtime operation worker" }, operation.id);
+      await setAuditContext(
+        transaction,
+        { type: "SYSTEM", name: "Runtime operation worker" },
+        operation.id,
+      );
       await transaction.execute(sql`SET LOCAL lock_timeout = '3s'`);
       await transaction.execute(sql`SET LOCAL statement_timeout = '10s'`);
       const leases = await transaction.execute(sql`SELECT id FROM runtime_operation
@@ -188,6 +192,14 @@ export async function processRuntimeOperation(
             available_at = now() + interval '5 seconds', lease_token = NULL, lease_expires_at = NULL,
             last_error = ${failed ? "Runtime cleanup will retry before deletion completes" : null}, updated_at = now()
             WHERE id = ${operation.id} AND lease_token = ${token}`);
+          return;
+        }
+        const streaming = await transaction.execute(sql`SELECT id FROM streaming_stream
+          WHERE ${scope} AND status <> 'deleted' LIMIT 1`);
+        if (streaming.length !== 0) {
+          await transaction.execute(sql`UPDATE runtime_operation SET status='pending', available_at=now()+interval '5 seconds',
+            lease_token=NULL, lease_expires_at=NULL, last_error='Streaming cleanup is in progress', updated_at=now()
+            WHERE id=${operation.id} AND lease_token=${token}`);
           return;
         }
         const table =
