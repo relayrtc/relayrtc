@@ -9,6 +9,10 @@
     "dist"
   ],
   "exports": {
+    "./streaming-control": {
+      "types": "./dist/streaming-control.d.ts",
+      "import": "./dist/streaming-control.js"
+    },
     "./media-control": {
       "types": "./dist/media-control.d.ts",
       "import": "./dist/media-control.js"
