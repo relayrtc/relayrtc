@@ -1,0 +1,42 @@
+logLevel: warn
+logStructured: true
+authMethod: http
+# MTX_AUTHHTTPADDRESS is supplied by Compose, including private callback Basic auth.
+authHTTPExclude: []
+api: true
+apiAddress: :9997
+metrics: true
+metricsAddress: :9998
+pprof: false
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtmp: true
+rtmpAddress: :1935
+rtmpEncryption: "no"
+rtmpsAddress: :1936
+rtmpServerKey: /certs/rtmps.key
+rtmpServerCert: /certs/rtmps.crt
+hls: true
+hlsAddress: :8888
+hlsAllowOrigins: []
+hlsAlwaysRemux: true
+hlsVariant: lowLatency
+hlsSegmentCount: 10
+hlsSegmentDuration: 2s
+hlsPartDuration: 200ms
+hlsSegmentMaxSize: 16M
+webrtc: true
+webrtcAddress: :8889
+webrtcAllowOrigins: []
+webrtcLocalUDPAddress: :8189
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+srt: false
+moq: false
+playback: false
+pathDefaults:
+  source: publisher
+  overridePublisher: false
+# The control API adds explicit authorized paths; no wildcard admission.
+paths: {}

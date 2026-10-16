@@ -1,0 +1,115 @@
+# Opt in with -f docker-compose.yml -f docker-compose.streaming.yml.
+# Startup/migrations are operator actions. This file is not applied automatically.
+services:
+  api:
+    environment:
+      RELAYRTC_STREAMING_ENABLED: "true"
+      STREAMING_SIGNING_SECRET: ${STREAMING_SIGNING_SECRET:?Set a distinct streaming signing secret}
+      STREAMING_WORKER_KEY: ${STREAMING_WORKER_KEY:?Set a distinct streaming worker key}
+      STREAMING_GATEWAY_KEY: ${STREAMING_GATEWAY_KEY:?Set a distinct streaming gateway key}
+      STREAMING_PUBLIC_ORIGIN: ${STREAMING_PUBLIC_ORIGIN:-http://localhost:8080}
+      STREAMING_GATEWAY_API_ORIGIN: http://streaming-gateway:9997
+      STREAMING_GATEWAY_WHIP_ORIGIN: http://streaming-gateway:8889
+      STREAMING_GATEWAY_HLS_ORIGIN: http://streaming-gateway:8888
+      STREAMING_GATEWAY_RTSP_ORIGIN: rtsp://streaming-gateway:8554
+      STREAMING_PUBLIC_RTMP_ORIGIN: ${STREAMING_PUBLIC_RTMP_ORIGIN:-rtmp://localhost:1935}
+      STREAMING_WORKER_RTP_IP: 172.30.0.20
+      STREAMING_S3_ENDPOINT: http://streaming-storage:9000
+      STREAMING_S3_BUCKET: ${STREAMING_S3_BUCKET:-relayrtc-streaming}
+      STREAMING_S3_REGION: us-east-1
+      STREAMING_S3_ACCESS_KEY: ${STREAMING_S3_ACCESS_KEY:?Set the API storage access key}
+      STREAMING_S3_SECRET_KEY: ${STREAMING_S3_SECRET_KEY:?Set the API storage secret key}
+      STREAMING_ALLOWED_ORIGINS: ${STREAMING_ALLOWED_ORIGINS:-http://localhost:3002,http://localhost:3005}
+      STREAMING_MAX_SESSIONS: ${STREAMING_MAX_SESSIONS:-8}
+      STREAMING_MAX_STREAMS_PER_ENVIRONMENT: ${STREAMING_MAX_STREAMS_PER_ENVIRONMENT:-100}
+    depends_on:
+      streaming-storage-init:
+        condition: service_completed_successfully
+
+  streaming-storage:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/streaming-storage.Dockerfile
+      target: runner
+    environment:
+      MINIO_ROOT_USER: ${STREAMING_STORAGE_ROOT_USER:?Set the storage administrator username}
+      MINIO_ROOT_PASSWORD: ${STREAMING_STORAGE_ROOT_PASSWORD:?Set the storage administrator password}
+    volumes:
+      - streaming-data:/data
+    networks: [relayrtc]
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+
+  streaming-storage-init:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/streaming-storage.Dockerfile
+      target: storage-init
+    environment:
+      MINIO_ROOT_USER: ${STREAMING_STORAGE_ROOT_USER:?Set the storage administrator username}
+      MINIO_ROOT_PASSWORD: ${STREAMING_STORAGE_ROOT_PASSWORD:?Set the storage administrator password}
+      STREAMING_S3_BUCKET: ${STREAMING_S3_BUCKET:-relayrtc-streaming}
+      STREAMING_S3_ACCESS_KEY: ${STREAMING_S3_ACCESS_KEY:?Set the API storage access key}
+      STREAMING_S3_SECRET_KEY: ${STREAMING_S3_SECRET_KEY:?Set the API storage secret key}
+    depends_on:
+      streaming-storage:
+        condition: service_healthy
+    networks: [relayrtc]
+    restart: "no"
+
+  streaming-gateway:
+    image: bluenviron/mediamtx:1.21.2
+    environment:
+      MTX_AUTHHTTPADDRESS: http://gateway:${STREAMING_GATEWAY_KEY:?Set gateway key}@api:8080/internal/v1/streaming/gateway-auth
+      MTX_WEBRTCADDITIONALHOSTS: ${STREAMING_WEBRTC_HOSTS:-127.0.0.1}
+      MTX_RTMPENCRYPTION: ${STREAMING_RTMP_ENCRYPTION:-no}
+    volumes:
+      - ./infrastructure/streaming/mediamtx.yml:/mediamtx.yml:ro
+      - ${STREAMING_CERTS_DIRECTORY:-./.streaming/certs}:/certs:ro
+    ports:
+      - ${STREAMING_INGEST_BIND:-127.0.0.1}:1935:1935
+      - ${STREAMING_INGEST_BIND:-127.0.0.1}:1936:1936
+      - ${STREAMING_INGEST_BIND:-127.0.0.1}:8189:8189/udp
+    networks: [relayrtc]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+
+  streaming-worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/streaming.Dockerfile
+      target: runner
+    environment:
+      STREAMING_API_ORIGIN: http://api:8080
+      STREAMING_WORKER_KEY: ${STREAMING_WORKER_KEY:?Set worker key}
+      STREAMING_WORKER_ID: streaming-local-1
+      STREAMING_RTP_PORT_BASE: 20000
+    networks:
+      relayrtc:
+      rtc-internal:
+        ipv4_address: 172.30.0.20
+    depends_on:
+      streaming-gateway:
+        condition: service_started
+      media:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    cpus: 2
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt: [no-new-privileges:true]
+
+  prometheus:
+    volumes:
+      - ./infrastructure/prometheus/streaming.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/prometheus/streaming.rules.yml:/etc/prometheus/streaming.rules.yml:ro
+      - ./.streaming/worker-key:/run/secrets/streaming-worker-key:ro
+      - ./.streaming/gateway-key:/run/secrets/streaming-gateway-key:ro
+
+volumes:
+  streaming-data:
