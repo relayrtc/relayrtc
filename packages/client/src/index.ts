@@ -19,3 +19,4 @@ export * from "./room-media.js";
 export * from "./room-remote.js";
 export * from "./room-messaging-types.js";
 export * from "./room-credentials.js";
+export * from "./stream-playback.js";
