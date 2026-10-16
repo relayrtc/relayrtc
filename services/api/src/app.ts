@@ -22,6 +22,12 @@ import { registerUsageRetention } from "./modules/reporting/usage-retention-work
 import { registerUsageAggregation } from "./modules/reporting/usage-aggregation-worker.js";
 import { accountRoutes } from "./modules/account/account.routes.js";
 import { registerAdministrativeAudit } from "./modules/account/administrative-audit.js";
+import { streamingRoutes } from "./modules/streaming/routes.js";
+import { streamingMetricsRoutes } from "./modules/streaming/metrics.js";
+import { runtimeRoutes } from "./modules/streaming/runtime-routes.js";
+import { ingestRoutes } from "./modules/streaming/ingest-routes.js";
+import { playbackRoutes } from "./modules/streaming/playback.js";
+import { registerStreamingMaintenance } from "./modules/streaming/lifecycle.js";
 
 interface BuildAppOptions {
   closeDatabase?: () => Promise<void>;
@@ -45,7 +51,13 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
     logger: {
       level: options.config.logLevel,
       serializers: {
-        req: (request) => ({ method: request.method, url: (request.url.split("?")[0] ?? "").replace(/(\/api\/auth\/reset-password\/)[^/]+/u, "$1[REDACTED]") }),
+        req: (request) => ({
+          method: request.method,
+          url: (request.url.split("?")[0] ?? "").replace(
+            /(\/api\/auth\/reset-password\/)[^/]+/u,
+            "$1[REDACTED]",
+          ),
+        }),
       },
       redact: {
         censor: "[REDACTED]",
@@ -98,7 +110,10 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   registerRequestLimits(app, options.config.requestLimits ?? readRequestLimits({}));
   if (options.config.accountAuth) {
     registerAdministrativeAudit(app, options.database);
-    void app.register(accountRoutes, { database: options.database, environment: options.config.accountAuth });
+    void app.register(accountRoutes, {
+      database: options.database,
+      environment: options.config.accountAuth,
+    });
   }
 
   app.addHook("onRequest", async (request, reply) => {
@@ -127,9 +142,17 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
       )
     : undefined;
   const stopWebhookDeliveries = options.config.webhookSigningEncryptionKey
-    ? registerWebhookDeliveryWorker(app, options.database, options.config.webhookSigningEncryptionKey)
+    ? registerWebhookDeliveryWorker(
+        app,
+        options.database,
+        options.config.webhookSigningEncryptionKey,
+      )
+    : undefined;
+  const stopStreaming = options.config.streaming
+    ? registerStreamingMaintenance(app, options.database, options.config.streaming)
     : undefined;
   app.addHook("onClose", async () => {
+    await stopStreaming?.();
     await stopWebhookDeliveries?.();
     await stopTurnAccounting?.();
     await stopRuntimeOperations();
@@ -139,6 +162,30 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   });
 
   void app.register(healthRoutes, { database: options.database });
+  if (options.config.streaming) {
+    const streamingOptions = { database: options.database, config: options.config.streaming };
+    void app.register(streamingRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(runtimeRoutes, {
+      ...streamingOptions,
+      mediaUrl: options.config.mediaInternalUrl,
+      internalSecret: options.config.internalSecret,
+    });
+    void app.register(ingestRoutes, streamingOptions);
+    void app.register(streamingMetricsRoutes, streamingOptions);
+    void app.register(playbackRoutes, streamingOptions);
+  }
   void app.register(webhookRoutes, {
     database: options.database,
     projectRoutes: true,
