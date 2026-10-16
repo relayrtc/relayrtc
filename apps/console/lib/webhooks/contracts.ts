@@ -11,6 +11,14 @@ export const unavailableWebhookError: WebhookError = {
   description: 'Webhooks are temporarily unavailable. Please try again.',
 }
 export const eventGroups: readonly { label: string; events: readonly { value: WebhookEventType; label: string }[] }[] = [
+  { label: 'Streams', events: [
+    { value: 'stream.created', label: 'Stream created' },
+    { value: 'stream.starting', label: 'Source starting' },
+    { value: 'stream.live', label: 'Source live' },
+    { value: 'stream.reconnecting', label: 'Source reconnecting' },
+    { value: 'stream.ended', label: 'Source ended' },
+    { value: 'stream.failed', label: 'Source failed' },
+  ] },
   { label: 'Rooms', events: [
     { value: 'room.created', label: 'Room created' },
     { value: 'room.started', label: 'Room started' },
