@@ -1,4 +1,5 @@
 import { persistUsageSample } from "../usage/usage-sample-batch.js";
+import { StreamingExports, type StreamingExportRequest } from "./streaming-export.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RoomRuntimeStore } from "./room-runtime-store.js";
 import { randomUUID } from "node:crypto";
@@ -155,6 +156,14 @@ interface UsageSampleState {
 }
 
 export class MediasoupWorkerPool implements MediaEngine {
+  readonly #streamingExports = new StreamingExports();
+  createStreamingExport(request: StreamingExportRequest) {
+    const room = this.#getRoom(request.roomId);
+    return this.#streamingExports.create(request, room.router, room.producers);
+  }
+  controlStreamingExport(exportId: string, action: "resume" | "renew" | "close") {
+    return this.#streamingExports.control(exportId, action);
+  }
   readonly #config: MediaConfig;
   readonly #createWorker: MediasoupWorkerFactory;
   readonly #quality: MediaQualityOptions;
@@ -286,6 +295,7 @@ export class MediasoupWorkerPool implements MediaEngine {
 
   async close(): Promise<void> {
     if (this.#closed && this.#workers.length === 0) return;
+    this.#streamingExports.closeAll();
     this.#closed = true;
     this.#recoveryAbort.abort();
     clearTimeout(this.#failureTimer);

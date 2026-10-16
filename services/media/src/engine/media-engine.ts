@@ -1,4 +1,5 @@
 import type { RoomQualityMode } from "@relayrtc/types";
+import type { StreamingExportRequest, StreamingExportTrack } from "./streaming-export.js";
 
 export type MediaKind = "audio" | "video";
 export type MediaTrackType = "audio" | "camera_video" | "screen_audio" | "screen_video";
@@ -127,6 +128,13 @@ export interface SetPriorityRequest extends MediaRoomRequest {
 }
 
 export interface MediaEngine {
+  createStreamingExport?(
+    request: StreamingExportRequest,
+  ): Promise<{ tracks: StreamingExportTrack[] }>;
+  controlStreamingExport?(
+    exportId: string,
+    action: "resume" | "renew" | "close",
+  ): Promise<{ bytes: number }>;
   close(): Promise<void>;
   closeRoom(request: MediaRoomRequest): Promise<void>;
   connectParticipantTransport(request: ConnectTransportRequest): Promise<void>;
