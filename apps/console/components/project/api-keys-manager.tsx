@@ -1,5 +1,13 @@
-'use client'
+"use client";
 
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
 import {
   KeyRound,
   LoaderCircle,
@@ -8,22 +16,18 @@ import {
   RotateCw,
   Search,
   Trash2,
-} from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { availableApiKeyScopes } from '@relayrtc/validation'
-import {
-  createApiKeyAction,
-  revokeApiKeyAction,
-  rotateApiKeyAction,
-} from '@/actions/api-keys'
-import { AuthErrorMessage } from '@/components/auth/auth-error-message'
-import { CopyButton } from '@/components/page/copy-button'
-import { PageHeader } from '@/components/page/page-header'
-import { SimpleSelect } from '@/components/page/simple-select'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
+} from "lucide-react";
+import { useId, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { availableApiKeyScopes } from "@relayrtc/validation";
+import { createApiKeyAction, revokeApiKeyAction, rotateApiKeyAction } from "@/actions/api-keys";
+import { AuthErrorMessage } from "@/components/auth/auth-error-message";
+import { CopyButton } from "@/components/page/copy-button";
+import { PageHeader } from "@/components/page/page-header";
+import { SimpleSelect } from "@/components/page/simple-select";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -31,38 +35,38 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import type { ApiKeyError } from '@/lib/api-keys/api-key-errors'
-import type { ConsoleEnvironment } from '@/lib/console-types'
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import type { ApiKeyError } from "@/lib/api-keys/api-key-errors";
+import type { ConsoleEnvironment } from "@/lib/console-types";
 
 interface ApiKeyView {
-  id: string
-  environmentId: string
-  projectId: string
-  name: string
-  type: string
-  prefix: string
-  scopes: string[]
-  createdAt: string
-  lastUsedAt: string | null
-  expiresAt: string | null
-  revokedAt: string | null
+  id: string;
+  environmentId: string;
+  projectId: string;
+  name: string;
+  type: string;
+  prefix: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
 }
 
 function formatDate(value: string | null) {
-  if (!value) return '—'
+  if (!value) return "—";
 
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-  }).format(new Date(value))
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+  }).format(new Date(value));
 }
 
 export function ApiKeysManager({
@@ -72,189 +76,177 @@ export function ApiKeysManager({
   canManage,
   defaultOpen = false,
 }: {
-  projectId: string
-  environments: readonly ConsoleEnvironment[]
-  apiKeys: readonly ApiKeyView[]
-  canManage: boolean
-  defaultOpen?: boolean
+  projectId: string;
+  environments: readonly ConsoleEnvironment[];
+  apiKeys: readonly ApiKeyView[];
+  canManage: boolean;
+  defaultOpen?: boolean;
 }) {
-  const router = useRouter()
+  const router = useRouter();
 
-  const searchId = useId()
-  const nameId = useId()
-  const environmentSelectId = useId()
+  const searchId = useId();
+  const nameId = useId();
+  const environmentSelectId = useId();
 
   const developmentEnvironment =
     environments.find(
-      (environment) =>
-        environment.type === 'development' ||
-        environment.slug === 'development',
-    ) ?? environments[0]
+      (environment) => environment.type === "development" || environment.slug === "development",
+    ) ?? environments[0];
 
-  const defaultEnvironmentId = developmentEnvironment?.id ?? ''
+  const defaultEnvironmentId = developmentEnvironment?.id ?? "";
 
-  const [query, setQuery] = useState('')
-  const [createOpen, setCreateOpen] = useState(defaultOpen)
-  const [name, setName] = useState('')
-  const [environmentId, setEnvironmentId] = useState(defaultEnvironmentId)
-  const [scopes, setScopes] = useState<string[]>([])
-  const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState<ApiKeyError | null>(null)
-  const [secret, setSecret] = useState<string | null>(null)
+  const [query, setQuery] = useState("");
+  const [createOpen, setCreateOpen] = useState(defaultOpen);
+  const [name, setName] = useState("");
+  const [environmentId, setEnvironmentId] = useState(defaultEnvironmentId);
+  const [scopes, setScopes] = useState<string[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<ApiKeyError | null>(null);
+  const [secret, setSecret] = useState<string | null>(null);
 
-  const [pendingRevoke, setPendingRevoke] = useState<ApiKeyView | null>(null)
-  const [pendingRotate, setPendingRotate] = useState<ApiKeyView | null>(null)
-  const [actionError, setActionError] = useState<ApiKeyError | null>(null)
-  const [actionPending, setActionPending] = useState<
-    'revoke' | 'rotate' | null
-  >(null)
+  const [pendingRevoke, setPendingRevoke] = useState<ApiKeyView | null>(null);
+  const [pendingRotate, setPendingRotate] = useState<ApiKeyView | null>(null);
+  const [actionError, setActionError] = useState<ApiKeyError | null>(null);
+  const [actionPending, setActionPending] = useState<"revoke" | "rotate" | null>(null);
 
-  const [rotatedSecret, setRotatedSecret] = useState<string | null>(null)
+  const [rotatedSecret, setRotatedSecret] = useState<string | null>(null);
 
   const environmentOptions = environments.map((environment) => ({
     value: environment.id,
     label: environment.name,
-  }))
+  }));
 
   const environmentMap = useMemo(
-    () =>
-      new Map(
-        environments.map((environment) => [
-          environment.id,
-          environment,
-        ]),
-      ),
+    () => new Map(environments.map((environment) => [environment.id, environment])),
     [environments],
-  )
+  );
 
   const visibleKeys = useMemo(() => {
-    const term = query.trim().toLowerCase()
+    const term = query.trim().toLowerCase();
 
     if (!term) {
-      return apiKeys
+      return apiKeys;
     }
 
     return apiKeys.filter((key) => {
-      const environment = environmentMap.get(key.environmentId)
+      const environment = environmentMap.get(key.environmentId);
 
       return (
         key.name.toLowerCase().includes(term) ||
         key.prefix.toLowerCase().includes(term) ||
         environment?.name.toLowerCase().includes(term)
-      )
-    })
-  }, [apiKeys, environmentMap, query])
+      );
+    });
+  }, [apiKeys, environmentMap, query]);
 
   function resetCreateDialog() {
-    setCreateOpen(false)
-    setName('')
-    setEnvironmentId(defaultEnvironmentId)
-    setScopes([])
-    setCreateError(null)
-    setSecret(null)
-    setCreating(false)
+    setCreateOpen(false);
+    setName("");
+    setEnvironmentId(defaultEnvironmentId);
+    setScopes([]);
+    setCreateError(null);
+    setSecret(null);
+    setCreating(false);
   }
 
   function openCreateDialog() {
-    setName('')
-    setEnvironmentId(defaultEnvironmentId)
-    setScopes([])
-    setCreateError(null)
-    setSecret(null)
-    setCreateOpen(true)
+    setName("");
+    setEnvironmentId(defaultEnvironmentId);
+    setScopes([]);
+    setCreateError(null);
+    setSecret(null);
+    setCreateOpen(true);
   }
 
   function toggleScope(scope: string, checked: boolean) {
     setScopes((current) => {
       if (checked) {
-        return current.includes(scope)
-          ? current
-          : [...current, scope]
+        return current.includes(scope) ? current : [...current, scope];
       }
 
-      return current.filter((value) => value !== scope)
-    })
+      return current.filter((value) => value !== scope);
+    });
   }
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+    event.preventDefault();
 
     if (!name.trim() || !environmentId) {
-      return
+      return;
     }
 
-    setCreateError(null)
-    setCreating(true)
+    setCreateError(null);
+    setCreating(true);
 
     const result = await createApiKeyAction({
       projectId,
       environmentId,
       name: name.trim(),
-      type: 'secret',
+      type: "secret",
       scopes,
       expiresAt: null,
-    })
+    });
 
     if (result.error) {
-      setCreateError(result.error)
-      setCreating(false)
-      return
+      setCreateError(result.error);
+      setCreating(false);
+      return;
     }
 
-    setSecret(result.data.rawKey)
-    setCreating(false)
-    router.refresh()
+    setSecret(result.data.rawKey);
+    setCreating(false);
+    router.refresh();
   }
 
   async function handleRotate() {
     if (!pendingRotate) {
-      return
+      return;
     }
 
-    setActionError(null)
-    setActionPending('rotate')
+    setActionError(null);
+    setActionPending("rotate");
 
     const result = await rotateApiKeyAction({
       apiKeyId: pendingRotate.id,
       projectId,
-    })
+    });
 
     if (result.error) {
-      setActionError(result.error)
-      setActionPending(null)
-      return
+      setActionError(result.error);
+      setActionPending(null);
+      return;
     }
 
-    setPendingRotate(null)
-    setActionPending(null)
-    setRotatedSecret(result.data.rawKey)
+    setPendingRotate(null);
+    setActionPending(null);
+    setRotatedSecret(result.data.rawKey);
 
-    router.refresh()
+    router.refresh();
   }
 
   async function handleRevoke() {
     if (!pendingRevoke) {
-      return
+      return;
     }
 
-    setActionError(null)
-    setActionPending('revoke')
+    setActionError(null);
+    setActionPending("revoke");
 
     const result = await revokeApiKeyAction({
       apiKeyId: pendingRevoke.id,
       projectId,
-    })
+    });
 
     if (result.error) {
-      setActionError(result.error)
-      setActionPending(null)
-      return
+      setActionError(result.error);
+      setActionPending(null);
+      return;
     }
 
-    setPendingRevoke(null)
-    setActionPending(null)
+    setPendingRevoke(null);
+    setActionPending(null);
 
-    router.refresh()
+    router.refresh();
   }
 
   return (
@@ -295,114 +287,80 @@ export function ApiKeysManager({
             <KeyRound className="size-5" />
           </span>
 
-          <p className="font-medium">
-            {query ? 'No keys match your search' : 'No API keys yet'}
-          </p>
+          <p className="font-medium">{query ? "No keys match your search" : "No API keys yet"}</p>
 
           <p className="max-w-xs text-sm text-muted-foreground">
-            {query
-              ? 'Try a different name.'
-              : 'Create a key to start minting participant tokens.'}
+            {query ? "Try a different name." : "Create a key to start minting participant tokens."}
           </p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[36rem] text-sm">
-            <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th
-                  scope="col"
-                  className="px-2 pb-3 font-normal"
-                >
+          <Table className="w-full min-w-[36rem] text-sm">
+            <TableHeader>
+              <TableRow className="border-b text-left text-muted-foreground">
+                <TableHead scope="col" className="px-2 pb-3 font-normal">
                   Name
-                </th>
+                </TableHead>
 
-                <th
-                  scope="col"
-                  className="px-2 pb-3 font-normal"
-                >
+                <TableHead scope="col" className="px-2 pb-3 font-normal">
                   Key
-                </th>
+                </TableHead>
 
-                <th
-                  scope="col"
-                  className="hidden px-2 pb-3 font-normal md:table-cell"
-                >
+                <TableHead scope="col" className="hidden px-2 pb-3 font-normal md:table-cell">
                   Environment
-                </th>
+                </TableHead>
 
-                <th
-                  scope="col"
-                  className="px-2 pb-3 font-normal"
-                >
+                <TableHead scope="col" className="px-2 pb-3 font-normal">
                   Last used
-                </th>
+                </TableHead>
 
-                <th
-                  scope="col"
-                  className="w-12 pb-3"
-                >
+                <TableHead scope="col" className="w-12 pb-3">
                   <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
 
-            <tbody>
+            <TableBody>
               {visibleKeys.map((key) => {
-                const environment = environmentMap.get(key.environmentId)
+                const environment = environmentMap.get(key.environmentId);
 
-                const expired =
-                  key.expiresAt !== null &&
-                  new Date(key.expiresAt) <= new Date()
+                const expired = key.expiresAt !== null && new Date(key.expiresAt) <= new Date();
 
-                const inactive =
-                  key.revokedAt !== null || expired
+                const inactive = key.revokedAt !== null || expired;
 
                 return (
-                  <tr
-                    key={key.id}
-                    className="border-b last:border-0"
-                  >
-                    <td className="px-2 py-4 text-[0.9375rem]">
+                  <TableRow key={key.id} className="border-b last:border-0">
+                    <TableCell className="px-2 py-4 text-[0.9375rem]">
                       <div className="flex items-center gap-2">
                         <span>{key.name}</span>
 
                         {key.revokedAt ? (
-                          <Badge
-                            variant="secondary"
-                            className="text-xs"
-                          >
+                          <Badge variant="secondary" className="text-xs">
                             Revoked
                           </Badge>
                         ) : expired ? (
-                          <Badge
-                            variant="secondary"
-                            className="text-xs"
-                          >
+                          <Badge variant="secondary" className="text-xs">
                             Expired
                           </Badge>
                         ) : null}
                       </div>
-                    </td>
+                    </TableCell>
 
-                    <td className="px-2 py-4 font-mono text-[0.8125rem] text-muted-foreground">
+                    <TableCell className="px-2 py-4 font-mono text-[0.8125rem] text-muted-foreground">
                       {key.prefix}...
-                    </td>
+                    </TableCell>
 
-                    <td className="hidden px-2 py-4 md:table-cell">
-                      <Badge
-                        variant="secondary"
-                        className="capitalize"
-                      >
-                        {environment?.name ?? 'Unknown'}
+                    <TableCell className="hidden px-2 py-4 md:table-cell">
+                      <Badge variant="secondary" className="capitalize">
+                        {environment?.name ?? "Unknown"}
                       </Badge>
-                    </td>
+                    </TableCell>
 
-                    <td className="px-2 py-4 text-muted-foreground">
+                    <TableCell className="px-2 py-4 text-muted-foreground">
                       {formatDate(key.lastUsedAt)}
-                    </td>
+                    </TableCell>
 
-                    <td className="py-2 text-right">
+                    <TableCell className="py-2 text-right">
                       {canManage && !inactive ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger
@@ -412,15 +370,12 @@ export function ApiKeysManager({
                             <MoreHorizontal className="size-4" />
                           </DropdownMenuTrigger>
 
-                          <DropdownMenuContent
-                            align="end"
-                            className="w-44 rounded-xl p-1.5"
-                          >
+                          <DropdownMenuContent align="end" className="w-44 rounded-xl p-1.5">
                             <DropdownMenuItem
                               className="gap-2 rounded-lg"
                               onClick={() => {
-                                setActionError(null)
-                                setPendingRotate(key)
+                                setActionError(null);
+                                setPendingRotate(key);
                               }}
                             >
                               <RotateCw className="size-4" />
@@ -430,8 +385,8 @@ export function ApiKeysManager({
                             <DropdownMenuItem
                               className="gap-2 rounded-lg text-destructive focus:text-destructive"
                               onClick={() => {
-                                setActionError(null)
-                                setPendingRevoke(key)
+                                setActionError(null);
+                                setPendingRevoke(key);
                               }}
                             >
                               <Trash2 className="size-4" />
@@ -440,12 +395,12 @@ export function ApiKeysManager({
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : null}
-                    </td>
-                  </tr>
-                )
+                    </TableCell>
+                  </TableRow>
+                );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 
@@ -453,9 +408,9 @@ export function ApiKeysManager({
         open={createOpen}
         onOpenChange={(open) => {
           if (open) {
-            setCreateOpen(true)
+            setCreateOpen(true);
           } else {
-            resetCreateDialog()
+            resetCreateDialog();
           }
         }}
       >
@@ -466,8 +421,7 @@ export function ApiKeysManager({
                 <DialogTitle>Save your API key</DialogTitle>
 
                 <DialogDescription>
-                  This is the only time the full key is shown. Store it
-                  somewhere safe.
+                  This is the only time the full key is shown. Store it somewhere safe.
                 </DialogDescription>
               </DialogHeader>
 
@@ -476,37 +430,25 @@ export function ApiKeysManager({
                   {secret}
                 </code>
 
-                <CopyButton
-                  value={secret}
-                  label="Copy API key"
-                />
+                <CopyButton value={secret} label="Copy API key" />
               </div>
 
               <DialogFooter>
-                <Button onClick={resetCreateDialog}>
-                  Done
-                </Button>
+                <Button onClick={resetCreateDialog}>Done</Button>
               </DialogFooter>
             </>
           ) : (
-            <form
-              onSubmit={handleCreate}
-              className="grid gap-5"
-            >
+            <form onSubmit={handleCreate} className="grid gap-5">
               <DialogHeader>
                 <DialogTitle>Create API key</DialogTitle>
 
-                <DialogDescription>
-                  Scope a new key to a single environment.
-                </DialogDescription>
+                <DialogDescription>Scope a new key to a single environment.</DialogDescription>
               </DialogHeader>
 
               <AuthErrorMessage error={createError} />
 
               <div className="grid gap-2">
-                <Label htmlFor={nameId}>
-                  Name
-                </Label>
+                <Label htmlFor={nameId}>Name</Label>
 
                 <Input
                   id={nameId}
@@ -520,9 +462,7 @@ export function ApiKeysManager({
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor={environmentSelectId}>
-                  Environment
-                </Label>
+                <Label htmlFor={environmentSelectId}>Environment</Label>
 
                 <SimpleSelect
                   id={environmentSelectId}
@@ -544,7 +484,7 @@ export function ApiKeysManager({
 
                 <div className="grid gap-2">
                   {availableApiKeyScopes.map((scope) => {
-                    const checked = scopes.includes(scope)
+                    const checked = scopes.includes(scope);
 
                     return (
                       <label
@@ -553,16 +493,12 @@ export function ApiKeysManager({
                       >
                         <Checkbox
                           checked={checked}
-                          onCheckedChange={(value) =>
-                            toggleScope(scope, value === true)
-                          }
+                          onCheckedChange={(value) => toggleScope(scope, value === true)}
                         />
 
-                        <span className="font-mono text-sm">
-                          {scope}
-                        </span>
+                        <span className="font-mono text-sm">{scope}</span>
                       </label>
-                    )
+                    );
                   })}
                 </div>
               </div>
@@ -577,18 +513,8 @@ export function ApiKeysManager({
                   Cancel
                 </Button>
 
-                <Button
-                  type="submit"
-                  disabled={
-                    creating ||
-                    !name.trim() ||
-                    !environmentId
-                  }
-                >
-                  {creating ? (
-                    <LoaderCircle className="animate-spin" />
-                  ) : null}
-
+                <Button type="submit" disabled={creating || !name.trim() || !environmentId}>
+                  {creating ? <LoaderCircle className="animate-spin" /> : null}
                   Create key
                 </Button>
               </DialogFooter>
@@ -601,20 +527,17 @@ export function ApiKeysManager({
         open={pendingRotate !== null}
         onOpenChange={(open) => {
           if (!open && actionPending === null) {
-            setPendingRotate(null)
-            setActionError(null)
+            setPendingRotate(null);
+            setActionError(null);
           }
         }}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Rotate {pendingRotate?.name}?
-            </DialogTitle>
+            <DialogTitle>Rotate {pendingRotate?.name}?</DialogTitle>
 
             <DialogDescription>
-              The current key will stop working immediately and a new
-              key will be generated.
+              The current key will stop working immediately and a new key will be generated.
             </DialogDescription>
           </DialogHeader>
 
@@ -625,23 +548,19 @@ export function ApiKeysManager({
               variant="ghost"
               disabled={actionPending !== null}
               onClick={() => {
-                setPendingRotate(null)
-                setActionError(null)
+                setPendingRotate(null);
+                setActionError(null);
               }}
             >
               Cancel
             </Button>
 
-            <Button
-              onClick={handleRotate}
-              disabled={actionPending !== null}
-            >
-              {actionPending === 'rotate' ? (
+            <Button onClick={handleRotate} disabled={actionPending !== null}>
+              {actionPending === "rotate" ? (
                 <LoaderCircle className="animate-spin" />
               ) : (
                 <RotateCw />
               )}
-
               Rotate key
             </Button>
           </DialogFooter>
@@ -652,19 +571,16 @@ export function ApiKeysManager({
         open={rotatedSecret !== null}
         onOpenChange={(open) => {
           if (!open) {
-            setRotatedSecret(null)
+            setRotatedSecret(null);
           }
         }}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Save your new API key
-            </DialogTitle>
+            <DialogTitle>Save your new API key</DialogTitle>
 
             <DialogDescription>
-              This is the only time the full rotated key is shown.
-              Store it somewhere safe.
+              This is the only time the full rotated key is shown. Store it somewhere safe.
             </DialogDescription>
           </DialogHeader>
 
@@ -674,17 +590,12 @@ export function ApiKeysManager({
                 {rotatedSecret}
               </code>
 
-              <CopyButton
-                value={rotatedSecret}
-                label="Copy API key"
-              />
+              <CopyButton value={rotatedSecret} label="Copy API key" />
             </div>
           ) : null}
 
           <DialogFooter>
-            <Button onClick={() => setRotatedSecret(null)}>
-              Done
-            </Button>
+            <Button onClick={() => setRotatedSecret(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -693,20 +604,18 @@ export function ApiKeysManager({
         open={pendingRevoke !== null}
         onOpenChange={(open) => {
           if (!open && actionPending === null) {
-            setPendingRevoke(null)
-            setActionError(null)
+            setPendingRevoke(null);
+            setActionError(null);
           }
         }}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Revoke {pendingRevoke?.name}?
-            </DialogTitle>
+            <DialogTitle>Revoke {pendingRevoke?.name}?</DialogTitle>
 
             <DialogDescription>
-              Any server using this key will immediately stop being able
-              to authenticate. This can&apos;t be undone.
+              Any server using this key will immediately stop being able to authenticate. This
+              can&apos;t be undone.
             </DialogDescription>
           </DialogHeader>
 
@@ -717,8 +626,8 @@ export function ApiKeysManager({
               variant="ghost"
               disabled={actionPending !== null}
               onClick={() => {
-                setPendingRevoke(null)
-                setActionError(null)
+                setPendingRevoke(null);
+                setActionError(null);
               }}
             >
               Cancel
@@ -729,17 +638,12 @@ export function ApiKeysManager({
               disabled={actionPending !== null}
               onClick={handleRevoke}
             >
-              {actionPending === 'revoke' ? (
-                <LoaderCircle className="animate-spin" />
-              ) : (
-                <Trash2 />
-              )}
-
+              {actionPending === "revoke" ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
               Revoke key
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }

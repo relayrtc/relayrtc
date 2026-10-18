@@ -1,35 +1,52 @@
-import { Check } from 'lucide-react'
-import { PageHeader } from '@/components/page/page-header'
-import { Panel } from '@/components/page/panel'
-import { SectionHeading } from '@/components/page/setting-row'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
-import { formatNumber } from '@/lib/format'
-import type { Organization } from '@/lib/mock-data'
-import { MONTHLY_FREE_MINUTES, getMonthToDateMinutes } from '@/lib/usage-data'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { Check } from "lucide-react";
+import { PageHeader } from "@/components/page/page-header";
+import { Panel } from "@/components/page/panel";
+import { SectionHeading } from "@/components/page/setting-row";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { formatNumber } from "@/lib/format";
+import type { Organization } from "@/lib/mock-data";
+import { MONTHLY_FREE_MINUTES, getMonthToDateMinutes } from "@/lib/usage-data";
 
 const plans = [
   {
-    name: 'Community',
-    price: '$0',
-    features: [`${formatNumber(MONTHLY_FREE_MINUTES)} free participant minutes`, '1 project', 'Community support'],
+    name: "Community",
+    price: "$0",
+    features: [
+      `${formatNumber(MONTHLY_FREE_MINUTES)} free participant minutes`,
+      "1 project",
+      "Community support",
+    ],
   },
   {
-    name: 'Cloud Pro',
-    price: '$49',
-    features: ['150,000 participant minutes', 'Unlimited projects', 'Priority support', 'Audit log and SSO'],
+    name: "Cloud Pro",
+    price: "$49",
+    features: [
+      "150,000 participant minutes",
+      "Unlimited projects",
+      "Priority support",
+      "Audit log and SSO",
+    ],
   },
-]
+];
 
 const invoices = [
-  { id: 'INV-0003', date: 'Oct 1, 2026', amount: '$0.00', status: 'Paid' },
-  { id: 'INV-0002', date: 'Sep 1, 2026', amount: '$0.00', status: 'Paid' },
-]
+  { id: "INV-0003", date: "Oct 1, 2026", amount: "$0.00", status: "Paid" },
+  { id: "INV-0002", date: "Sep 1, 2026", amount: "$0.00", status: "Paid" },
+];
 
 export function OrgBilling({ organization }: { organization: Organization }) {
-  const used = getMonthToDateMinutes()
-  const percent = Math.min(Math.round((used / MONTHLY_FREE_MINUTES) * 100), 100)
+  const used = getMonthToDateMinutes();
+  const percent = Math.min(Math.round((used / MONTHLY_FREE_MINUTES) * 100), 100);
 
   return (
     <div className="flex flex-col gap-8">
@@ -48,7 +65,10 @@ export function OrgBilling({ organization }: { organization: Organization }) {
           <p className="text-sm text-muted-foreground">Participant minutes this month</p>
           <p className="text-2xl tracking-tight tabular-nums sm:text-[1.75rem]">
             {formatNumber(used)}
-            <span className="text-base text-muted-foreground"> / {formatNumber(MONTHLY_FREE_MINUTES)}</span>
+            <span className="text-base text-muted-foreground">
+              {" "}
+              / {formatNumber(MONTHLY_FREE_MINUTES)}
+            </span>
           </p>
           <Progress value={percent} aria-label="Free minutes used" className="mt-3" />
         </Panel>
@@ -60,7 +80,7 @@ export function OrgBilling({ organization }: { organization: Organization }) {
         </SectionHeading>
         <div className="grid gap-4 md:grid-cols-2">
           {plans.map((plan) => {
-            const isCurrent = plan.name === organization.plan
+            const isCurrent = plan.name === organization.plan;
             return (
               <Panel key={plan.name} className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
@@ -79,11 +99,15 @@ export function OrgBilling({ organization }: { organization: Organization }) {
                     </li>
                   ))}
                 </ul>
-                <Button variant={isCurrent ? 'outline' : 'default'} disabled={isCurrent} className="mt-auto self-start">
-                  {isCurrent ? 'Current plan' : `Upgrade to ${plan.name}`}
+                <Button
+                  variant={isCurrent ? "outline" : "default"}
+                  disabled={isCurrent}
+                  className="mt-auto self-start"
+                >
+                  {isCurrent ? "Current plan" : `Upgrade to ${plan.name}`}
                 </Button>
               </Panel>
-            )
+            );
           })}
         </div>
       </section>
@@ -93,30 +117,38 @@ export function OrgBilling({ organization }: { organization: Organization }) {
           <span id="invoices-heading">Invoices</span>
         </SectionHeading>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[28rem] text-sm">
-            <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th scope="col" className="py-2 font-normal">Invoice</th>
-                <th scope="col" className="py-2 font-normal">Date</th>
-                <th scope="col" className="py-2 font-normal">Amount</th>
-                <th scope="col" className="py-2 text-right font-normal">Status</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="w-full min-w-[28rem] text-sm">
+            <TableHeader>
+              <TableRow className="border-b text-left text-muted-foreground">
+                <TableHead scope="col" className="py-2 font-normal">
+                  Invoice
+                </TableHead>
+                <TableHead scope="col" className="py-2 font-normal">
+                  Date
+                </TableHead>
+                <TableHead scope="col" className="py-2 font-normal">
+                  Amount
+                </TableHead>
+                <TableHead scope="col" className="py-2 text-right font-normal">
+                  Status
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {invoices.map((invoice) => (
-                <tr key={invoice.id} className="border-b last:border-0">
-                  <td className="py-3.5 font-mono text-[0.8125rem]">{invoice.id}</td>
-                  <td className="py-3.5">{invoice.date}</td>
-                  <td className="py-3.5 tabular-nums">{invoice.amount}</td>
-                  <td className="py-3.5 text-right">
+                <TableRow key={invoice.id} className="border-b last:border-0">
+                  <TableCell className="py-3.5 font-mono text-[0.8125rem]">{invoice.id}</TableCell>
+                  <TableCell className="py-3.5">{invoice.date}</TableCell>
+                  <TableCell className="py-3.5 tabular-nums">{invoice.amount}</TableCell>
+                  <TableCell className="py-3.5 text-right">
                     <Badge variant="secondary">{invoice.status}</Badge>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </section>
     </div>
-  )
+  );
 }

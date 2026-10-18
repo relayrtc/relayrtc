@@ -1,11 +1,20 @@
-'use client'
+"use client";
 
-import { ChevronLeft, ChevronRight, Download } from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
-import { Panel } from '@/components/page/panel'
-import { SimpleSelect } from '@/components/page/simple-select'
-import { Button } from '@/components/ui/button'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableFooter,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { useId, useMemo, useState } from "react";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Panel } from "@/components/page/panel";
+import { SimpleSelect } from "@/components/page/simple-select";
+import { Button } from "@/components/ui/button";
 import {
   type ChartConfig,
   ChartContainer,
@@ -13,10 +22,10 @@ import {
   ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
-} from '@/components/ui/chart'
-import { downloadCsv } from '@/lib/csv'
-import { formatNumber } from '@/lib/format'
-import { environments } from '@/lib/mock-data'
+} from "@/components/ui/chart";
+import { downloadCsv } from "@/lib/csv";
+import { formatNumber } from "@/lib/format";
+import { environments } from "@/lib/mock-data";
 import {
   type BreakdownKey,
   type Granularity,
@@ -27,37 +36,37 @@ import {
   mediaTypes,
   networkMetrics,
   networkServices,
-} from '@/lib/usage-data'
-import { cn } from '@/lib/utils'
+} from "@/lib/usage-data";
+import { cn } from "@/lib/utils";
 
 const breakdownTabs: { key: BreakdownKey; label: string }[] = [
   ...mediaTypes.map((media) => ({ key: media.key as BreakdownKey, label: media.label })),
   ...networkServices.map((service) => ({ key: service.key as BreakdownKey, label: service.label })),
-]
+];
 
 const groupByOptions = [
-  { value: 'media', label: 'Media type' },
-  { value: 'environment', label: 'Environment' },
-]
+  { value: "media", label: "Media type" },
+  { value: "environment", label: "Environment" },
+];
 
 const environmentOptions = [
-  { value: 'all', label: 'All' },
+  { value: "all", label: "All" },
   ...environments.map((env) => ({ value: env.slug, label: env.name })),
-]
+];
 
 const granularityOptions = [
-  { value: 'day', label: 'Day' },
-  { value: 'week', label: 'Week' },
-]
+  { value: "day", label: "Day" },
+  { value: "week", label: "Week" },
+];
 
 function FilterField({
   label,
   id,
   children,
 }: {
-  label: string
-  id: string
-  children: React.ReactNode
+  label: string;
+  id: string;
+  children: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -66,21 +75,21 @@ function FilterField({
       </label>
       {children}
     </div>
-  )
+  );
 }
 
 export function UsageDashboard({ projectId }: { projectId: string }) {
-  const ids = { groupBy: useId(), environment: useId(), granularity: useId() }
-  const [groupBy, setGroupBy] = useState<GroupBy>('media')
-  const [environment, setEnvironment] = useState('all')
-  const [granularity, setGranularity] = useState<Granularity>('day')
-  const [offset, setOffset] = useState(0)
-  const [tab, setTab] = useState<BreakdownKey>('audio')
+  const ids = { groupBy: useId(), environment: useId(), granularity: useId() };
+  const [groupBy, setGroupBy] = useState<GroupBy>("media");
+  const [environment, setEnvironment] = useState("all");
+  const [granularity, setGranularity] = useState<Granularity>("day");
+  const [offset, setOffset] = useState(0);
+  const [tab, setTab] = useState<BreakdownKey>("audio");
 
   const usage = useMemo(
     () => getUsage({ offset, granularity, groupBy, environment }),
     [offset, granularity, groupBy, environment],
-  )
+  );
 
   const chartConfig = useMemo(
     () =>
@@ -91,19 +100,19 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
         ]),
       ) as ChartConfig,
     [usage.series],
-  )
+  );
 
   const countConfig = {
-    value: { label: 'Total', color: 'var(--chart-1)' },
-  } satisfies ChartConfig
+    value: { label: "Total", color: "var(--chart-1)" },
+  } satisfies ChartConfig;
 
-  const periodLabel = granularity === 'day' ? '7d' : '28d'
-  const activeBreakdown = usage.breakdown[tab]
+  const periodLabel = granularity === "day" ? "7d" : "28d";
+  const activeBreakdown = usage.breakdown[tab];
 
   function handleExport() {
     downloadCsv(
       `usage-${projectId}.csv`,
-      ['date', 'service', 'metric', 'environment', 'quantity', 'unit', 'spend_usd'],
+      ["date", "service", "metric", "environment", "quantity", "unit", "spend_usd"],
       usage.rows.map((row) => [
         row.date,
         row.service,
@@ -113,7 +122,7 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
         row.unit,
         row.spend.toFixed(4),
       ]),
-    )
+    );
   }
 
   return (
@@ -145,8 +154,8 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
               id={ids.granularity}
               value={granularity}
               onValueChange={(value) => {
-                setGranularity(value as Granularity)
-                setOffset(0)
+                setGranularity(value as Granularity);
+                setOffset(0);
               }}
               options={granularityOptions}
               size="sm"
@@ -194,7 +203,13 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
           <ChartContainer config={chartConfig} className="mt-4 h-64 w-full sm:h-72">
             <BarChart data={usage.points} margin={{ left: 0, right: 0, top: 4 }}>
               <CartesianGrid vertical={false} />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} minTickGap={16} />
+              <XAxis
+                dataKey="label"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={16}
+              />
               <YAxis
                 width={44}
                 tickLine={false}
@@ -206,8 +221,12 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
                   <ChartTooltipContent
                     formatter={(value, name) => (
                       <div className="flex w-full items-center justify-between gap-4">
-                        <span className="text-muted-foreground">{chartConfig[String(name)]?.label}</span>
-                        <span className="font-mono tabular-nums">{formatCurrency(Number(value))}</span>
+                        <span className="text-muted-foreground">
+                          {chartConfig[String(name)]?.label}
+                        </span>
+                        <span className="font-mono tabular-nums">
+                          {formatCurrency(Number(value))}
+                        </span>
                       </div>
                     )}
                   />
@@ -266,7 +285,7 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
               config={{
                 value: {
                   label: metric.label,
-                  color: metric.service === 'sfu' ? 'var(--chart-2)' : 'var(--chart-6)',
+                  color: metric.service === "sfu" ? "var(--chart-2)" : "var(--chart-6)",
                 },
               }}
               valueFormatter={formatGb}
@@ -279,7 +298,11 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
         <h2 id="breakdown-heading" className="text-xl font-normal tracking-tight">
           Breakdown
         </h2>
-        <div role="tablist" aria-label="Product" className="-mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <div
+          role="tablist"
+          aria-label="Product"
+          className="-mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:px-0"
+        >
           {breakdownTabs.map((item) => (
             <button
               key={item.key}
@@ -289,10 +312,10 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
               aria-controls="breakdown-panel"
               onClick={() => setTab(item.key)}
               className={cn(
-                'inline-flex h-9 shrink-0 items-center rounded-full px-4 text-sm transition-colors',
+                "inline-flex h-9 shrink-0 items-center rounded-full px-4 text-sm transition-colors",
                 tab === item.key
-                  ? 'bg-muted font-medium text-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {item.label}
@@ -311,50 +334,56 @@ export function UsageDashboard({ projectId }: { projectId: string }) {
             </p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground">
-                  <th scope="col" className="pb-2 text-left font-normal">Type</th>
-                  <th scope="col" className="pb-2 text-right font-normal">
-                    {activeBreakdown.unit === 'GB' ? 'Data' : 'Minutes'}
-                  </th>
-                  <th scope="col" className="pb-2 text-right font-normal">Spend</th>
-                </tr>
-              </thead>
-              <tbody>
+            <Table className="w-full text-sm">
+              <TableHeader>
+                <TableRow className="border-b text-muted-foreground">
+                  <TableHead scope="col" className="pb-2 text-left font-normal">
+                    Type
+                  </TableHead>
+                  <TableHead scope="col" className="pb-2 text-right font-normal">
+                    {activeBreakdown.unit === "GB" ? "Data" : "Minutes"}
+                  </TableHead>
+                  <TableHead scope="col" className="pb-2 text-right font-normal">
+                    Spend
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {activeBreakdown.rows.map((row) => (
-                  <tr key={row.label} className="border-b">
-                    <td className="py-2.5">{row.label}</td>
-                    <td className="py-2.5 text-right tabular-nums">
+                  <TableRow key={row.label} className="border-b">
+                    <TableCell className="py-2.5">{row.label}</TableCell>
+                    <TableCell className="py-2.5 text-right tabular-nums">
                       {formatQuantity(row.quantity, activeBreakdown.unit)}
-                    </td>
-                    <td className="py-2.5 text-right tabular-nums">
+                    </TableCell>
+                    <TableCell className="py-2.5 text-right tabular-nums">
                       {formatCurrency(row.spend)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-              <tfoot>
-                <tr className="font-medium">
-                  <th scope="row" className="pt-2.5 text-left font-medium">Total</th>
-                  <td className="pt-2.5 text-right tabular-nums">
+              </TableBody>
+              <TableFooter>
+                <TableRow className="font-medium">
+                  <TableHead scope="row" className="pt-2.5 text-left font-medium">
+                    Total
+                  </TableHead>
+                  <TableCell className="pt-2.5 text-right tabular-nums">
                     {formatQuantity(activeBreakdown.quantity, activeBreakdown.unit)}
-                  </td>
-                  <td className="pt-2.5 text-right tabular-nums">
+                  </TableCell>
+                  <TableCell className="pt-2.5 text-right tabular-nums">
                     {formatCurrency(activeBreakdown.spend)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
+            </Table>
           </div>
         </Panel>
       </section>
     </div>
-  )
+  );
 }
 
-function formatQuantity(value: number, unit: 'minutes' | 'GB') {
-  return unit === 'GB' ? formatGb(value) : formatNumber(value)
+function formatQuantity(value: number, unit: "minutes" | "GB") {
+  return unit === "GB" ? formatGb(value) : formatNumber(value);
 }
 
 function CountPanel({
@@ -366,26 +395,24 @@ function CountPanel({
   config,
   valueFormatter,
 }: {
-  title: string
-  period: string
-  total: number | string
-  subtitle?: string
-  data: { label: string; value: number }[]
-  config: ChartConfig
-  valueFormatter?: (value: number) => string
+  title: string;
+  period: string;
+  total: number | string;
+  subtitle?: string;
+  data: { label: string; value: number }[];
+  config: ChartConfig;
+  valueFormatter?: (value: number) => string;
 }) {
   const tooltipContent = valueFormatter ? (
     <ChartTooltipContent
       hideLabel={false}
       formatter={(value) => (
-        <span className="font-mono tabular-nums">
-          {valueFormatter(Number(value))}
-        </span>
+        <span className="font-mono tabular-nums">{valueFormatter(Number(value))}</span>
       )}
     />
   ) : (
     <ChartTooltipContent hideLabel={false} />
-  )
+  );
 
   return (
     <Panel className="flex flex-col">
@@ -394,7 +421,7 @@ function CountPanel({
         <span>{period}</span>
       </div>
       <p className="text-2xl tracking-tight tabular-nums sm:text-[1.75rem]">
-        {typeof total === 'number' ? formatNumber(total) : total}
+        {typeof total === "number" ? formatNumber(total) : total}
       </p>
       {subtitle ? <p className="text-xs text-muted-foreground tabular-nums">{subtitle}</p> : null}
       <ChartContainer config={config} className="mt-3 h-24 w-full">
@@ -405,5 +432,5 @@ function CountPanel({
         </BarChart>
       </ChartContainer>
     </Panel>
-  )
+  );
 }

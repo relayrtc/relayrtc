@@ -1,5 +1,14 @@
 "use client";
 
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableCaption,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -369,28 +378,28 @@ function AuditLogView({ organizationId }: { organizationId?: string }) {
         ) : null}
         {page?.events.length ? (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[42rem] text-sm">
-              <caption className="sr-only">
+            <Table className="w-full min-w-[42rem] text-sm">
+              <TableCaption className="sr-only">
                 {organizationId ? "Organization" : "Personal"} audit events
-              </caption>
-              <thead className="bg-muted/40">
-                <tr className="border-b text-left text-xs text-muted-foreground">
+              </TableCaption>
+              <TableHeader className="bg-muted/40">
+                <TableRow className="border-b text-left text-xs text-muted-foreground">
                   {["Event", "Actor", "Outcome", "Date", ""].map((heading) => (
-                    <th key={heading} scope="col" className="px-5 py-3 font-medium">
+                    <TableHead key={heading} scope="col" className="px-5 py-3 font-medium">
                       {heading || <span className="sr-only">Details</span>}
-                    </th>
+                    </TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {page.events.map((event) => {
                   const Icon = eventIcon(event);
                   return (
-                    <tr
+                    <TableRow
                       key={event.id}
                       className="border-b transition-colors last:border-b-0 hover:bg-muted/30"
                     >
-                      <td className="px-5 py-4">
+                      <TableCell className="px-5 py-4">
                         <div className="flex items-center gap-3">
                           <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
                             <Icon className="size-4" />
@@ -408,14 +417,14 @@ function AuditLogView({ organizationId }: { organizationId?: string }) {
                             </p>
                           </div>
                         </div>
-                      </td>
-                      <td className="px-5 py-4">
+                      </TableCell>
+                      <TableCell className="px-5 py-4">
                         <Actor event={event} />
-                      </td>
-                      <td className="px-5 py-4">
+                      </TableCell>
+                      <TableCell className="px-5 py-4">
                         <Outcome value={event.outcome} />
-                      </td>
-                      <td className="whitespace-nowrap px-5 py-4 text-xs text-muted-foreground">
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap px-5 py-4 text-xs text-muted-foreground">
                         <time dateTime={event.occurredAt}>
                           <span className="block">
                             {new Date(event.occurredAt).toLocaleDateString(undefined, {
@@ -428,8 +437,8 @@ function AuditLogView({ organizationId }: { organizationId?: string }) {
                             })}
                           </span>
                         </time>
-                      </td>
-                      <td className="px-3 py-4">
+                      </TableCell>
+                      <TableCell className="px-3 py-4">
                         <Button
                           variant="ghost"
                           size="icon-sm"
@@ -438,12 +447,12 @@ function AuditLogView({ organizationId }: { organizationId?: string }) {
                         >
                           <Eye />
                         </Button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         ) : null}
         {page && !page.events.length && !busy ? (
