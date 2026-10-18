@@ -73,6 +73,17 @@ describe("RelayRTC API", () => {
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ code: "ROUTE_NOT_FOUND" });
   });
+
+  it.each([
+    "/v1/streams",
+    "/v1/broadcasts",
+    "/v1/streams/stream_example/start",
+    "/v1/broadcasts/bcast_example/stop",
+  ])("explains that streaming is disabled for %s", async (url) => {
+    const response = await createApp().inject({ method: "POST", url });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ code: "STREAMING_DISABLED" });
+  });
 });
 
 it.each([
