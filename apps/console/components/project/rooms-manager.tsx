@@ -1,4 +1,5 @@
 "use client";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import {
   Table,
   TableBody,
@@ -26,13 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+
 import type { ConsoleEnvironment } from "@/lib/console-types";
 import {
   roomConfigurationSchema,
@@ -59,6 +54,9 @@ export function RoomsManager({
   initialCursor: RoomListCursor | null;
   initialError: string | null;
 }) {
+  const task = useStreamingTask();
+  const creating = task.active,
+    setCreating = task.setOpen;
   const router = useRouter(),
     pathname = usePathname(),
     search = useSearchParams();
@@ -66,8 +64,7 @@ export function RoomsManager({
     [cursor, setCursor] = useState(initialCursor);
   const [error, setError] = useState(initialError),
     [filter, setFilter] = useState("all");
-  const [pending, setPending] = useState(false),
-    [creating, setCreating] = useState(false);
+  const [pending, setPending] = useState(false);
   const [selected, setSelected] = useState<ConsoleRoom | null>(null);
   const sequence = useRef(0),
     mounted = useRef(true);
@@ -107,6 +104,25 @@ export function RoomsManager({
     [projectId, environmentId, filter],
   );
 
+  if (creating)
+    return (
+      <StreamingTaskPage
+        title="Create a room"
+        description="Create a real-time space for your application's participants. They join and publish through your app; creating a room does not start a call."
+        backHref={task.backHref}
+        guidance="For a guest broadcast, use a dedicated room with 2?4 seats, including the host. Room capacity limits stage participants; it does not set the number of HLS viewers."
+      >
+        {canManage ? (
+          <RoomForm
+            projectId={projectId}
+            environmentId={environmentId}
+            onSaved={() => setCreating(false)}
+          />
+        ) : (
+          <p>Management access is required.</p>
+        )}
+      </StreamingTaskPage>
+    );
   return (
     <div className="space-y-6">
       <PageHeader
@@ -226,28 +242,7 @@ export function RoomsManager({
           </p>
         </>
       )}
-      <Sheet open={creating} onOpenChange={setCreating}>
-        <SheetContent className="overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Create room</SheetTitle>
-            <SheetDescription>
-              Configure a room in {environments.find((item) => item.id === environmentId)?.name}.
-              Participants join through your app.
-            </SheetDescription>
-          </SheetHeader>
-          {creating && (
-            <RoomForm
-              projectId={projectId}
-              environmentId={environmentId}
-              onSaved={(room) => {
-                setCreating(false);
-                setSelected(room);
-                void load();
-              }}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
+
       <Dialog
         open={selected !== null}
         onOpenChange={(open) => {
