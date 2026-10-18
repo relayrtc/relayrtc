@@ -1,5 +1,6 @@
 "use client";
 import { Slider } from "@/components/ui/slider";
+import { Radio, LoaderCircle } from "lucide-react";
 
 import { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
@@ -86,14 +87,49 @@ export function StreamPreview({
   }, [projectId, environmentId, streamId, dvr, broadcastId]);
   return (
     <div className="space-y-2">
-      <video
-        ref={media}
-        className="aspect-video w-full rounded-lg bg-black"
-        controls
-        muted
-        playsInline
-        aria-label="Private stream preview"
-      />
+      <div className="relative overflow-hidden rounded-lg bg-slate-950">
+        <video
+          ref={media}
+          className="aspect-video w-full bg-slate-950"
+          controls
+          muted
+          playsInline
+          aria-label="Private stream preview"
+        />
+        {!["playing", "paused", "blocked"].includes(state) && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-10 top-0 flex flex-col items-center justify-center gap-2 bg-linear-to-br from-slate-900/80 to-slate-950 px-5 text-center">
+            <span className="mb-1 grid size-10 place-items-center rounded-full border border-white/10 bg-white/5">
+              {state === "loading" ? (
+                <LoaderCircle className="size-5 animate-spin text-slate-400" />
+              ) : (
+                <Radio className="size-5 text-slate-400" />
+              )}
+            </span>
+            <p className="text-sm font-medium text-slate-200">
+              {state === "loading"
+                ? "Connecting to preview"
+                : state === "unsupported"
+                  ? "Preview unavailable"
+                  : state === "error"
+                    ? "Reconnecting to preview"
+                    : "Waiting for your source"}
+            </p>
+            <p className="max-w-xs text-[11px] leading-relaxed text-slate-400">
+              {state === "unsupported"
+                ? "Try a browser with HLS playback support."
+                : state === "error"
+                  ? "Playback will resume when the connection recovers."
+                  : "Your video will appear here when media is available."}
+            </p>
+          </div>
+        )}
+        {state === "playing" && (!dvr || dvrState.isLive) && (
+          <span className="pointer-events-none absolute left-3 top-3 inline-flex items-center gap-1.5 rounded bg-red-500 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
+            <span className="size-1.5 rounded-full bg-white" />
+            Live
+          </span>
+        )}
+      </div>
       {dvr && (
         <div className="space-y-2" aria-label="DVR playback controls">
           <p role="status" aria-live="polite">
@@ -140,14 +176,22 @@ export function StreamPreview({
           )}
         </div>
       )}
-      <p role="status" className="text-sm text-muted-foreground">
+      <p role="status" className="text-[11px] text-muted-foreground">
         {state === "unavailable"
           ? "Waiting for a live source."
           : state === "unsupported"
             ? "This browser cannot play this stream."
             : state === "error"
               ? "Preview is reconnecting. Retrying automatically…"
-              : state}
+              : state === "loading"
+                ? "Connecting to preview..."
+                : state === "playing"
+                  ? dvr && !dvrState.isLive
+                    ? "Playing retained media"
+                    : "Playing live media"
+                  : state === "paused"
+                    ? "Preview paused"
+                    : "Select play to watch the preview."}
       </p>
       {state === "blocked" && (
         <Button

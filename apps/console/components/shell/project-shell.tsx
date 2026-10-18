@@ -100,8 +100,10 @@ function ProjectSidebar({
   const isActive = (path: string) =>
     path === base ? pathname === base : pathname.startsWith(path);
 
-  const match = pathname.slice(base.length).match(/^\/streams\/([^/]+)(?:\/([^/]+))?\/?$/);
-  const workspaceStream = match?.[1] ? decodeURIComponent(match[1]) : null;
+  const match = pathname
+    .slice(base.length)
+    .match(/^\/streams\/([^/]+)(?:\/([^/]+))?(?:\/new)?\/?$/);
+  const workspaceStream = match?.[1] && match[1] !== "new" ? decodeURIComponent(match[1]) : null;
   const section = match?.[2] ?? "overview";
   const environmentId = search.get("environmentId") ?? "";
   const backHref = `${base}/streams${environmentId ? `?environmentId=${encodeURIComponent(environmentId)}` : ""}`;
@@ -111,6 +113,7 @@ function ProjectSidebar({
     destinations: Server,
     guests: Users,
     recordings: Video,
+    dvr: Video,
     clips: Scissors,
     schedule: CalendarClock,
     studio: Layers,

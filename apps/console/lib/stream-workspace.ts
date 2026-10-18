@@ -3,6 +3,7 @@ export const streamSections = [
   { id: "broadcasts", label: "Broadcasts" },
   { id: "destinations", label: "Destinations" },
   { id: "guests", label: "Guests" },
+  { id: "dvr", label: "Viewer rewind" },
   { id: "recordings", label: "Recordings" },
   { id: "clips", label: "Clips" },
   { id: "schedule", label: "Schedule" },

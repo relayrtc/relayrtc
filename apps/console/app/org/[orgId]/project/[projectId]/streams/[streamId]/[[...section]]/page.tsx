@@ -11,6 +11,7 @@ import { listRecordingsAction } from "@/actions/recordings";
 import { listSchedulesAction } from "@/actions/schedules";
 import { streamSections, streamWorkspaceHref } from "@/lib/stream-workspace";
 import { StreamWorkspace } from "@/components/project/stream-workspace";
+import { DvrManager } from "@/components/project/dvr-manager";
 import { StreamOverview } from "@/components/project/stream-overview";
 import { StreamSettings } from "@/components/project/stream-settings";
 import { StreamGuests } from "@/components/project/stream-guests";
@@ -33,9 +34,25 @@ export default async function StreamPage({
   const { orgId, projectId, streamId, section: segments } = await params;
   const query = await searchParams;
   const section = segments?.[0] ?? "overview";
-  if ((segments?.length ?? 0) > 1 || !streamSections.some((s) => s.id === section)) notFound();
+  const task = segments?.[1];
+  const taskSections = [
+    "broadcasts",
+    "destinations",
+    "clips",
+    "recordings",
+    "schedule",
+    "studio",
+    "guests",
+  ];
+  if (
+    (segments?.length ?? 0) > 2 ||
+    !streamSections.some((s) => s.id === section) ||
+    (task && (task !== "new" || !taskSections.includes(section)))
+  )
+    notFound();
   const data = await requireProject(orgId, projectId),
     projectBase = `/org/${orgId}/project/${projectId}`;
+  if (task && !data.canManage) notFound();
   const [identity] = await getAuthRuntime()
     .database.select({ environmentId: schema.streamingStream.environmentId })
     .from(schema.streamingStream)
@@ -49,7 +66,13 @@ export default async function StreamPage({
   if (!environment || (query.environmentId && query.environmentId !== environment.id)) notFound();
   if (!query.environmentId)
     redirect(
-      streamWorkspaceHref(projectBase, streamId, environment.id, section, query.broadcastId),
+      streamWorkspaceHref(
+        projectBase,
+        streamId,
+        environment.id,
+        task ? `${section}/${task}` : section,
+        query.broadcastId,
+      ),
     );
   const scope = { projectId, environmentId: environment.id, streamId };
   const [detail, listed, current, explicit] = await Promise.all([
@@ -92,6 +115,9 @@ export default async function StreamPage({
   switch (section) {
     case "overview":
       content = <StreamOverview />;
+      break;
+    case "dvr":
+      content = <DvrManager {...scope} canManage={data.canManage} />;
       break;
     case "settings":
       content = <StreamSettings />;

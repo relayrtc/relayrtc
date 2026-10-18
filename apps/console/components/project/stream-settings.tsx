@@ -45,7 +45,7 @@ export function StreamSettings() {
     }
   };
   return (
-    <div className="space-y-6">
+    <div className="flex min-w-0 flex-col gap-6">
       <StreamSectionCard
         title="Stream settings"
         description={<>Source and encoding changes apply to new source sessions and broadcasts.</>}
@@ -60,7 +60,9 @@ export function StreamSettings() {
           />
         ) : (
           <p className="text-sm text-muted-foreground">
-            You need project management access to edit this stream.
+            {stream.status !== "active"
+              ? "This stream has been retired and can no longer be edited."
+              : "You need project management access to edit this stream."}
           </p>
         )}
       </StreamSectionCard>
@@ -79,7 +81,7 @@ export function StreamSettings() {
               and usage remain.
             </>
           }
-          className="ring-destructive/30"
+          className="border border-destructive/20"
         >
           <Button variant="destructive" onClick={() => setConfirm(true)}>
             Retire stream
