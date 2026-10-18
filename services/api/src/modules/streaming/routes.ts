@@ -1,3 +1,4 @@
+import { dvrGrant } from "./dvr-service.js";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
 import { signStreamingGrant, streamingSecretHash } from "@relayrtc/protocol/streaming-control";
@@ -13,8 +14,6 @@ import {
 import { and, eq, gt, sql } from "drizzle-orm";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { authenticateApiKey } from "../../authentication/api-key-authenticator.js";
-import { assertClaimedScope } from "../../authentication/authentication-plugin.js";
 import { ApiError } from "../../http/errors/api-error.js";
 import { validate } from "../../http/validation/validate.js";
 import type { ConsoleSessionVerifier } from "../reporting/reporting.routes.js";
@@ -32,13 +31,13 @@ import {
   publicSession,
   publicStream,
   secret,
-  type Principal,
   type Scope,
   type Transaction,
   type StreamRow,
 } from "./repository.js";
 import { startSession, stopSessions } from "./lifecycle.js";
 import { StreamingGateway, ingestPath } from "./gateway.js";
+import { registerStreamingManagementAuth } from "./management-auth.js";
 
 export interface StreamingRoutesOptions {
   database: RelayKitDatabase;
@@ -54,35 +53,7 @@ const paramsSchema = z.object({
 const noBody = z.object({}).strict();
 export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app, options) => {
   const { database, config } = options;
-  const principals = new WeakMap<FastifyRequest, Principal>();
-  app.decorateRequest("apiKey", null);
-  app.decorateRequest("webhookPrincipal", null);
-  app.addHook("onRequest", async (request, reply) => {
-    reply.header("cache-control", "private, no-store");
-    if (request.headers.authorization !== undefined) {
-      const token = /^Bearer ([^\s]+)$/u.exec(request.headers.authorization)?.[1];
-      const key = token ? await authenticateApiKey(database, token) : null;
-      if (!key) throw new ApiError(401, "INVALID_API_KEY", "Provide a valid secret API key");
-      assertClaimedScope(request, key);
-      request.apiKey = key;
-      principals.set(request, { type: "key", key });
-    } else {
-      const headers = new Headers();
-      if (request.headers.cookie) headers.set("cookie", request.headers.cookie);
-      const session = await options.verifyConsoleSession?.(headers);
-      if (!session)
-        throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Provide an API key or console session");
-      if (
-        !["GET", "HEAD"].includes(request.method) &&
-        (!options.consoleOrigin || request.headers.origin !== options.consoleOrigin)
-      )
-        throw new ApiError(403, "ORIGIN_REQUIRED", "A trusted console Origin is required");
-      principals.set(request, { type: "user", userId: session.userId });
-      // The shared administrative audit hook uses this existing session context.
-      request.webhookPrincipal = { type: "session", userId: session.userId };
-    }
-  });
-  const principal = (request: FastifyRequest) => required(principals.get(request));
+  const principal = registerStreamingManagementAuth(app, options);
   const actorKey = (request: FastifyRequest) => {
     const p = principal(request);
     return p.type === "key" ? p.key.keyId : p.userId;
@@ -215,6 +186,24 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
       );
       if (active)
         throw conflict("STREAM_RUNNING", "Stop the source session before changing configuration");
+      const [sourceJob] = await db.execute(
+        sql`SELECT id FROM restream_session WHERE stream_id=${stream.id} AND ended_at IS NULL`,
+      );
+      if (sourceJob)
+        throw conflict(
+          "SOURCE_BUSY",
+          "Stop the external source before changing stream configuration",
+        );
+      if (change.source && change.source.kind !== stream.source.kind) {
+        const [registered] = await db.execute(
+          sql`SELECT id FROM restream_source WHERE stream_id=${stream.id} AND deleted_at IS NULL`,
+        );
+        if (registered)
+          throw conflict(
+            "SOURCE_ATTACHMENT_EXISTS",
+            "Delete registered sources before changing this stream's input protocol",
+          );
+      }
       if (change.source?.kind === "room") {
         const [room] = await db.execute(
           sql`SELECT id FROM room WHERE id=${change.source.roomId} AND project_id=${stream.projectId} AND environment_id=${stream.environmentId} AND status IN ('created','active') FOR SHARE`,
@@ -260,6 +249,12 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
         const result = await withStream(request, "streams:write", (db, stream, auth) =>
           command(db, request, 202, {}, async () => {
             const stoppedSessionId = await stopSessions(db, stream.id);
+            await db.execute(
+              sql`UPDATE restream_session SET desired_state='stopped' WHERE stream_id=${stream.id} AND ended_at IS NULL`,
+            );
+            await db.execute(
+              sql`UPDATE streaming_ingest_credential SET revoked_at=now() WHERE id IN(SELECT credential_id FROM restream_session WHERE stream_id=${stream.id}) AND revoked_at IS NULL`,
+            );
             await db.execute(
               sql`UPDATE streaming_stream SET playback_epoch=playback_epoch+1,version=version+1,updated_at=now(),status=${kind === "delete" ? "deleting" : stream.status} WHERE id=${stream.id}`,
             );
@@ -358,6 +353,11 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
   app.post("/streams/:streamId/playback-grants", (request) =>
     withStream(request, "streams:playback", async (db, stream, auth) => {
       const input = validate(playbackGrantSchema, request.body ?? {});
+      if (input.mode === "dvr") {
+        const grant = await dvrGrant(db, stream, config, input.ttlSeconds, input.broadcastId);
+        await audit(db, stream, auth.actor, "stream.dvr.playback.granted", request.id);
+        return grant;
+      }
       const [session] = await db
         .select()
         .from(schema.streamingSession)
@@ -441,6 +441,12 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
         .where(eq(schema.streamingOperation.id, required(operationId)));
       if (!op) throw missing();
       const stream = await getStream(db, op.streamId);
+      const scope = validate(streamScopeSchema, request.query);
+      if (
+        (scope.projectId && scope.projectId !== stream.projectId) ||
+        (scope.environmentId && scope.environmentId !== stream.environmentId)
+      )
+        throw missing();
       await authorize(db, principal(request), stream, "streams:read");
       return op;
     }),

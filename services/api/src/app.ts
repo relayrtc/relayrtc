@@ -1,3 +1,20 @@
+import { guestRoutes } from "./modules/streaming/guest-routes.js";
+import { registerGuestMaintenance } from "./modules/streaming/guest-service.js";
+import { dvrRoutes } from "./modules/streaming/dvr-routes.js";
+import { dvrMediaRoutes } from "./modules/streaming/dvr-media.js";
+import { mixerRoutes } from "./modules/streaming/mixer-routes.js";
+import { mixerRuntimeRoutes } from "./modules/streaming/mixer-runtime.js";
+import { registerMixerMaintenance } from "./modules/streaming/mixer-service.js";
+import { clipRoutes } from "./modules/streaming/clip-routes.js";
+import { registerClipMaintenance } from "./modules/streaming/clip-service.js";
+import { restreamRoutes } from "./modules/streaming/restream-routes.js";
+import { restreamRuntimeRoutes } from "./modules/streaming/restream-runtime.js";
+import { registerRestreamMaintenance } from "./modules/streaming/restream-service.js";
+import { scheduleRoutes } from "./modules/streaming/schedule-routes.js";
+import { registerScheduleMaintenance } from "./modules/streaming/schedule-service.js";
+import { recordingRoutes, assetMediaRoutes } from "./modules/streaming/recording-routes.js";
+import { recordingRuntimeRoutes } from "./modules/streaming/recording-runtime.js";
+import { registerRecordingMaintenance } from "./modules/streaming/recording-service.js";
 import { registerRequestLimits, readRequestLimits } from "./resource-limits.js";
 import { randomUUID } from "node:crypto";
 
@@ -7,6 +24,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import type { ApiConfig } from "./config/environment.js";
 import { registerErrorHandling } from "./http/errors/error-handler.js";
+import { ApiError } from "./http/errors/api-error.js";
 import { createParticipantTokenSigner } from "./modules/participant-tokens/participant-token.signer.js";
 import { createRoomRuntimeService } from "./modules/rooms/room-runtime.service.js";
 import { createTurnCredentialService } from "./modules/turn-credentials/turn-credential.service.js";
@@ -24,6 +42,10 @@ import { accountRoutes } from "./modules/account/account.routes.js";
 import { registerAdministrativeAudit } from "./modules/account/administrative-audit.js";
 import { streamingRoutes } from "./modules/streaming/routes.js";
 import { streamingMetricsRoutes } from "./modules/streaming/metrics.js";
+import { destinationRoutes } from "./modules/streaming/destination-routes.js";
+import { broadcastRoutes } from "./modules/streaming/broadcast-routes.js";
+import { broadcastRuntimeRoutes } from "./modules/streaming/broadcast-runtime.js";
+import { registerBroadcastMaintenance } from "./modules/streaming/broadcast-service.js";
 import { runtimeRoutes } from "./modules/streaming/runtime-routes.js";
 import { ingestRoutes } from "./modules/streaming/ingest-routes.js";
 import { playbackRoutes } from "./modules/streaming/playback.js";
@@ -151,7 +173,33 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   const stopStreaming = options.config.streaming
     ? registerStreamingMaintenance(app, options.database, options.config.streaming)
     : undefined;
+  const stopBroadcasts = options.config.streaming
+    ? registerBroadcastMaintenance(app, options.database, options.config.streaming)
+    : undefined;
+  const stopGuests = options.config.streaming ? registerGuestMaintenance(app,options.database,options.config.streaming) : undefined;
+  const stopMixers = options.config.streaming
+    ? registerMixerMaintenance(app, options.database, options.config.streaming)
+    : undefined;
+  const stopClips = options.config.streaming
+    ? registerClipMaintenance(app, options.database, options.config.streaming)
+    : undefined;
+  const stopRecordings = options.config.streaming
+    ? registerRecordingMaintenance(app, options.database, options.config.streaming)
+    : undefined;
+  const stopRestream = options.config.streaming
+    ? registerRestreamMaintenance(app, options.database)
+    : undefined;
+  const stopSchedules = options.config.streaming
+    ? registerScheduleMaintenance(app, options.database, options.config.streaming)
+    : undefined;
   app.addHook("onClose", async () => {
+    await stopRestream?.();
+    await stopSchedules?.();
+    await stopGuests?.();
+    await stopMixers?.();
+    await stopClips?.();
+    await stopRecordings?.();
+    await stopBroadcasts?.();
     await stopStreaming?.();
     await stopWebhookDeliveries?.();
     await stopTurnAccounting?.();
@@ -177,6 +225,130 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
           }
         : {}),
     });
+    void app.register(broadcastRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(destinationRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(mixerRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(guestRoutes, {
+      ...streamingOptions,
+      participantSigner:{audience:options.config.participantTokenAudience,issuer:options.config.participantTokenIssuer,keyId:options.config.participantTokenKeyId,secret:options.config.participantTokenSigningSecret},
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(dvrRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(clipRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(recordingRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(scheduleRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(restreamRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(mixerRuntimeRoutes, streamingOptions);
+    void app.register(restreamRuntimeRoutes, streamingOptions);
+    void app.register(recordingRuntimeRoutes, streamingOptions);
+    void app.register(dvrMediaRoutes, streamingOptions);
+    void app.register(assetMediaRoutes, streamingOptions);
+    void app.register(broadcastRuntimeRoutes, streamingOptions);
     void app.register(runtimeRoutes, {
       ...streamingOptions,
       mediaUrl: options.config.mediaInternalUrl,
@@ -185,6 +357,38 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
     void app.register(ingestRoutes, streamingOptions);
     void app.register(streamingMetricsRoutes, streamingOptions);
     void app.register(playbackRoutes, streamingOptions);
+  } else {
+    // Keep optional-feature errors distinct from an unknown or outdated API route.
+    const unavailable = () => {
+      throw new ApiError(
+        503,
+        "STREAMING_DISABLED",
+        "Streaming is disabled. Start the streaming services with pnpm docker:up:streaming.",
+      );
+    };
+    for (const path of [
+      "/v1/restream-sources",
+      "/v1/restream-sources/*",
+      "/v1/streams",
+      "/v1/streams/*",
+      "/v1/scheduled-broadcasts",
+      "/v1/scheduled-broadcasts/*",
+      "/v1/schedule-operations/*",
+      "/v1/guests/*",
+      "/v1/dvr/*",
+      "/v1/mixers/*",
+      "/v1/mixer-operations/*",
+      "/v1/clips",
+      "/v1/clips/*",
+      "/v1/recordings",
+      "/v1/recordings/*",
+      "/v1/assets/*",
+      "/assets/*",
+      "/v1/broadcasts",
+      "/v1/broadcasts/*",
+      "/v1/streaming-operations/*",
+    ])
+      app.all(path, unavailable);
   }
   void app.register(webhookRoutes, {
     database: options.database,
