@@ -25,15 +25,26 @@ export function StreamSectionCard({
 }) {
   const id = useId();
   return (
-    <Card role="region" aria-labelledby={id} className={cn("gap-4", className)}>
-      <CardHeader>
-        <CardTitle id={id} role="heading" aria-level={2}>
+    <Card
+      role="region"
+      aria-labelledby={id}
+      className={cn(
+        "min-w-0 gap-4 rounded-xl border border-border/70 bg-card/30 ring-0 [--card-spacing:--spacing(4)] sm:[--card-spacing:--spacing(5)]",
+        className,
+      )}
+    >
+      <CardHeader className="gap-2 max-sm:flex max-sm:flex-col">
+        <CardTitle id={id} role="heading" aria-level={2} className="text-sm font-semibold">
           {title}
         </CardTitle>
-        {description && <CardDescription>{description}</CardDescription>}
-        {actions && <CardAction>{actions}</CardAction>}
+        {description && (
+          <CardDescription className="text-xs leading-relaxed">{description}</CardDescription>
+        )}
+        {actions && <CardAction className="max-sm:mt-2 max-sm:self-start">{actions}</CardAction>}
       </CardHeader>
-      <CardContent className="space-y-4">{children}</CardContent>
+      <CardContent className="min-w-0 space-y-4 [&_input]:rounded-lg [&_button]:rounded-lg [&_form>button[type=submit]]:mt-2">
+        {children}
+      </CardContent>
     </Card>
   );
 }
