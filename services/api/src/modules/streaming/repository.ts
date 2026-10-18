@@ -96,7 +96,7 @@ export async function authorize(
     await db.execute(sql`SELECT m.role,u.name FROM member m JOIN "user" u ON u.id=m.user_id
     WHERE m.organization_id=${organizationId} AND m.user_id=${principal.userId} FOR SHARE OF m`);
   if (!member) throw missing();
-  if (permission !== "streams:read" && member.role !== "owner" && member.role !== "admin")
+  if (!permission.endsWith(":read") && member.role !== "owner" && member.role !== "admin")
     throw new ApiError(
       403,
       "STREAM_MANAGEMENT_FORBIDDEN",
