@@ -1,4 +1,6 @@
 "use client";
+import { StreamingHeader, StreamEmptyState } from "./stream-ui";
+import { History } from "lucide-react";
 import { StreamSectionCard } from "./stream-section-card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
@@ -124,116 +126,158 @@ export function DvrManager({
     }
   };
   return (
-    <StreamSectionCard
-      title="Live DVR"
-      description={
-        <>
-          Rewind retained broadcast media. Changes apply to the next run; disabling drains this run
-          for its saved retention period.
-        </>
-      }
-    >
-      {!workspace && (
-        <>
-          <Label className="grid gap-2">
-            Broadcast run (blank selects latest)
-            <Input
-              value={broadcastId}
-              onChange={(e) => {
-                setPlayback(null);
-                setBroadcastId(e.target.value);
-              }}
-              placeholder="broadcast_..."
-            />
-          </Label>
-        </>
-      )}
-      <p role="status">
-        {playback?.state ?? "Loading"}
-        {playback?.windowId ? ` · ${playback.windowId}` : ""}
-      </p>
-      {playback && (
-        <p className="text-sm">
-          Available: {playback.startSeconds?.toFixed(1) ?? "—"}–
-          {playback.endSeconds?.toFixed(1) ?? "—"} seconds. Shared storage:{" "}
-          {(playback.storedBytes / 1048576).toFixed(1)} MiB. Storage byte-seconds:{" "}
-          {Math.round(playback.storageByteSeconds)}. Origin delivery:{" "}
-          {(playback.deliveredBytes / 1048576).toFixed(1)} MiB. Policy version:{" "}
-          {playback.policyVersion ?? "—"}.
-        </p>
-      )}
-      {playback?.wallStart && (
-        <p className="text-sm">
-          {playback.wallStart} to {playback.wallEnd}
-          {playback.expiresAt ? ` · Expires ${playback.expiresAt}` : ""}
-        </p>
-      )}
-      {canManage && (
-        <form
-          className="space-y-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void save();
-          }}
-        >
-          <Label className="flex gap-2">
-            <Switch checked={enabled} onCheckedChange={(e) => setEnabled(e)} />
-            Enable DVR
-          </Label>
-          <Label className="grid gap-2">
-            Window seconds (30–1800)
-            <Input
-              type="number"
-              min={30}
-              max={1800}
-              value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
-            />
-          </Label>
-          <Label className="grid gap-2">
-            Shared byte cap (MiB, 16–512)
-            <Input
-              type="number"
-              min={16}
-              max={512}
-              value={bytes}
-              onChange={(e) => setBytes(Number(e.target.value))}
-            />
-          </Label>
-          <Label className="grid gap-2">
-            Access after stopping/disabling (seconds, 0–1800)
-            <Input
-              type="number"
-              min={0}
-              max={1800}
-              value={retention}
-              onChange={(e) => setRetention(Number(e.target.value))}
-            />
-          </Label>
-          <Label className="flex gap-2">
-            <Checkbox checked={consent} onCheckedChange={(e) => setConsent(e)} />I have permission
-            to retain this media.
-          </Label>
-          <Button type="submit" disabled={pending || !policy || !consent}>
-            Save DVR policy
-          </Button>
-        </form>
-      )}
+    <div className="space-y-5">
+      <StreamingHeader
+        title="Viewer rewind"
+        description="Let viewers pause and rewind your live broadcast."
+      />
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p
+          role="alert"
+          className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"
+        >
           {error}
         </p>
       )}
-      {playback?.broadcastId && ["live", "ended"].includes(playback.state) && (
-        <StreamPreview
-          key={playback.windowId}
-          projectId={projectId}
-          environmentId={environmentId}
-          streamId={streamId}
-          dvr
-          broadcastId={playback.broadcastId}
-        />
-      )}
-    </StreamSectionCard>
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(16rem,1fr)]">
+        <div className="min-w-0 space-y-5">
+          <StreamSectionCard
+            title="Rewind playback"
+            description="Preview the media available for the selected broadcast."
+          >
+            {playback?.broadcastId && ["live", "ended"].includes(playback.state) ? (
+              <StreamPreview
+                key={playback.windowId}
+                projectId={projectId}
+                environmentId={environmentId}
+                streamId={streamId}
+                dvr
+                broadcastId={playback.broadcastId}
+              />
+            ) : (
+              <StreamEmptyState
+                title={playback ? "No rewind media available" : "Checking playback"}
+                description="Enable rewind before starting a broadcast. Retained media appears here as it arrives."
+                icon={History}
+              />
+            )}
+            {!workspace && (
+              <Label className="grid gap-2">
+                Broadcast ID (leave blank for latest)
+                <Input
+                  value={broadcastId}
+                  onChange={(e) => {
+                    setPlayback(null);
+                    setBroadcastId(e.target.value);
+                  }}
+                  placeholder="broadcast_..."
+                />
+              </Label>
+            )}
+          </StreamSectionCard>
+          <StreamSectionCard
+            title="Retained media"
+            actions={
+              <span role="status" className="text-xs capitalize text-muted-foreground">
+                {playback?.state ?? "Loading..."}
+              </span>
+            }
+          >
+            <dl className="grid grid-cols-2 gap-4 text-sm">
+              {[
+                {
+                  label: "Available duration",
+                  value:
+                    playback?.startSeconds != null && playback.endSeconds != null
+                      ? `${Math.max(0, playback.endSeconds - playback.startSeconds).toFixed(1)} seconds`
+                      : "--",
+                },
+                {
+                  label: "Stored media",
+                  value: playback ? `${(playback.storedBytes / 1048576).toFixed(1)} MiB` : "--",
+                },
+                {
+                  label: "Media delivered",
+                  value: playback ? `${(playback.deliveredBytes / 1048576).toFixed(1)} MiB` : "--",
+                },
+                { label: "Rewind", value: enabled ? "Enabled" : "Disabled" },
+              ].map(({ label, value }) => (
+                <div key={label}>
+                  <dt className="text-xs text-muted-foreground">{label}</dt>
+                  <dd className="mt-1 font-medium">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            {playback?.expiresAt && (
+              <p className="text-xs text-muted-foreground">
+                Available until {new Date(playback.expiresAt).toLocaleString()}.
+              </p>
+            )}
+          </StreamSectionCard>
+        </div>
+        <StreamSectionCard
+          title="Rewind settings"
+          description="Changes apply to the next broadcast. Existing media stays available until its retention period ends."
+        >
+          {canManage && (
+            <form
+              className="grid gap-5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void save();
+              }}
+            >
+              <Label className="flex items-start gap-2 text-sm leading-relaxed">
+                <Switch checked={enabled} onCheckedChange={(e) => setEnabled(e)} />
+                Enable DVR
+              </Label>
+              <Label className="grid gap-2">
+                Rewind window (seconds, 30 to 1800)
+                <Input
+                  type="number"
+                  min={30}
+                  max={1800}
+                  value={duration}
+                  onChange={(e) => setDuration(Number(e.target.value))}
+                />
+              </Label>
+              <Label className="grid gap-2">
+                Storage limit (MiB, 16 to 512)
+                <Input
+                  type="number"
+                  min={16}
+                  max={512}
+                  value={bytes}
+                  onChange={(e) => setBytes(Number(e.target.value))}
+                />
+              </Label>
+              <Label className="grid gap-2">
+                Keep playback after stopping (seconds, 0 to 1800)
+                <Input
+                  type="number"
+                  min={0}
+                  max={1800}
+                  value={retention}
+                  onChange={(e) => setRetention(Number(e.target.value))}
+                />
+              </Label>
+              <Label className="flex items-start gap-2 text-sm leading-relaxed">
+                <Checkbox checked={consent} onCheckedChange={(e) => setConsent(e)} />I have
+                permission to retain this media.
+              </Label>
+              <Button type="submit" disabled={pending || !policy || !consent}>
+                {pending ? "Saving..." : "Save rewind settings"}
+              </Button>
+            </form>
+          )}
+
+          {!canManage && (
+            <p className="text-sm text-muted-foreground">
+              Project management access is required to change rewind settings.
+            </p>
+          )}
+        </StreamSectionCard>
+      </div>
+    </div>
   );
 }
