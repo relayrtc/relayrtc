@@ -3,7 +3,7 @@ import { z } from "zod";
 
 const claimsSchema = z
   .object({
-    aud: z.enum(["streaming-worker", "streaming-gateway", "streaming-playback", "streaming-media"]),
+    aud: z.enum(["streaming-worker", "streaming-gateway", "streaming-playback", "streaming-media", "streaming-broadcast", "streaming-recording", "streaming-asset", "streaming-audience"]),
     sub: z.string().min(1).max(128),
     streamId: z.string().max(128),
     sessionId: z.string().max(128),

@@ -202,6 +202,19 @@ export async function processRuntimeOperation(
             WHERE id=${operation.id} AND lease_token=${token}`);
           return;
         }
+        const broadcasts = await transaction.execute(sql`SELECT id FROM broadcast_run
+          WHERE ${scope} AND state NOT IN ('stopped','failed') LIMIT 1`);
+        if (broadcasts.length !== 0) {
+          await transaction.execute(sql`UPDATE runtime_operation SET status='pending', available_at=now()+interval '5 seconds',
+            lease_token=NULL, lease_expires_at=NULL, last_error='Broadcast cleanup is in progress', updated_at=now()
+            WHERE id=${operation.id} AND lease_token=${token}`);
+          return;
+        }
+        const recordings = await transaction.execute(sql`SELECT id FROM recording WHERE ${scope} AND state<>'deleted' LIMIT 1`);
+        if (recordings.length) {
+          await transaction.execute(sql`UPDATE runtime_operation SET status='pending',available_at=now()+interval '5 seconds',lease_token=NULL,lease_expires_at=NULL,last_error='Recording cleanup is in progress',updated_at=now() WHERE id=${operation.id} AND lease_token=${token}`);
+          return;
+        }
         const table =
           operation.kind === "organization.delete"
             ? "organization"
