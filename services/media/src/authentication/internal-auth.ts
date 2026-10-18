@@ -56,7 +56,11 @@ const matchesAuthority = (request: FastifyRequest, claims: MediaControlClaims): 
   return true;
 };
 
-export const registerInternalAuthentication = (app: FastifyInstance, secret: string): void => {
+export const registerInternalAuthentication = (
+  app: FastifyInstance,
+  secret: string,
+  authorizeLive?: (request: FastifyRequest, claims: MediaControlClaims) => Promise<boolean>,
+): void => {
   if (secret.length < 32)
     throw new Error("Media control requires an internal secret of at least 32 characters");
   const authenticated = new WeakMap<FastifyRequest, MediaControlClaims>();
@@ -70,24 +74,24 @@ export const registerInternalAuthentication = (app: FastifyInstance, secret: str
     const claims = verifyMediaControlToken(secret, token);
     if (!claims) {
       reply.header("www-authenticate", 'Bearer realm="relayrtc-media-control"');
-      return reply
-        .code(401)
-        .send({
-          code: "UNAUTHORIZED",
-          description: "Valid media control credentials are required",
-        });
+      return reply.code(401).send({
+        code: "UNAUTHORIZED",
+        description: "Valid media control credentials are required",
+      });
     }
     authenticated.set(request, claims);
   });
 
   app.addHook("preValidation", async (request, reply) => {
     const claims = authenticated.get(request);
-    if (!claims || !matchesAuthority(request, claims))
-      return reply
-        .code(403)
-        .send({
-          code: "FORBIDDEN",
-          description: "The media control grant does not authorize this operation",
-        });
+    if (
+      !claims ||
+      !matchesAuthority(request, claims) ||
+      (authorizeLive && !(await authorizeLive(request, claims)))
+    )
+      return reply.code(403).send({
+        code: "FORBIDDEN",
+        description: "The media control grant does not authorize this operation",
+      });
   });
 };

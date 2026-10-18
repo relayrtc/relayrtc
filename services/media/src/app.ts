@@ -1,3 +1,4 @@
+import type { RelayKitDatabase } from "@relayrtc/database";
 import { randomUUID } from "node:crypto";
 
 import Fastify, { type FastifyInstance } from "fastify";
@@ -9,6 +10,8 @@ import { mediaRoutes } from "./routes/media.js";
 import { streamingMediaRoutes } from "./routes/streaming.js";
 
 interface BuildAppOptions {
+  rememberGuest?: (roomId: string, sessionId: string) => void;
+  database?: RelayKitDatabase;
   qualityDelivery?: () => Record<string, number>;
   config: MediaConfig;
   engine?: MediaEngine;
@@ -52,6 +55,8 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   });
   if (options.engine) {
     void app.register(mediaRoutes, {
+      ...(options.rememberGuest ? { rememberGuest: options.rememberGuest } : {}),
+      ...(options.database ? { database: options.database } : {}),
       engine: options.engine,
       internalSecret: options.config.internalSecret,
       prefix: "/internal/v1",

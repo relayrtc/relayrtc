@@ -1,3 +1,5 @@
+import { sql } from "drizzle-orm";
+import type { RelayKitDatabase } from "@relayrtc/database";
 import type { RoomQualityMode } from "@relayrtc/types";
 import type { FastifyPluginCallback } from "fastify";
 
@@ -12,6 +14,8 @@ import type {
 import type { MediaPriority, SubscriberQualityMode } from "../engine/quality-controller.js";
 
 interface MediaRoutesOptions {
+  rememberGuest?: (roomId: string, sessionId: string) => void;
+  database?: RelayKitDatabase;
   engine: MediaEngine;
   internalSecret: string;
 }
@@ -109,7 +113,29 @@ const roomParametersSchema = {
 const rtcParametersSchema = { type: "object", additionalProperties: true } as const;
 
 export const mediaRoutes: FastifyPluginCallback<MediaRoutesOptions> = (app, options, done) => {
-  registerInternalAuthentication(app, options.internalSecret);
+  const database = options.database;
+  registerInternalAuthentication(
+    app,
+    options.internalSecret,
+    database
+      ? async (request, claims) => {
+          if (claims.authority.kind !== "participant") return true;
+          if (claims.authority.subjectId && !claims.authority.subjectId.startsWith("guestp_"))
+            return true;
+          const body = request.body as { trackType?: string } | undefined;
+          const permission =
+            request.method === "POST" && request.routeOptions.url?.endsWith("/tracks")
+              ? (body?.trackType ?? "")
+              : "";
+          const [row] = await database.execute(
+            sql`SELECT guest_session_authorized(${claims.authority.sessionId},${permission}) AS ok,EXISTS(SELECT 1 FROM participant_session ps JOIN participant p ON p.id=ps.participant_id WHERE ps.id=${claims.authority.sessionId} AND left(p.id,7)='guestp_') AS guest`,
+          );
+          if (row?.guest === true)
+            options.rememberGuest?.(claims.authority.roomId, claims.authority.sessionId);
+          return row?.ok === true;
+        }
+      : undefined,
+  );
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof MediaEngineError) {
       const statusCode =
