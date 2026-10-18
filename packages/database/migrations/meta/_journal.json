@@ -232,6 +232,76 @@
       "when": 1792108800000,
       "tag": "0032_streaming_foundation",
       "breakpoints": false
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792195200000,
+      "tag": "0033_broadcast_orchestration",
+      "breakpoints": false
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792281600000,
+      "tag": "0034_multistreaming",
+      "breakpoints": false
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792368000000,
+      "tag": "0035_recording_vod",
+      "breakpoints": false
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792454400000,
+      "tag": "0036_scheduled_broadcasts",
+      "breakpoints": false
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792540800000,
+      "tag": "0037_restream_sources",
+      "breakpoints": false
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792627200000,
+      "tag": "0038_clips",
+      "breakpoints": false
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792713600000,
+      "tag": "0039_mixers",
+      "breakpoints": false
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0040_live_dvr",
+      "breakpoints": false
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792886400000,
+      "tag": "0041_stream_guests",
+      "breakpoints": false
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792972800000,
+      "tag": "0042_stream_workspace_indexes",
+      "breakpoints": false
     }
   ]
 }
