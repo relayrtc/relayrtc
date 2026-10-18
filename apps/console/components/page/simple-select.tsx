@@ -1,4 +1,4 @@
-'use client'
+"use client";
 
 import {
   Select,
@@ -6,35 +6,46 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { cn } from '@/lib/utils'
+} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
-export type SelectOption = { value: string; label: string }
+export type SelectOption = { value: string; label: string };
 
 export function SimpleSelect({
   value,
+  defaultValue,
+  name,
+  required,
+  disabled,
   onValueChange,
   options,
   placeholder,
   id,
   className,
-  size = 'default',
-  'aria-label': ariaLabel,
+  size = "default",
+  "aria-label": ariaLabel,
 }: {
-  value: string
-  onValueChange: (value: string) => void
-  options: SelectOption[]
-  placeholder?: string
-  id?: string
-  className?: string
-  size?: 'default' | 'sm'
-  'aria-label'?: string
+  value?: string;
+  defaultValue?: string;
+  name?: string;
+  required?: boolean;
+  disabled?: boolean;
+  onValueChange?: (value: string) => void;
+  options: SelectOption[];
+  placeholder?: string;
+  id?: string;
+  className?: string;
+  size?: "default" | "sm";
+  "aria-label"?: string;
 }) {
   return (
     <Select
-      value={value}
+      {...(value === undefined ? { defaultValue } : { value })}
+      name={name}
+      required={required}
+      disabled={disabled}
       onValueChange={(next) => {
-        if (next !== null) onValueChange(next)
+        if (next !== null) onValueChange?.(next);
       }}
       items={options}
     >
@@ -42,10 +53,7 @@ export function SimpleSelect({
         id={id}
         size={size}
         aria-label={ariaLabel}
-        className={cn(
-          'w-full rounded-full bg-background px-3.5 data-[size=default]:h-10 data-[size=sm]:h-9 sm:w-fit',
-          className,
-        )}
+        className={cn("w-full sm:w-fit", className)}
       >
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
@@ -57,5 +65,5 @@ export function SimpleSelect({
         ))}
       </SelectContent>
     </Select>
-  )
+  );
 }
