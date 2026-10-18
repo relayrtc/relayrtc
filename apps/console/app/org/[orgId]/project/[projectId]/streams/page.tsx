@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { requireProject } from "@/lib/console-data";
 import { StreamsManager } from "@/components/project/streams-manager";
 import { listStreamsAction } from "@/actions/streaming";
+import { getStreamListActivityAction } from "@/actions/stream-list";
 
 export const metadata: Metadata = {
   title: "Streams",
@@ -32,6 +33,14 @@ export default async function StreamsPage({
   const result = selected
     ? await listStreamsAction({ projectId, environmentId: selected.id })
     : null;
+  const activity =
+    selected && result?.data
+      ? await getStreamListActivityAction({
+          projectId,
+          environmentId: selected.id,
+          streamIds: result.data.data.map((stream) => stream.id),
+        })
+      : null;
   return (
     <StreamsManager
       key={selected?.id ?? "empty"}
@@ -42,6 +51,8 @@ export default async function StreamsPage({
       initialRows={result?.data?.data ?? []}
       initialCursor={result?.data?.nextCursor ?? null}
       initialError={result?.error?.description ?? null}
+      initialActivity={activity?.data ?? {}}
+      initialActivityError={activity?.error?.description ?? null}
     />
   );
 }
