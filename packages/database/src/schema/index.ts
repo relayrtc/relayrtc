@@ -19,3 +19,16 @@ export * from "./usage-aggregation.js";
 export * from "./turn-usage.js";
 export * from "./webhook.js";
 export * from "./streaming.js";
+export * from "./broadcast.js";
+export * from "./destination.js";
+export * from "./recording.js";
+export * from "./schedule.js";
+export * from "./restream.js";
+
+export * from "./clip.js";
+
+export * from "./mixer.js";
+
+export * from "./dvr.js";
+
+export * from "./guest.js";

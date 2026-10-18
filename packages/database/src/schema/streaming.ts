@@ -1,5 +1,7 @@
 import {
+  type AnyPgColumn,
   bigint,
+  boolean,
   doublePrecision,
   index,
   integer,
@@ -11,6 +13,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { mixer } from "./mixer.js";
 
 export const streamingStream = pgTable(
   "streaming_stream",
@@ -43,6 +46,8 @@ export const streamingSession = pgTable(
     desiredState: text("desired_state").notNull().default("running"),
     generation: integer("generation").notNull().default(0),
     attempts: integer("attempts").notNull().default(0),
+    guestStage: boolean("guest_stage").notNull().default(false),
+    mixerId: text("mixer_id").references((): AnyPgColumn => mixer.id),
     leaseToken: text("lease_token"),
     workerId: text("worker_id"),
     leasedUntil: timestamp("leased_until", { withTimezone: true }),
@@ -86,6 +91,8 @@ export const streamingIngestCredential = pgTable(
       .notNull()
       .references(() => streamingStream.id),
     secretHash: text("secret_hash").notNull().unique(),
+    scheduleId: text("schedule_id"),
+    notBefore: timestamp("not_before", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -98,6 +105,8 @@ export const streamingOperation = pgTable("streaming_operation", {
     .notNull()
     .references(() => streamingStream.id),
   sessionId: text("session_id").references(() => streamingSession.id),
+  broadcastId: text("broadcast_id"),
+  outputId: text("output_id"),
   kind: text("kind").notNull(),
   status: text("status").notNull().default("pending"),
   errorCode: text("error_code"),
