@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -90,6 +91,15 @@ func (store *Store) SetSignalingInstance(instanceID string) {
 	store.signalingInstanceID = instanceID
 }
 
+func (store *Store) AuthorizeGuest(ctx context.Context, claims auth.Claims) bool {
+	if !strings.HasPrefix(claims.ParticipantID, "guestp_") {
+		return true
+	}
+	var ok bool
+	err := store.pool.QueryRow(ctx, `SELECT guest_token_authorized($1,$2)`, claims.ParticipantID, claims.TokenID).Scan(&ok)
+	return err == nil && ok
+}
+
 func (store *Store) IsActive(ctx context.Context, roomID, participantID, sessionID string) (bool, error) {
 	var active bool
 	err := store.pool.QueryRow(ctx, `SELECT EXISTS (
@@ -97,7 +107,7 @@ func (store *Store) IsActive(ctx context.Context, roomID, participantID, session
  JOIN environment e ON e.id = r.environment_id JOIN project pr ON pr.id = r.project_id
  JOIN organization o ON o.id = pr.organization_id
  WHERE s.id = $1 AND p.id = $2 AND p.room_id = $3 AND p.left_at IS NULL
- AND s.connection_state = 'connected' AND r.status IN ('created', 'active') AND r.ended_at IS NULL AND e.status = 'active' AND pr.status = 'active' AND o.status = 'active'
+ AND (left(p.id,7)<>'guestp_' OR guest_participant_authorized(p.id)) AND s.connection_state = 'connected' AND r.status IN ('created', 'active') AND r.ended_at IS NULL AND e.status = 'active' AND pr.status = 'active' AND o.status = 'active'
  AND (s.signaling_instance_id IS NULL OR EXISTS (SELECT 1 FROM signaling_node_lease l
  WHERE l.instance_id = s.signaling_instance_id AND l.node_id = s.signaling_node_id AND l.expires_at > now()))
 )`, sessionID, participantID, roomID).Scan(&active)
@@ -139,6 +149,12 @@ func (store *Store) Join(ctx context.Context, claims auth.Claims, sessionID, nod
 		return JoinResult{}, fmt.Errorf("begin join transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if strings.HasPrefix(claims.ParticipantID, "guestp_") {
+		var allowed bool
+		if err := tx.QueryRow(ctx, `SELECT guest_token_authorized($1,$2)`, claims.ParticipantID, claims.TokenID).Scan(&allowed); err != nil || !allowed {
+			return JoinResult{}, ErrRoomNotJoinable
+		}
+	}
 
 	if err := requireActiveEnvironment(ctx, tx, claims.ProjectID, claims.EnvironmentID); err != nil {
 		return JoinResult{}, err
@@ -156,6 +172,13 @@ func (store *Store) Join(ctx context.Context, claims auth.Claims, sessionID, nod
 		return JoinResult{}, ErrRoomNotJoinable
 	}
 
+	// Recheck after the room lock, so a concurrent revocation cannot consume a seat.
+	if strings.HasPrefix(claims.ParticipantID, "guestp_") {
+		var allowed bool
+		if err := tx.QueryRow(ctx, `SELECT guest_token_authorized($1,$2)`, claims.ParticipantID, claims.TokenID).Scan(&allowed); err != nil || !allowed {
+			return JoinResult{}, ErrRoomNotJoinable
+		}
+	}
 	var active int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM participant WHERE room_id = $1 AND left_at IS NULL`, room.ID).Scan(&active); err != nil {
 		return JoinResult{}, fmt.Errorf("count active participants: %w", err)
@@ -253,6 +276,12 @@ func (store *Store) Resume(
 		return ResumeResult{}, fmt.Errorf("begin resume transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if strings.HasPrefix(claims.ParticipantID, "guestp_") {
+		var allowed bool
+		if err := tx.QueryRow(ctx, `SELECT guest_token_authorized($1,$2)`, claims.ParticipantID, claims.TokenID).Scan(&allowed); err != nil || !allowed {
+			return ResumeResult{}, ErrSessionNotResumable
+		}
+	}
 
 	if err := requireActiveEnvironment(ctx, tx, claims.ProjectID, claims.EnvironmentID); err != nil {
 		if errors.Is(err, ErrRoomNotJoinable) {
@@ -292,6 +321,12 @@ func (store *Store) Resume(
 		return ResumeResult{}, fmt.Errorf("select resumable participant session: %w", err)
 	}
 
+	if strings.HasPrefix(claims.ParticipantID, "guestp_") {
+		var allowed bool
+		if err := tx.QueryRow(ctx, `SELECT guest_token_authorized($1,$2)`, claims.ParticipantID, claims.TokenID).Scan(&allowed); err != nil || !allowed {
+			return ResumeResult{}, ErrSessionNotResumable
+		}
+	}
 	reconnectedAt := time.Now().UTC()
 	err = tx.QueryRow(ctx, `
 		UPDATE participant_session

@@ -113,7 +113,7 @@ func (command Command) Authority() map[string]string {
 	case "participant.remove":
 		return map[string]string{"kind": "participant-cleanup", "roomId": scope.RoomID, "participantId": scope.MediaParticipantID}
 	default:
-		return map[string]string{"kind": "participant", "roomId": scope.RoomID, "participantId": scope.MediaParticipantID, "sessionId": scope.SessionID}
+		return map[string]string{"kind": "participant", "subjectId": scope.ParticipantID, "roomId": scope.RoomID, "participantId": scope.MediaParticipantID, "sessionId": scope.SessionID}
 	}
 }
 

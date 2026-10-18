@@ -125,11 +125,11 @@ func (room *postgresRoom) Joined(ctx context.Context, claims auth.Claims, sessio
  JOIN environment e ON e.id = r.environment_id JOIN project pr ON pr.id = r.project_id
  JOIN organization o ON o.id = pr.organization_id
  WHERE s.id = $1 AND p.id = $2 AND r.id = $3 AND r.project_id = $4 AND r.environment_id = $5
- AND s.signaling_node_id = $6 AND s.connection_state = 'connected' AND p.left_at IS NULL
+ AND (left(p.id,7)<>'guestp_' OR guest_token_authorized(p.id,$7)) AND s.signaling_node_id = $6 AND s.connection_state = 'connected' AND p.left_at IS NULL
  AND r.status IN ('created', 'active') AND r.ended_at IS NULL AND e.status = 'active' AND pr.status = 'active' AND o.status = 'active'
  AND (s.signaling_instance_id IS NULL OR EXISTS (SELECT 1 FROM signaling_node_lease l
  WHERE l.instance_id = s.signaling_instance_id AND l.node_id = s.signaling_node_id AND l.expires_at > now()))
-)`, sessionID, claims.ParticipantID, room.roomID, claims.ProjectID, claims.EnvironmentID, room.nodeID).Scan(&joined)
+)`, sessionID, claims.ParticipantID, room.roomID, claims.ProjectID, claims.EnvironmentID, room.nodeID, claims.TokenID).Scan(&joined)
 	if err != nil {
 		return ErrUnavailable
 	}
