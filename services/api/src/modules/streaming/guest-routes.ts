@@ -645,10 +645,10 @@ export const guestRoutes: FastifyPluginAsync<
           "Wait briefly before renewing stage credentials.",
         );
       await db.execute(
-        sql`UPDATE stream_guest SET participant_id=${participantId},name=${a.name},expires_at=${expiresAt} WHERE id=${g.id}`,
+        sql`UPDATE stream_guest SET participant_id=${participantId},name=${a.name},expires_at=${expiresAt.toISOString()} WHERE id=${g.id}`,
       );
       await db.execute(
-        sql`INSERT INTO stream_guest_grant(token_id,guest_id,participant_id,version,expires_at) VALUES(${tokenId},${g.id},${participantId},${g.version},${expiresAt})`,
+        sql`INSERT INTO stream_guest_grant(token_id,guest_id,participant_id,version,expires_at) VALUES(${tokenId},${g.id},${participantId},${g.version},${expiresAt.toISOString()})`,
       );
       const media = {
         audio: g.media.audio && !g.muted_audio,
