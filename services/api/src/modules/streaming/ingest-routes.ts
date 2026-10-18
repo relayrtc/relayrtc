@@ -23,7 +23,8 @@ async function credential(db: Transaction, streamId: string, value: string) {
   const [row] =
     await db.execute(sql`SELECT c.id FROM streaming_ingest_credential c JOIN streaming_stream t ON t.id=c.stream_id
     JOIN environment e ON e.id=t.environment_id AND e.project_id=t.project_id JOIN project p ON p.id=t.project_id JOIN organization o ON o.id=t.organization_id
-    WHERE c.stream_id=${streamId} AND c.secret_hash=${streamingSecretHash(value)} AND c.revoked_at IS NULL AND c.expires_at>now()
+    WHERE c.stream_id=${streamId} AND c.secret_hash=${streamingSecretHash(value)} AND c.revoked_at IS NULL AND c.expires_at>now() AND (c.not_before IS NULL OR c.not_before<=now()) AND (c.schedule_id IS NULL OR EXISTS(SELECT 1 FROM broadcast_schedule bs WHERE bs.id=c.schedule_id AND bs.state IN ('scheduled','starting','running') AND bs.ends_at>now()))
+    AND NOT EXISTS(SELECT 1 FROM restream_session r WHERE r.stream_id=c.stream_id AND r.kind='pull' AND r.ended_at IS NULL AND r.desired_state='running' AND (r.credential_id IS NULL OR r.credential_id<>c.id OR r.leased_until IS NULL OR r.leased_until<=now()))
     AND t.status='active' AND e.status='active' AND p.status='active' AND o.status='active' FOR SHARE OF c,e,p,o`);
   if (!row) throw denied();
   return String(row.id);
@@ -120,8 +121,12 @@ export const ingestRoutes: FastifyPluginAsync<{
     const streamId = validate(streamingIdSchema, input.path.slice(7));
     const value = token || (new URLSearchParams(input.query).get("pass") ?? "");
     await database.transaction(async (db) => {
-      const credentialId = await credential(db, streamId, value),
-        stream = await getStream(db, streamId, true);
+      // Ownership, stream, then credential: match schedule cancellation's lock order.
+      await db.execute(
+        sql`SELECT t.id FROM streaming_stream t JOIN environment e ON e.id=t.environment_id JOIN project p ON p.id=t.project_id JOIN organization o ON o.id=t.organization_id WHERE t.id=${streamId} AND e.status='active' AND p.status='active' AND o.status='active' FOR SHARE OF e,p,o`,
+      );
+      const stream = await getStream(db, streamId, true);
+      const credentialId = await credential(db, streamId, value);
       if (stream.source.kind !== (input.protocol === "webrtc" ? "whip" : "rtmp")) throw denied();
       await startSession(db, stream, config, {
         id: input.id,

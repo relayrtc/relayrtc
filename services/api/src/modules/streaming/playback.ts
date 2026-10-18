@@ -1,9 +1,5 @@
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
-import {
-  signStreamingGrant,
-  verifyStreamingGrant,
-  streamingSecretHash,
-} from "@relayrtc/protocol/streaming-control";
+import { verifyStreamingGrant, streamingSecretHash } from "@relayrtc/protocol/streaming-control";
 import { streamingIdSchema, streamingObjectNameSchema } from "@relayrtc/validation";
 import { eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
@@ -12,7 +8,7 @@ import { ApiError } from "../../http/errors/api-error.js";
 import { validate } from "../../http/validation/validate.js";
 import type { StreamingConfig } from "./config.js";
 import { programPath } from "./gateway.js";
-import { getStream, type SessionRow, type StreamRow } from "./repository.js";
+import { getStream, type Transaction, type SessionRow, type StreamRow } from "./repository.js";
 import { leased } from "./runtime-routes.js";
 import { boundedBody, StreamingStore } from "./store.js";
 
@@ -58,18 +54,26 @@ export class StreamingOrigin {
         throw new ApiError(410, "PLAYBACK_ENDED", "This playback session is no longer available");
       if (references.length) {
         const children = await db.execute(
-          sql`SELECT name FROM streaming_object WHERE session_id=${session.id} AND name=ANY(${references}::text[]) AND committed_at IS NOT NULL FOR SHARE`,
+          sql`SELECT name FROM streaming_object WHERE session_id=${session.id} AND name=ANY(ARRAY[${sql.join(
+            references.map((name) => sql`${name}`),
+            sql`, `,
+          )}]::text[]) AND committed_at IS NOT NULL FOR SHARE`,
         );
         if (children.length !== new Set(references).size)
           throw new Error("PLAYLIST_OBJECT_NOT_COMMITTED");
       }
       await db.execute(sql`INSERT INTO streaming_object(session_id,name,object_key,size_bytes,sha256,content_type,referenced_names,expires_at)
-        VALUES(${session.id},${immutableName},${key},${body.length},${digest},${contentType(name)},${references}::text[],now()+interval '60 seconds') ON CONFLICT DO NOTHING`);
+        VALUES(${session.id},${immutableName},${key},${body.length},${digest},${contentType(name)},ARRAY[${sql.join(
+          references.map((name) => sql`${name}`),
+          sql`, `,
+        )}]::text[],now()+interval '60 seconds') ON CONFLICT DO NOTHING`);
       const [existing] = await db.execute(
         sql`SELECT sha256,committed_at FROM streaming_object WHERE session_id=${session.id} AND name=${immutableName} FOR UPDATE`,
       );
       if (existing?.sha256 !== digest) throw new Error("IMMUTABLE_MEDIA_CONFLICT");
-      await db.execute(sql`UPDATE streaming_object SET expires_at=greatest(expires_at,now()+make_interval(secs=>${existing.committed_at ? stream.retentionSeconds : 60})) WHERE session_id=${session.id} AND name=${immutableName}`);
+      await db.execute(
+        sql`UPDATE streaming_object SET expires_at=greatest(expires_at,now()+make_interval(secs=>${existing.committed_at ? stream.retentionSeconds : 60})) WHERE session_id=${session.id} AND name=${immutableName}`,
+      );
       return existing.committed_at !== null;
     });
     if (alreadyCommitted) return;
@@ -101,22 +105,13 @@ export class StreamingOrigin {
     }
     if (generation !== session.generation)
       throw new ApiError(410, "PLAYBACK_OBJECT_EXPIRED", "This playback object has expired");
-    const token = signStreamingGrant(
-      this.config.secret,
-      {
-        aud: "streaming-gateway",
-        sub: "origin",
-        streamId: stream.id,
-        sessionId: session.id,
-        generation,
-        action: "read",
-      },
-      30,
-    );
+    // MediaMTX 1.21 HLS browser sessions redirect and add private session URIs.
+    // Use its protected reverse-proxy mode so our own scoped playback grants
+    // remain authoritative and the gateway emits clean, relative media names.
     const response = await fetch(
       `${this.config.gatewayHls}/${programPath(session.id, generation)}/${name}${query}`,
       {
-        headers: { authorization: `Bearer ${token}` },
+        headers: { authorization: `Bearer ${this.config.gatewayKey}` },
         signal: AbortSignal.timeout(12000),
         redirect: "error",
       },
@@ -238,7 +233,21 @@ export const playbackRoutes: FastifyPluginAsync<{
       grant.sessionId !== params.sessionId
     )
       throw new ApiError(401, "PLAYBACK_GRANT_REQUIRED", "Refresh your playback grant");
+    const scheduledAccess = async (db: Transaction) => {
+      if (grant.sub.startsWith("sview_")) {
+        const [allowed] = await db.execute(
+          sql`SELECT g.id FROM schedule_viewer_grant g JOIN broadcast_schedule bs ON bs.id=g.schedule_id JOIN broadcast_run br ON br.id=bs.broadcast_id WHERE g.id=${grant.sub} AND g.token_hash=${streamingSecretHash(token)} AND g.revoked_at IS NULL AND g.expires_at>now() AND g.epoch=bs.grant_epoch AND bs.state='running' AND br.desired_state='running' AND br.source_session_id=${params.sessionId} AND bs.stream_id=${params.streamId} AND bs.starts_at-make_interval(secs=>bs.viewer_early_seconds)<=now() AND bs.ends_at>now()`,
+        );
+        if (!allowed)
+          throw new ApiError(
+            410,
+            "SCHEDULE_GRANT_REVOKED",
+            "The scheduled event is no longer available.",
+          );
+      }
+    };
     const data = await database.transaction(async (db) => {
+      await scheduledAccess(db);
       const stream = await getStream(db, params.streamId);
       const [session] = await db
         .select()
@@ -324,6 +333,7 @@ export const playbackRoutes: FastifyPluginAsync<{
         .header("content-range", `bytes ${String(start)}-${String(end)}/${String(body.length)}`);
       body = body.subarray(start, end + 1);
     }
+    await database.transaction(scheduledAccess);
     return reply.header("accept-ranges", "bytes").send(body);
   });
   return Promise.resolve();
