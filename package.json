@@ -20,6 +20,7 @@
     "docker:logs": "docker compose --env-file .env logs --follow",
     "docker:status": "docker compose --env-file .env ps",
     "docker:up": "node scripts/docker-up.mjs",
+    "docker:up:streaming": "node scripts/docker-up.mjs --streaming",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "infra:config": "docker compose --env-file .env config --quiet",
