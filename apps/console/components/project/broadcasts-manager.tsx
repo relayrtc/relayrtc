@@ -1,4 +1,8 @@
 "use client";
+import { StreamTable } from "./stream-table";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
+import { BroadcastPreparation } from "./broadcast-preparation";
+import { StreamChoice } from "./stream-choice";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useStreamWorkspace } from "./stream-workspace";
 import {
@@ -23,7 +27,12 @@ import {
 import { listDestinationsAction, retryBroadcastOutputAction } from "@/actions/destinations";
 import type { ConsoleDestination } from "@/lib/streaming/destination-contracts";
 import { getStreamingOperationAction } from "@/actions/streaming";
-import { PageHeader } from "@/components/page/page-header";
+import {
+  StreamingHeader as PageHeader,
+  StreamToolbar,
+  StreamEmptyState,
+  StreamFieldSection,
+} from "./stream-ui";
 import { SimpleSelect } from "@/components/page/simple-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,13 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+
 import {
   AlertDialog,
   AlertDialogContent,
@@ -86,7 +89,11 @@ export function BroadcastsManager({
   initialError: string | null;
   initialLimits: { activeRuns: number; maxActiveRuns: number; reservedOutputs: number } | null;
 }) {
+  const task = useStreamingTask();
+  const creating = task.active;
+  const setCreating = task.setOpen;
   const workspace = useStreamWorkspace();
+  const [query, setQuery] = useState("");
   const scopedStreamId = workspace?.streamId;
   const router = useRouter(),
     pathname = usePathname(),
@@ -95,14 +102,14 @@ export function BroadcastsManager({
     [cursor, setCursor] = useState(initialCursor),
     [error, setError] = useState(initialError);
   const [filter, setFilter] = useState("all"),
-    [pending, setPending] = useState(false),
-    [creating, setCreating] = useState(false);
+    [pending, setPending] = useState(false);
   const [limits, setLimits] = useState(initialLimits);
   const [selected, setSelected] = useState<ConsoleBroadcast | null>(null);
   const sequence = useRef(0),
     mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
+
     return () => {
       mounted.current = false;
     };
@@ -135,13 +142,63 @@ export function BroadcastsManager({
     },
     [projectId, environmentId, filter, scopedStreamId],
   );
+  const visibleRows = rows.filter((row) =>
+    `${row.name} ${row.id} ${row.state}`.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  if (creating)
+    return (
+      <StreamingTaskPage
+        wide
+        title="Create a broadcast"
+        description="A broadcast is one live session. Choose its destinations, review capture settings, then create a draft or start broadcasting."
+        backHref={task.backHref}
+        guidance="Enable the clip buffer and DVR before starting. Each broadcast keeps its own capture settings and history. Create a new broadcast for your next session."
+      >
+        {!canManage ? (
+          <p>Management access is required.</p>
+        ) : (
+          <>
+            {creating && (
+              <BroadcastForm
+                projectId={projectId}
+                environmentId={environmentId}
+                onSaved={(run) => {
+                  if (workspace) router.push(workspace.href("overview", run.id));
+                  else setCreating(false);
+                }}
+              />
+            )}
+          </>
+        )}
+      </StreamingTaskPage>
+    );
   return (
-    <div className="space-y-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
         title="Broadcasts"
-        description="A broadcast is one live run of this stream. Start a run to record, make clips or send video to platforms."
+        description="Manage live sessions, destinations and capture settings."
+        actions={
+          canManage && (
+            <Button
+              size="lg"
+              disabled={pending || !environmentId}
+              onClick={() => setCreating(true)}
+            >
+              <Plus />
+              Create broadcast
+            </Button>
+          )
+        }
       />
-      <div className="flex flex-wrap items-center gap-3">
+      <StreamToolbar>
+        <Input
+          type="search"
+          aria-label="Search broadcasts"
+          placeholder="Search broadcasts..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          className="w-full bg-background sm:max-w-xs"
+        />
         {!workspace && (
           <SimpleSelect
             aria-label="Environment"
@@ -155,7 +212,7 @@ export function BroadcastsManager({
           />
         )}
         <SimpleSelect
-          aria-label="Run state"
+          aria-label="Broadcast status"
           value={filter}
           options={states.map((value) => ({ value, label: value.replaceAll("_", " ") }))}
           onValueChange={(value) => {
@@ -173,13 +230,7 @@ export function BroadcastsManager({
           <RefreshCw />
           Refresh
         </Button>
-        {canManage && (
-          <Button disabled={pending || !environmentId} onClick={() => setCreating(true)}>
-            <Plus />
-            Create run
-          </Button>
-        )}
-      </div>
+      </StreamToolbar>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
@@ -188,31 +239,35 @@ export function BroadcastsManager({
       {!environmentId && <p>Select an active environment to manage broadcasts.</p>}
       {limits && (
         <p className="text-sm text-muted-foreground">
-          Environment run capacity: {limits.activeRuns}/{limits.maxActiveRuns}; reserved output
-          slots: {limits.reservedOutputs}.
+          Active broadcasts: {limits.activeRuns}/{limits.maxActiveRuns}; reserved destination slots:{" "}
+          {limits.reservedOutputs}.
         </p>
       )}
-      <div className="overflow-x-auto rounded-xl border">
-        <Table className="w-full text-left text-sm">
+      <StreamTable>
+        <Table hidden={!visibleRows.length} className="w-full text-left text-sm">
           <TableHeader>
             <TableRow className="border-b">
-              <TableHead className="p-4">Run</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead>Source</TableHead>
+              <TableHead className="p-4">Broadcast</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Created</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((run) => (
+            {visibleRows.map((run) => (
               <TableRow key={run.id} className="border-b last:border-0">
                 <TableCell className="p-4">
                   <p className="font-medium">{run.name}</p>
                   <p className="text-xs text-muted-foreground">{run.id}</p>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline">{run.state.replaceAll("_", " ")}</Badge>
+                  <Badge variant="secondary" className="capitalize">
+                    {run.state.replaceAll("_", " ")}
+                  </Badge>
                 </TableCell>
-                <TableCell className="font-mono text-xs">{run.streamId}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {new Date(run.createdAt).toLocaleDateString()}
+                </TableCell>
                 <TableCell>
                   <Button
                     variant="outline"
@@ -228,12 +283,18 @@ export function BroadcastsManager({
             ))}
           </TableBody>
         </Table>
-        {!rows.length && (
-          <p className="p-4 text-sm text-muted-foreground">
-            No broadcast runs match this selection.
-          </p>
+        {!visibleRows.length && (
+          <StreamEmptyState
+            className="border-0 bg-transparent"
+            title={query ? "No matches found" : "No broadcasts yet"}
+            description={
+              query
+                ? "Try a different search. Load more items to expand your results."
+                : "Create a broadcast to go live, choose destinations and manage capture."
+            }
+          />
         )}
-      </div>
+      </StreamTable>
       {cursor && (
         <Button
           variant="outline"
@@ -245,28 +306,7 @@ export function BroadcastsManager({
           Load more
         </Button>
       )}
-      <Sheet open={creating} onOpenChange={setCreating}>
-        <SheetContent className="overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Create broadcast run</SheetTitle>
-            <SheetDescription>
-              Capture the current stream configuration. A stopped run cannot restart; create a new
-              run instead.
-            </SheetDescription>
-          </SheetHeader>
-          {creating && (
-            <BroadcastForm
-              projectId={projectId}
-              environmentId={environmentId}
-              onSaved={(run) => {
-                setCreating(false);
-                if (workspace) router.push(workspace.href("overview", run.id));
-                else void load();
-              }}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
+
       <Dialog
         open={selected !== null}
         onOpenChange={(open) => {
@@ -280,7 +320,7 @@ export function BroadcastsManager({
           <DialogHeader>
             <DialogTitle>{selected?.name}</DialogTitle>
             <DialogDescription>
-              Live source/output health and durable operation progress.
+              Check source health, destination status and recent actions.
             </DialogDescription>
           </DialogHeader>
           {selected && (
@@ -308,6 +348,10 @@ export function BroadcastForm({
 }) {
   const workspace = useStreamWorkspace();
   const scopedStreamId = workspace?.streamId;
+  const [startImmediately, setStartImmediately] = useState(true);
+  const [createdRun, setCreatedRun] = useState<ConsoleBroadcast | null>(null);
+  const startKey = useRef(crypto.randomUUID());
+
   const [destinationsReady, setDestinationsReady] = useState(!scopedStreamId);
   const [destinationLoadError, setDestinationLoadError] = useState<string | null>(null);
   const [destinationRetry, setDestinationRetry] = useState(0);
@@ -329,7 +373,7 @@ export function BroadcastForm({
           const enabled = result.data.data.filter((d) => d.enabled);
           setDestinationsReady(true);
           setDestinations(enabled);
-          setDestinationIds(enabled.map((d) => d.id));
+          setDestinationIds([]);
         }
       })
       .catch(() => {
@@ -341,7 +385,7 @@ export function BroadcastForm({
   }, [projectId, environmentId, streamId, scopedStreamId, destinationRetry]);
   return (
     <form
-      className="space-y-4 p-4"
+      className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)] [&_button]:rounded-lg [&_input]:rounded-lg"
       onChange={() => {
         key.current = crypto.randomUUID();
       }}
@@ -354,162 +398,240 @@ export function BroadcastForm({
         setError(null);
         const form = new FormData(event.currentTarget);
         setPending(true);
-        void createBroadcastAction({
-          projectId,
-          environmentId,
-          idempotencyKey: key.current,
-          configuration: {
-            name: String(form.get("name")),
-            streamId: String(form.get("streamId")),
-            destinationIds,
-            waitTimeoutSeconds: Number(form.get("waitTimeoutSeconds")),
-            maxDurationSeconds: Number(form.get("maxDurationSeconds")),
-          },
-        })
-          .then((result) => {
-            if (result.error) setError(result.error.description);
-            else onSaved(result.data);
-          })
-          .catch(() => setError("Creation failed. Retry the same configuration."))
+        void (async () => {
+          let run = createdRun;
+          if (!run) {
+            const result = await createBroadcastAction({
+              projectId,
+              environmentId,
+              idempotencyKey: key.current,
+              configuration: {
+                name: String(form.get("name")),
+                streamId: String(form.get("streamId")),
+                destinationIds,
+                waitTimeoutSeconds: Number(form.get("waitTimeoutSeconds")),
+                maxDurationSeconds: Number(form.get("maxDurationSeconds")),
+              },
+            });
+            if (result.error) {
+              setError(result.error.description);
+              return;
+            }
+            run = result.data;
+            setCreatedRun(run);
+          }
+          if (startImmediately) {
+            const started = await commandBroadcastAction({
+              projectId,
+              environmentId,
+              broadcastId: run.id,
+              command: "start",
+              version: run.version,
+              idempotencyKey: startKey.current,
+            });
+            if (started.error) {
+              setError(
+                `Your broadcast was created, but could not start: ${started.error.description}. Retry starting below; another broadcast will not be created.`,
+              );
+              return;
+            }
+          }
+          onSaved(run);
+        })()
+          .catch(() =>
+            setError("The request could not be confirmed. Retry to check the same broadcast."),
+          )
           .finally(() => setPending(false));
       }}
     >
-      <Label htmlFor="broadcast-name">Name</Label>
-      <Input
-        id="broadcast-name"
-        name="name"
-        required
-        maxLength={120}
-        defaultValue={workspace?.stream.name}
-      />
-      {workspace ? (
-        <input type="hidden" name="streamId" value={streamId} />
-      ) : (
-        <>
-          {" "}
-          <Label htmlFor="broadcast-stream">Stream ID</Label>
-          <Input
-            id="broadcast-stream"
-            name="streamId"
-            required
-            value={streamId}
-            onChange={(event) => {
-              selection.current++;
-              setStreamId(event.target.value);
-              setDestinations([]);
-              setDestinationIds([]);
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending || !streamId}
-            onClick={() => {
-              const current = ++selection.current;
-              void listDestinationsAction({ projectId, environmentId, streamId })
-                .then((result) => {
-                  if (current !== selection.current) return;
-                  if (result.error) setError(result.error.description);
-                  else {
-                    setDestinations(result.data.data.filter((d) => d.enabled));
-                    setError(null);
-                  }
-                })
-                .catch(() => setError("Destinations are unavailable."));
-            }}
+      <div className="min-w-0 space-y-5">
+        <fieldset disabled={pending || !!createdRun} className="space-y-4">
+          <StreamFieldSection title="Broadcast details">
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="broadcast-name">Name</Label>
+              <Input
+                id="broadcast-name"
+                name="name"
+                required
+                maxLength={120}
+                defaultValue={workspace?.stream.name}
+              />
+            </div>
+            {workspace ? (
+              <input type="hidden" name="streamId" value={streamId} />
+            ) : (
+              <>
+                {" "}
+                <Label>Stream</Label>
+                <StreamChoice
+                  projectId={projectId}
+                  environmentId={environmentId}
+                  value={streamId}
+                  onChange={(id) => {
+                    selection.current++;
+                    setStreamId(id);
+                    setDestinations([]);
+                    setDestinationIds([]);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={pending || !streamId}
+                  onClick={() => {
+                    const current = ++selection.current;
+                    void listDestinationsAction({ projectId, environmentId, streamId })
+                      .then((result) => {
+                        if (current !== selection.current) return;
+                        if (result.error) setError(result.error.description);
+                        else {
+                          setDestinations(result.data.data.filter((d) => d.enabled));
+                          setError(null);
+                        }
+                      })
+                      .catch(() => setError("Destinations are unavailable."));
+                  }}
+                >
+                  Load destinations
+                </Button>
+              </>
+            )}
+          </StreamFieldSection>
+          <StreamFieldSection
+            title="Destinations"
+            description="Private playback is included. Select any platforms you also want to send video to."
           >
-            Load destinations
-          </Button>
-        </>
-      )}
-      {destinationLoadError && (
-        <div role="alert" className="space-y-2 rounded-lg border p-3 text-sm">
-          <p>{destinationLoadError}</p>
-          <p className="text-muted-foreground">
-            Retry, or create this broadcast with private playback only. No platform outputs will be
-            selected.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending}
-              onClick={() => {
-                setDestinationLoadError(null);
-                setDestinationsReady(false);
-                setDestinationRetry((v) => v + 1);
-              }}
-            >
-              Retry destinations
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending}
-              onClick={() => {
-                setDestinations([]);
-                setDestinationIds([]);
-                setDestinationLoadError(null);
-                setDestinationsReady(true);
-              }}
-            >
-              Continue with private playback only
-            </Button>
-          </div>
-        </div>
-      )}
-      {destinations.map((destination) => (
-        <Label key={destination.id} className="flex items-center gap-2 text-sm">
+            {destinationLoadError && (
+              <div role="alert" className="space-y-3 rounded-xl bg-muted/40 p-4 text-sm">
+                <p>{destinationLoadError}</p>
+                <p className="text-muted-foreground">
+                  Retry, or create this broadcast with private playback only. No platform outputs
+                  will be selected.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => {
+                      setDestinationLoadError(null);
+                      setDestinationsReady(false);
+                      setDestinationRetry((v) => v + 1);
+                    }}
+                  >
+                    Retry destinations
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => {
+                      setDestinations([]);
+                      setDestinationIds([]);
+                      setDestinationLoadError(null);
+                      setDestinationsReady(true);
+                    }}
+                  >
+                    Continue with private playback only
+                  </Button>
+                </div>
+              </div>
+            )}
+            {destinations.map((destination) => (
+              <Label key={destination.id} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={destinationIds.includes(destination.id)}
+                  onCheckedChange={(event) => {
+                    setDestinationIds((ids) =>
+                      event ? [...ids, destination.id] : ids.filter((id) => id !== destination.id),
+                    );
+                    key.current = crypto.randomUUID();
+                  }}
+                />
+                {destination.name} ({destination.profile})
+              </Label>
+            ))}
+            <p className="text-sm text-muted-foreground">
+              Private playback is included. Platform destinations are optional: select them to also
+              send your video to YouTube, Twitch or another RTMP service. Connect your encoder from
+              Overview.
+            </p>
+          </StreamFieldSection>
+          <StreamFieldSection
+            title="Timing"
+            description="Choose how long the broadcast can wait for your source and remain live."
+          >
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="broadcast-wait">Source wait timeout (seconds)</Label>
+              <Input
+                id="broadcast-wait"
+                name="waitTimeoutSeconds"
+                type="number"
+                min={10}
+                max={600}
+                defaultValue={120}
+                required
+              />
+            </div>
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="broadcast-duration">Maximum broadcast duration (seconds)</Label>
+              <Input
+                id="broadcast-duration"
+                name="maxDurationSeconds"
+                type="number"
+                min={60}
+                max={workspace?.stream.maxDurationSeconds ?? 86400}
+                defaultValue={Math.min(14400, workspace?.stream.maxDurationSeconds ?? 14400)}
+                required
+              />
+            </div>
+          </StreamFieldSection>
+        </fieldset>
+        <Label className="flex items-start gap-3 rounded-xl border p-4">
           <Checkbox
-            checked={destinationIds.includes(destination.id)}
-            onCheckedChange={(event) => {
-              setDestinationIds((ids) =>
-                event ? [...ids, destination.id] : ids.filter((id) => id !== destination.id),
-              );
-              key.current = crypto.randomUUID();
-            }}
+            checked={startImmediately}
+            disabled={pending}
+            onCheckedChange={setStartImmediately}
           />
-          {destination.name} ({destination.profile})
+          <span>
+            Start broadcasting after creation
+            <span className="mt-1 block text-sm font-normal text-muted-foreground">
+              If the source is not connected, the broadcast waits for your source within the chosen
+              timeout. Uncheck to save a draft for later.
+            </span>
+          </span>
         </Label>
-      ))}
-      <p className="text-sm text-muted-foreground">
-        Private playback is included. Platform destinations are optional: select them to also send
-        your video to YouTube, Twitch or another RTMP service. Connect your encoder from Overview.
-      </p>
-      <Label htmlFor="broadcast-wait">Source wait timeout (seconds)</Label>
-      <Input
-        id="broadcast-wait"
-        name="waitTimeoutSeconds"
-        type="number"
-        min={10}
-        max={600}
-        defaultValue={120}
-        required
-      />
-      <Label htmlFor="broadcast-duration">Maximum run duration (seconds)</Label>
-      <Input
-        id="broadcast-duration"
-        name="maxDurationSeconds"
-        type="number"
-        min={60}
-        max={workspace?.stream.maxDurationSeconds ?? 86400}
-        defaultValue={Math.min(14400, workspace?.stream.maxDurationSeconds ?? 14400)}
-        required
-      />
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-      <Button type="submit" disabled={pending || !destinationsReady}>
-        {pending
-          ? "Creating..."
-          : !destinationsReady
-            ? destinationLoadError
-              ? "Choose how to continue"
-              : "Loading destinations..."
-            : "Create broadcast"}
-      </Button>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        <Button type="submit" disabled={pending || !destinationsReady || !streamId}>
+          {pending
+            ? "Creating..."
+            : !destinationsReady
+              ? destinationLoadError
+                ? "Choose how to continue"
+                : "Loading destinations..."
+              : createdRun
+                ? "Retry start or open draft"
+                : startImmediately
+                  ? "Create and start broadcast"
+                  : "Create draft"}
+        </Button>
+      </div>
+      <aside className="min-w-0 space-y-5">
+        <BroadcastPreparation />
+        <StreamFieldSection
+          title="One broadcast, one session"
+          description="Destinations and capture settings are saved for this broadcast."
+        >
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Save a draft to prepare ahead of time, or start immediately and wait for your source to
+            connect. Create a new broadcast after this one ends.
+          </p>
+        </StreamFieldSection>
+      </aside>
     </form>
   );
 }
@@ -593,8 +715,10 @@ export function BroadcastDetails({
           {snapshot.error.message}
         </p>
       )}
-      <div className="flex gap-2">
-        <Badge variant="outline">{run?.state ?? "loading"}</Badge>
+      <div className="flex flex-wrap gap-2">
+        <Badge variant="secondary" className="capitalize">
+          {run?.state ?? "loading"}
+        </Badge>
         <Button
           variant="outline"
           size="sm"
@@ -611,7 +735,7 @@ export function BroadcastDetails({
               disabled={!run || run.state !== "created" || !!snapshot.pending}
               onClick={() => setConfirmation("start")}
             >
-              Start run
+              Start broadcast
             </Button>
             <Button
               size="sm"
@@ -619,7 +743,7 @@ export function BroadcastDetails({
               disabled={!run || ["stopped", "failed"].includes(run.state) || !!snapshot.pending}
               onClick={() => setConfirmation("stop")}
             >
-              Stop run
+              Stop broadcast
             </Button>
           </>
         )}
@@ -663,7 +787,9 @@ export function BroadcastDetails({
           <div key={output.id} className="rounded-lg border p-3 text-sm">
             <p>
               {output.destinationName ?? output.kind.toUpperCase()}{" "}
-              <Badge variant="outline">{output.state}</Badge>
+              <Badge variant="secondary" className="capitalize">
+                {output.state}
+              </Badge>
             </p>
             <p>
               {output.id}; attempts: {output.attempts}
@@ -700,12 +826,12 @@ export function BroadcastDetails({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmation === "start" ? "Start this run?" : "Stop this run?"}
+              {confirmation === "start" ? "Start this broadcast?" : "Stop this broadcast?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirmation === "start"
-                ? "Wait for the authorized source, then attach the configured output. The stream configuration is snapshotted for this run."
-                : "Release output jobs and reservations. The source room and its stream remain active. This run cannot restart."}
+                ? "Wait for the authorized source, then attach the configured output. The stream configuration is saved for this broadcast."
+                : "Release output jobs and reservations. The source room and its stream remain active. Create a new broadcast for your next session."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
