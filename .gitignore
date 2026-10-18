@@ -6,6 +6,7 @@ bin
 coverage
 dist
 node_modules
+.streaming/
 playwright-report
 test-results
 *.log

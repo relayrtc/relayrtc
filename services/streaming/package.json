@@ -1,0 +1,25 @@
+{
+  "name": "@relayrtc/streaming",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Isolated RelayRTC source composition worker.",
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "start": "node --enable-source-maps dist/server.js",
+    "start:recordings": "node --enable-source-maps dist/recording-server.js",
+    "start:outputs": "node --enable-source-maps dist/output-server.js"
+  },
+  "dependencies": {
+    "@relayrtc/protocol": "workspace:*",
+    "@relayrtc/types": "workspace:*",
+    "@relayrtc/validation": "workspace:*",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1"
+  }
+}

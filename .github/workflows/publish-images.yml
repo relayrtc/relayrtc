@@ -42,6 +42,18 @@ jobs:
             context: .
             dockerfile: infrastructure/docker/media.Dockerfile
             target: runner
+          - name: streaming
+            context: .
+            dockerfile: infrastructure/docker/streaming.Dockerfile
+            target: runner
+          - name: streaming-storage
+            context: .
+            dockerfile: infrastructure/docker/streaming-storage.Dockerfile
+            target: runner
+          - name: streaming-storage-init
+            context: .
+            dockerfile: infrastructure/docker/streaming-storage.Dockerfile
+            target: storage-init
           - name: console
             context: .
             dockerfile: infrastructure/docker/console.Dockerfile

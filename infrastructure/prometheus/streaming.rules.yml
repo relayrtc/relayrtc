@@ -1,0 +1,125 @@
+groups:
+  - name: relayrtc-streaming
+    rules:
+      - alert: StreamingControlUnavailable
+        expr: up{job=~"streaming-runtime|streaming-worker|streaming-gateway|streaming-outputs"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Streaming control or media service is unavailable
+      - alert: StreamingQueueStalled
+        expr: relayrtc_streaming_queue_delay_seconds > 30
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming source is waiting for a worker
+      - alert: StreamingLeaseExpired
+        expr: relayrtc_streaming_expired_leases > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming worker leases remain expired
+      - alert: StreamingEncoderFailures
+        expr: increase(relayrtc_streaming_encoder_failures_total[5m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming encoder is repeatedly failing
+      - alert: StreamingCleanupBacklog
+        expr: relayrtc_streaming_expired_objects > 100 or relayrtc_streaming_pending_uploads > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Streaming media cleanup or uploads are stalled
+      - alert: BroadcastQueueStalled
+        expr: relayrtc_broadcast_queue_delay_seconds > 30
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Broadcast outputs are waiting for worker capacity
+      - alert: BroadcastLeaseExpired
+        expr: relayrtc_broadcast_expired_leases > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Broadcast output ownership remains expired
+      - alert: BroadcastOutputFailures
+        expr: increase(relayrtc_broadcast_worker_failures_total[5m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: Broadcast outputs are repeatedly failing
+      - alert: ScheduleExecutionLag
+        expr: relayrtc_schedule_due_lag_seconds > 30
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Scheduled broadcasts remain due without admission
+      - alert: ScheduleLeaseExpired
+        expr: relayrtc_schedule_expired_leases > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Scheduled broadcast execution claims remain expired
+      - alert: RestreamLeaseExpired
+        expr: relayrtc_restream_expired_leases > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: External source ownership remains expired
+      - alert: RestreamRepeatedFailures
+        expr: increase(relayrtc_restream_failures_total[5m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: External source pulls are repeatedly failing
+      - alert: ClipQueueStalled
+        expr: relayrtc_clip_queued > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Clip preparation remains queued
+      - alert: ClipRenderFailures
+        expr: delta(relayrtc_clip_failed[5m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: Clip rendering is repeatedly failing
+      - alert: MixerActivationStalled
+        expr: relayrtc_mixer_activation_lag_seconds > 30
+        for: 15s
+        labels:
+          severity: warning
+        annotations:
+          summary: A mixer scene has not been confirmed on the program output
+      - alert: MixerDegraded
+        expr: relayrtc_mixers{state="degraded"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: A mixer is using missing-source or overload fallback
+      - alert: DvrCaptureStalled
+        expr: relayrtc_dvr_stalled > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: DVR capture is stalled or under shared storage pressure
+      - alert: GuestCleanupStalled
+        expr: relayrtc_guest_cleanup_stalled > 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: Revoked guest RTC resources remain pending cleanup

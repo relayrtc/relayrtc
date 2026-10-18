@@ -9,6 +9,60 @@ import type {
 } from "./common.js";
 
 export const webhookEventTypes = [
+"stream.guest.invited","stream.guest.invite_accepted","stream.guest.invite_declined","stream.guest.requested","stream.guest.request_approved","stream.guest.request_rejected","stream.guest.joined","stream.guest.left","stream.guest.removed","stream.guest.muted","stream.guest.invite_expired","stream.guest.invite_cancelled","stream.guest.grant_revoked",
+  "dvr.enabled", "dvr.window_changed", "dvr.segment_evicted", "dvr.disabled",
+  "mixer.started",
+  "mixer.scene_activated",
+  "mixer.source_lost",
+  "mixer.overloaded",
+  "mixer.stopped",
+  "mixer.failed",
+  "clip.requested",
+  "clip.rendering",
+  "clip.ready",
+  "clip.failed",
+  "clip.deleted",
+  "restream.probing",
+  "restream.source_connected",
+  "restream.source_lost",
+  "restream.recovering",
+  "restream.stopped",
+  "restream.failed",
+  "schedule.created",
+  "schedule.updated",
+  "schedule.starting",
+  "schedule.started",
+  "schedule.missed",
+  "schedule.cancelled",
+  "schedule.failed",
+  "schedule.completed",
+  "schedule.reminder",
+
+  "recording.started",
+  "recording.segment_committed",
+  "recording.finalizing",
+  "recording.ready",
+  "recording.failed",
+  "recording.deleted",
+
+  "destination.created",
+  "destination.connected",
+  "destination.disconnected",
+  "destination.retrying",
+  "destination.failed",
+  "broadcast.created",
+  "broadcast.starting",
+  "broadcast.live",
+  "broadcast.reconnecting",
+  "broadcast.output_degraded",
+  "broadcast.stopped",
+  "broadcast.failed",
+  "stream.created",
+  "stream.starting",
+  "stream.live",
+  "stream.reconnecting",
+  "stream.ended",
+  "stream.failed",
   "room.created",
   "room.started",
   "room.ended",
@@ -92,7 +146,12 @@ export interface WebhookDeliveryRecord {
   readonly updatedAt: IsoDateTime;
 }
 
-export const webhookDeliveryAttemptStatuses = ["started", "succeeded", "failed", "abandoned"] as const;
+export const webhookDeliveryAttemptStatuses = [
+  "started",
+  "succeeded",
+  "failed",
+  "abandoned",
+] as const;
 export type WebhookDeliveryAttemptStatus = (typeof webhookDeliveryAttemptStatuses)[number];
 
 export interface WebhookDeliveryAttempt {

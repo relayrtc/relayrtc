@@ -1,15 +1,15 @@
-'use client'
+"use client";
 
 import {
-  useEffect,
-  useId,
-  useTransition,
-} from 'react'
-import {
-  usePathname,
-  useRouter,
-  useSearchParams,
-} from 'next/navigation'
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
+import { useEffect, useId, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Area,
   AreaChart,
@@ -20,13 +20,10 @@ import {
   LineChart,
   XAxis,
   YAxis,
-} from 'recharts'
-import {
-  Panel,
-  PanelTitle,
-} from '@/components/page/panel'
-import { SimpleSelect } from '@/components/page/simple-select'
-import { StatCard } from '@/components/page/stat-card'
+} from "recharts";
+import { Panel, PanelTitle } from "@/components/page/panel";
+import { SimpleSelect } from "@/components/page/simple-select";
+import { StatCard } from "@/components/page/stat-card";
 import {
   type ChartConfig,
   ChartContainer,
@@ -34,136 +31,114 @@ import {
   ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
-} from '@/components/ui/chart'
-import type {
-  AnalyticsRange,
-  ProjectAnalyticsData,
-} from '@/lib/reporting/analytics-view'
-import type { ConsoleEnvironment } from '@/lib/console-types'
-import {
-  formatDuration,
-  formatNumber,
-} from '@/lib/format'
-import { cn } from '@/lib/utils'
+} from "@/components/ui/chart";
+import type { AnalyticsRange, ProjectAnalyticsData } from "@/lib/reporting/analytics-view";
+import type { ConsoleEnvironment } from "@/lib/console-types";
+import { formatDuration, formatNumber } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 const ranges: {
-  value: AnalyticsRange
-  label: string
+  value: AnalyticsRange;
+  label: string;
 }[] = [
   {
-    value: 'live',
-    label: 'Live',
+    value: "live",
+    label: "Live",
   },
   {
-    value: '24h',
-    label: 'Last 24 hours',
+    value: "24h",
+    label: "Last 24 hours",
   },
   {
-    value: '7d',
-    label: 'Last 7 days',
+    value: "7d",
+    label: "Last 7 days",
   },
   {
-    value: '30d',
-    label: 'Last 30 days',
+    value: "30d",
+    label: "Last 30 days",
   },
-]
+];
 
 const trafficConfig = {
   participants: {
-    label: 'Peak concurrent participants',
-    color: 'var(--chart-1)',
+    label: "Peak concurrent participants",
+    color: "var(--chart-1)",
   },
   sessions: {
-    label: 'Sessions',
-    color: 'var(--chart-2)',
+    label: "Sessions",
+    color: "var(--chart-2)",
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
 const sfuConfig = {
   sfuEgress: {
-    label: 'SFU egress',
-    color: 'var(--chart-1)',
+    label: "SFU egress",
+    color: "var(--chart-1)",
   },
   sfuIngress: {
-    label: 'SFU ingress',
-    color: 'var(--chart-2)',
+    label: "SFU ingress",
+    color: "var(--chart-2)",
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
 const turnConfig = {
   turnEgress: {
-    label: 'TURN egress',
-    color: 'var(--chart-6)',
+    label: "TURN egress",
+    color: "var(--chart-6)",
   },
   turnIngress: {
-    label: 'TURN ingress',
-    color: 'var(--chart-5)',
+    label: "TURN ingress",
+    color: "var(--chart-5)",
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
 const rttConfig = {
   rtt: {
-    label:
-      'Round-trip time (ms)',
-    color: 'var(--chart-2)',
+    label: "Round-trip time (ms)",
+    color: "var(--chart-2)",
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
 const lossConfig = {
   packetLoss: {
-    label: 'Packet loss (%)',
-    color: 'var(--chart-4)',
+    label: "Packet loss (%)",
+    color: "var(--chart-4)",
   },
   jitter: {
-    label: 'Jitter (ms)',
-    color: 'var(--chart-5)',
+    label: "Jitter (ms)",
+    color: "var(--chart-5)",
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
 const regionConfig = {
   sessions: {
-    label: 'Sessions',
-    color: 'var(--chart-1)',
+    label: "Sessions",
+    color: "var(--chart-1)",
   },
-} satisfies ChartConfig
+} satisfies ChartConfig;
 
-function formatGb(
-  bytes: number,
-) {
-  const gb =
-    bytes / 1024 ** 3
+function formatGb(bytes: number) {
+  const gb = bytes / 1024 ** 3;
 
   if (gb === 0) {
-    return '0 GB'
+    return "0 GB";
   }
 
   if (gb < 0.01) {
-    return `${gb.toFixed(
-      3,
-    )} GB`
+    return `${gb.toFixed(3)} GB`;
   }
 
   if (gb < 10) {
-    return `${gb.toFixed(
-      2,
-    )} GB`
+    return `${gb.toFixed(2)} GB`;
   }
 
-  return `${gb.toFixed(
-    1,
-  )} GB`
+  return `${gb.toFixed(1)} GB`;
 }
 
-function AnalyticsEmptyState({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+function AnalyticsEmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid h-52 place-items-center text-sm text-muted-foreground">
-      {children}
-    </div>
-  )
+    <div className="grid h-52 place-items-center text-sm text-muted-foreground">{children}</div>
+  );
 }
 
 export function AnalyticsDashboard({
@@ -172,107 +147,86 @@ export function AnalyticsDashboard({
   environments,
   data,
 }: {
-  range: AnalyticsRange
-  environment: string
-  environments: readonly ConsoleEnvironment[]
-  data: ProjectAnalyticsData
+  range: AnalyticsRange;
+  environment: string;
+  environments: readonly ConsoleEnvironment[];
+  data: ProjectAnalyticsData;
 }) {
-  const router = useRouter()
-  const [pending, startTransition] = useTransition()
-  const pathname = usePathname()
-  const searchParams =
-    useSearchParams()
-  const environmentId =
-    useId()
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const environmentId = useId();
 
   useEffect(() => {
-    if (range !== 'live' || pending) {
-      return
+    if (range !== "live" || pending) {
+      return;
     }
 
-    const interval =
-      window.setInterval(() => {
-        if (!document.hidden) startTransition(() => router.refresh())
-      }, 1000)
+    const interval = window.setInterval(() => {
+      if (!document.hidden) startTransition(() => router.refresh());
+    }, 1000);
 
     return () => {
-      window.clearInterval(
-        interval,
-      )
-    }
-  }, [range, router, startTransition, pending])
+      window.clearInterval(interval);
+    };
+  }, [range, router, startTransition, pending]);
 
   const environmentOptions = [
     {
-      value: 'all',
-      label:
-        'All environments',
+      value: "all",
+      label: "All environments",
     },
-    ...environments.map(
-      (item) => ({
-        value: item.id,
-        label: item.name,
-      }),
-    ),
-  ]
+    ...environments.map((item) => ({
+      value: item.id,
+      label: item.name,
+    })),
+  ];
 
-  const bucketLabel =
-    range === 'live'
-      ? 'minute'
-      : range === '24h'
-        ? 'hour'
-        : 'day'
+  const bucketLabel = range === "live" ? "minute" : range === "24h" ? "hour" : "day";
 
   const totalNetwork =
     data.network.sfuIngress +
     data.network.sfuEgress +
     data.network.turnIngress +
-    data.network.turnEgress
+    data.network.turnEgress;
 
-  const totalQualitySamples =
-    data.qualityDistribution.reduce(
-      (total, item) =>
-        total + item.count,
-      0,
-    )
+  const totalQualitySamples = data.qualityDistribution.reduce(
+    (total, item) => total + item.count,
+    0,
+  );
 
-  function updateFilters(
-    next: {
-      range?: AnalyticsRange
-      environment?: string
-    },
-  ) {
-    const params =
-      new URLSearchParams(
-        searchParams.toString(),
-      )
+  function updateFilters(next: { range?: AnalyticsRange; environment?: string }) {
+    const params = new URLSearchParams(searchParams.toString());
 
     if (next.range) {
-      params.set(
-        'range',
-        next.range,
-      )
+      params.set("range", next.range);
     }
 
     if (next.environment) {
-      params.set(
-        'environment',
-        next.environment,
-      )
+      params.set("environment", next.environment);
     }
 
-    startTransition(() => router.replace(
-      `${pathname}?${params.toString()}`,
-      {
+    startTransition(() =>
+      router.replace(`${pathname}?${params.toString()}`, {
         scroll: false,
-      },
-    ))
+      }),
+    );
   }
 
   return (
     <div className="flex flex-col gap-6" aria-busy={pending}>
-      {pending && <span role="status" className="text-sm text-muted-foreground">Refreshing analytics...</span>}
-      {(data.dataQuality.sessionHistory === 'partial' || data.dataQuality.messageHistory === 'partial') && <p role="status" className="text-sm text-muted-foreground">Some historical activity is unavailable. These totals may be incomplete.</p>}
+      {pending && (
+        <span role="status" className="text-sm text-muted-foreground">
+          Refreshing analytics...
+        </span>
+      )}
+      {(data.dataQuality.sessionHistory === "partial" ||
+        data.dataQuality.messageHistory === "partial") && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Some historical activity is unavailable. These totals may be incomplete.
+        </p>
+      )}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div
@@ -280,86 +234,55 @@ export function AnalyticsDashboard({
           aria-label="Time range"
           className="-mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:px-0"
         >
-          {ranges.map(
-            (item) => {
-              const selected =
-                range ===
-                item.value
+          {ranges.map((item) => {
+            const selected = range === item.value;
 
-              return (
-                <button
-                  key={
-                    item.value
-                  }
-                  type="button"
-                  role="radio"
-                  aria-checked={
-                    selected
-                  }
-                  onClick={() =>
-                    updateFilters({
-                      range:
-                        item.value,
-                    })
-                  }
-                  className={cn(
-                    'inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-4 text-sm transition-colors',
-                    selected
-                      ? 'bg-muted font-medium text-foreground'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {item.value ===
-                  'live' ? (
-                    <span
-                      className={cn(
-                        'size-2 rounded-full bg-current',
-                        selected &&
-                          'animate-pulse',
-                      )}
-                    />
-                  ) : null}
-
+            return (
+              <button
+                key={item.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() =>
+                  updateFilters({
+                    range: item.value,
+                  })
+                }
+                className={cn(
+                  "inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-4 text-sm transition-colors",
+                  selected
+                    ? "bg-muted font-medium text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {item.value === "live" ? (
                   <span
-                    className={cn(
-                      item.value ===
-                        'live' &&
-                        selected &&
-                        'animate-pulse',
-                    )}
-                  >
-                    {item.label}
-                  </span>
-                </button>
-              )
-            },
-          )}
+                    className={cn("size-2 rounded-full bg-current", selected && "animate-pulse")}
+                  />
+                ) : null}
+
+                <span className={cn(item.value === "live" && selected && "animate-pulse")}>
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex items-center gap-2">
-          <label
-            htmlFor={
-              environmentId
-            }
-            className="sr-only"
-          >
+          <label htmlFor={environmentId} className="sr-only">
             Environment
           </label>
 
           <SimpleSelect
             id={environmentId}
             value={environment}
-            onValueChange={(
-              value,
-            ) =>
+            onValueChange={(value) =>
               updateFilters({
-                environment:
-                  value,
+                environment: value,
               })
             }
-            options={
-              environmentOptions
-            }
+            options={environmentOptions}
             size="sm"
             className="w-full sm:w-48"
           />
@@ -367,28 +290,13 @@ export function AnalyticsDashboard({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard
-          label="Peak concurrent"
-          value={formatNumber(
-            data.summary
-              .peakConcurrent,
-          )}
-        />
+        <StatCard label="Peak concurrent" value={formatNumber(data.summary.peakConcurrent)} />
 
-        <StatCard
-          label="Total sessions"
-          value={formatNumber(
-            data.summary
-              .totalSessions,
-          )}
-        />
+        <StatCard label="Total sessions" value={formatNumber(data.summary.totalSessions)} />
 
         <StatCard
           label="Avg. session length"
-          value={formatDuration(
-            data.summary
-              .averageSessionSeconds,
-          )}
+          value={formatDuration(data.summary.averageSessionSeconds)}
         />
 
         <StatCard
@@ -398,7 +306,11 @@ export function AnalyticsDashboard({
 
         <StatCard
           label="Connection success"
-          value={data.summary.totalSessions === 0 ? 'No sessions' : `${data.summary.connectionSuccessRate.toFixed(1)}%`}
+          value={
+            data.summary.totalSessions === 0
+              ? "No sessions"
+              : `${data.summary.connectionSuccessRate.toFixed(1)}%`
+          }
         />
       </div>
 
@@ -408,18 +320,10 @@ export function AnalyticsDashboard({
           description="Peak concurrent participants and sessions overlapping each bucket (UTC)"
         />
 
-        {data.summary.totalSessions >
-        0 ? (
-          <ChartContainer
-            config={
-              trafficConfig
-            }
-            className="mt-4 h-64 w-full sm:h-72"
-          >
+        {data.summary.totalSessions > 0 ? (
+          <ChartContainer config={trafficConfig} className="mt-4 h-64 w-full sm:h-72">
             <AreaChart
-              data={
-                data.traffic
-              }
+              data={data.traffic}
               margin={{
                 left: 0,
                 right: 0,
@@ -427,67 +331,28 @@ export function AnalyticsDashboard({
               }}
             >
               <defs>
-                <linearGradient
-                  id="fill-participants"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop
-                    offset="5%"
-                    stopColor="var(--color-participants)"
-                    stopOpacity={
-                      0.4
-                    }
-                  />
+                <linearGradient id="fill-participants" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-participants)" stopOpacity={0.4} />
 
-                  <stop
-                    offset="95%"
-                    stopColor="var(--color-participants)"
-                    stopOpacity={
-                      0.02
-                    }
-                  />
+                  <stop offset="95%" stopColor="var(--color-participants)" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
 
-              <CartesianGrid
-                vertical={false}
-              />
+              <CartesianGrid vertical={false} />
 
               <XAxis
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                minTickGap={
-                  range ===
-                  'live'
-                    ? 8
-                    : 24
-                }
+                minTickGap={range === "live" ? 8 : 24}
               />
 
-              <YAxis
-                width={40}
-                tickLine={false}
-                axisLine={false}
-              />
+              <YAxis width={40} tickLine={false} axisLine={false} />
 
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    indicator="line"
-                  />
-                }
-              />
+              <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
 
-              <ChartLegend
-                content={
-                  <ChartLegendContent />
-                }
-              />
+              <ChartLegend content={<ChartLegendContent />} />
 
               <Area
                 dataKey="participants"
@@ -503,72 +368,32 @@ export function AnalyticsDashboard({
                 stroke="var(--color-sessions)"
                 strokeWidth={2}
                 fill="var(--color-sessions)"
-                fillOpacity={
-                  0.08
-                }
+                fillOpacity={0.08}
               />
             </AreaChart>
           </ChartContainer>
         ) : (
-          <AnalyticsEmptyState>
-            No traffic data for
-            this period.
-          </AnalyticsEmptyState>
+          <AnalyticsEmptyState>No traffic data for this period.</AnalyticsEmptyState>
         )}
       </Panel>
 
-      <section
-        aria-labelledby="network-heading"
-        className="flex flex-col gap-4"
-      >
+      <section aria-labelledby="network-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-          <h2
-            id="network-heading"
-            className="text-xl font-normal tracking-tight"
-          >
+          <h2 id="network-heading" className="text-xl font-normal tracking-tight">
             Network traffic
           </h2>
 
-          <p className="text-sm text-muted-foreground">
-            {formatGb(
-              totalNetwork,
-            )}{' '}
-            transferred
-          </p>
+          <p className="text-sm text-muted-foreground">{formatGb(totalNetwork)} transferred</p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            label="SFU ingress"
-            value={formatGb(
-              data.network
-                .sfuIngress,
-            )}
-          />
+          <StatCard label="SFU ingress" value={formatGb(data.network.sfuIngress)} />
 
-          <StatCard
-            label="SFU egress"
-            value={formatGb(
-              data.network
-                .sfuEgress,
-            )}
-          />
+          <StatCard label="SFU egress" value={formatGb(data.network.sfuEgress)} />
 
-          <StatCard
-            label="TURN ingress"
-            value={formatGb(
-              data.network
-                .turnIngress,
-            )}
-          />
+          <StatCard label="TURN ingress" value={formatGb(data.network.turnIngress)} />
 
-          <StatCard
-            label="TURN egress"
-            value={formatGb(
-              data.network
-                .turnEgress,
-            )}
-          />
+          <StatCard label="TURN egress" value={formatGb(data.network.turnEgress)} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -578,75 +403,43 @@ export function AnalyticsDashboard({
               description={`Data received and sent by the SFU per ${bucketLabel}`}
             />
 
-            <ChartContainer
-              config={
-                sfuConfig
-              }
-              className="mt-4 h-56 w-full"
-            >
+            <ChartContainer config={sfuConfig} className="mt-4 h-56 w-full">
               <AreaChart
-                data={
-                  data.networkSeries
-                }
+                data={data.networkSeries}
                 margin={{
                   left: 0,
                   right: 0,
                   top: 4,
                 }}
               >
-                <CartesianGrid
-                  vertical={false}
-                />
+                <CartesianGrid vertical={false} />
 
                 <XAxis
                   dataKey="label"
                   tickLine={false}
                   axisLine={false}
                   tickMargin={8}
-                  minTickGap={
-                    range ===
-                    'live'
-                      ? 8
-                      : 24
-                  }
+                  minTickGap={range === "live" ? 8 : 24}
                 />
 
                 <YAxis
                   width={44}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={(
-                    value,
-                  ) =>
-                    `${value}G`
-                  }
+                  tickFormatter={(value) => `${value}G`}
                 />
 
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent
-                      indicator="line"
-                    />
-                  }
-                />
+                <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
 
-                <ChartLegend
-                  content={
-                    <ChartLegendContent />
-                  }
-                />
+                <ChartLegend content={<ChartLegendContent />} />
 
                 <Area
                   dataKey="sfuEgress"
                   type="monotone"
                   stroke="var(--color-sfuEgress)"
                   fill="var(--color-sfuEgress)"
-                  fillOpacity={
-                    0.15
-                  }
-                  strokeWidth={
-                    2
-                  }
+                  fillOpacity={0.15}
+                  strokeWidth={2}
                 />
 
                 <Area
@@ -654,92 +447,53 @@ export function AnalyticsDashboard({
                   type="monotone"
                   stroke="var(--color-sfuIngress)"
                   fill="var(--color-sfuIngress)"
-                  fillOpacity={
-                    0.15
-                  }
-                  strokeWidth={
-                    2
-                  }
+                  fillOpacity={0.15}
+                  strokeWidth={2}
                 />
               </AreaChart>
             </ChartContainer>
           </Panel>
 
           <Panel>
-            <PanelTitle
-              title="TURN traffic"
-              description={`Relayed data per ${bucketLabel}`}
-            />
+            <PanelTitle title="TURN traffic" description={`Relayed data per ${bucketLabel}`} />
 
-            <ChartContainer
-              config={
-                turnConfig
-              }
-              className="mt-4 h-56 w-full"
-            >
+            <ChartContainer config={turnConfig} className="mt-4 h-56 w-full">
               <AreaChart
-                data={
-                  data.networkSeries
-                }
+                data={data.networkSeries}
                 margin={{
                   left: 0,
                   right: 0,
                   top: 4,
                 }}
               >
-                <CartesianGrid
-                  vertical={false}
-                />
+                <CartesianGrid vertical={false} />
 
                 <XAxis
                   dataKey="label"
                   tickLine={false}
                   axisLine={false}
                   tickMargin={8}
-                  minTickGap={
-                    range ===
-                    'live'
-                      ? 8
-                      : 24
-                  }
+                  minTickGap={range === "live" ? 8 : 24}
                 />
 
                 <YAxis
                   width={44}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={(
-                    value,
-                  ) =>
-                    `${value}G`
-                  }
+                  tickFormatter={(value) => `${value}G`}
                 />
 
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent
-                      indicator="line"
-                    />
-                  }
-                />
+                <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
 
-                <ChartLegend
-                  content={
-                    <ChartLegendContent />
-                  }
-                />
+                <ChartLegend content={<ChartLegendContent />} />
 
                 <Area
                   dataKey="turnEgress"
                   type="monotone"
                   stroke="var(--color-turnEgress)"
                   fill="var(--color-turnEgress)"
-                  fillOpacity={
-                    0.15
-                  }
-                  strokeWidth={
-                    2
-                  }
+                  fillOpacity={0.15}
+                  strokeWidth={2}
                 />
 
                 <Area
@@ -747,12 +501,8 @@ export function AnalyticsDashboard({
                   type="monotone"
                   stroke="var(--color-turnIngress)"
                   fill="var(--color-turnIngress)"
-                  fillOpacity={
-                    0.15
-                  }
-                  strokeWidth={
-                    2
-                  }
+                  fillOpacity={0.15}
+                  strokeWidth={2}
                 />
               </AreaChart>
             </ChartContainer>
@@ -767,64 +517,42 @@ export function AnalyticsDashboard({
             description="Average latency between client and SFU"
           />
 
-          {data.quality.some(point => point.sampleCount > 0) ? (
-          <ChartContainer
-            config={
-              rttConfig
-            }
-            className="mt-4 h-52 w-full"
-          >
-            <LineChart
-              data={
-                data.quality
-              }
-              margin={{
-                left: 0,
-                right: 0,
-                top: 4,
-              }}
-            >
-              <CartesianGrid
-                vertical={false}
-              />
+          {data.quality.some((point) => point.sampleCount > 0) ? (
+            <ChartContainer config={rttConfig} className="mt-4 h-52 w-full">
+              <LineChart
+                data={data.quality}
+                margin={{
+                  left: 0,
+                  right: 0,
+                  top: 4,
+                }}
+              >
+                <CartesianGrid vertical={false} />
 
-              <XAxis
-                dataKey="label"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                minTickGap={
-                  range ===
-                  'live'
-                    ? 8
-                    : 24
-                }
-              />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={range === "live" ? 8 : 24}
+                />
 
-              <YAxis
-                width={40}
-                tickLine={false}
-                axisLine={false}
-              />
+                <YAxis width={40} tickLine={false} axisLine={false} />
 
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent />
-                }
-              />
+                <ChartTooltip content={<ChartTooltipContent />} />
 
-              <Line
-                dataKey="rtt"
-                type="monotone"
-                stroke="var(--color-rtt)"
-                strokeWidth={
-                  2
-                }
-                dot={false}
-              />
-            </LineChart>
-          </ChartContainer>
-          ) : <AnalyticsEmptyState>No connection quality samples in this period.</AnalyticsEmptyState>}
+                <Line
+                  dataKey="rtt"
+                  type="monotone"
+                  stroke="var(--color-rtt)"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ChartContainer>
+          ) : (
+            <AnalyticsEmptyState>No connection quality samples in this period.</AnalyticsEmptyState>
+          )}
         </Panel>
 
         <Panel>
@@ -833,74 +561,50 @@ export function AnalyticsDashboard({
             description="Network health across RTC sessions"
           />
 
-          {data.quality.some(point => point.sampleCount > 0) ? (
-          <ChartContainer
-            config={
-              lossConfig
-            }
-            className="mt-4 h-52 w-full"
-          >
-            <LineChart
-              data={
-                data.quality
-              }
-              margin={{
-                left: 0,
-                right: 0,
-                top: 4,
-              }}
-            >
-              <CartesianGrid
-                vertical={false}
-              />
+          {data.quality.some((point) => point.sampleCount > 0) ? (
+            <ChartContainer config={lossConfig} className="mt-4 h-52 w-full">
+              <LineChart
+                data={data.quality}
+                margin={{
+                  left: 0,
+                  right: 0,
+                  top: 4,
+                }}
+              >
+                <CartesianGrid vertical={false} />
 
-              <XAxis
-                dataKey="label"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                minTickGap={
-                  range ===
-                  'live'
-                    ? 8
-                    : 24
-                }
-              />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={range === "live" ? 8 : 24}
+                />
 
-              <YAxis
-                width={40}
-                tickLine={false}
-                axisLine={false}
-              />
+                <YAxis width={40} tickLine={false} axisLine={false} />
 
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent />
-                }
-              />
+                <ChartTooltip content={<ChartTooltipContent />} />
 
-              <Line
-                dataKey="packetLoss"
-                type="monotone"
-                stroke="var(--color-packetLoss)"
-                strokeWidth={
-                  2
-                }
-                dot={false}
-              />
+                <Line
+                  dataKey="packetLoss"
+                  type="monotone"
+                  stroke="var(--color-packetLoss)"
+                  strokeWidth={2}
+                  dot={false}
+                />
 
-              <Line
-                dataKey="jitter"
-                type="monotone"
-                stroke="var(--color-jitter)"
-                strokeWidth={
-                  2
-                }
-                dot={false}
-              />
-            </LineChart>
-          </ChartContainer>
-          ) : <AnalyticsEmptyState>No connection quality samples in this period.</AnalyticsEmptyState>}
+                <Line
+                  dataKey="jitter"
+                  type="monotone"
+                  stroke="var(--color-jitter)"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ChartContainer>
+          ) : (
+            <AnalyticsEmptyState>No connection quality samples in this period.</AnalyticsEmptyState>
+          )}
         </Panel>
       </div>
 
@@ -911,70 +615,38 @@ export function AnalyticsDashboard({
             description="Where RelayRTC traffic is being handled"
           />
 
-          {data.regions.length >
-          0 ? (
-            <ChartContainer
-              config={
-                regionConfig
-              }
-              className="mt-4 h-64 w-full"
-            >
+          {data.regions.length > 0 ? (
+            <ChartContainer config={regionConfig} className="mt-4 h-64 w-full">
               <BarChart
-                data={
-                  data.regions
-                }
+                data={data.regions}
                 layout="vertical"
                 margin={{
                   left: 0,
                   right: 8,
                 }}
               >
-                <CartesianGrid
-                  horizontal={
-                    false
-                  }
-                />
+                <CartesianGrid horizontal={false} />
 
                 <YAxis
                   dataKey="name"
                   type="category"
-                  tickLine={
-                    false
-                  }
-                  axisLine={
-                    false
-                  }
+                  tickLine={false}
+                  axisLine={false}
                   width={120}
                   tick={{
-                    fontSize:
-                      12,
+                    fontSize: 12,
                   }}
                 />
 
-                <XAxis
-                  type="number"
-                  hide
-                />
+                <XAxis type="number" hide />
 
-                <ChartTooltip
-                  content={
-                    <ChartTooltipContent />
-                  }
-                  cursor={false}
-                />
+                <ChartTooltip content={<ChartTooltipContent />} cursor={false} />
 
-                <Bar
-                  dataKey="sessions"
-                  fill="var(--color-sessions)"
-                  radius={4}
-                />
+                <Bar dataKey="sessions" fill="var(--color-sessions)" radius={4} />
               </BarChart>
             </ChartContainer>
           ) : (
-            <AnalyticsEmptyState>
-              No regional session
-              data yet.
-            </AnalyticsEmptyState>
+            <AnalyticsEmptyState>No regional session data yet.</AnalyticsEmptyState>
           )}
 
           <a
@@ -993,144 +665,87 @@ export function AnalyticsDashboard({
             description="RTC quality classifications in the selected range"
           />
 
-          {totalQualitySamples >
-          0 ? (
+          {totalQualitySamples > 0 ? (
             <ul className="mt-5 grid gap-4">
-              {data.qualityDistribution.map(
-                (item) => {
-                  const share =
-                    totalQualitySamples >
-                    0
-                      ? (item.count /
-                          totalQualitySamples) *
-                        100
-                      : 0
+              {data.qualityDistribution.map((item) => {
+                const share =
+                  totalQualitySamples > 0 ? (item.count / totalQualitySamples) * 100 : 0;
 
-                  return (
-                    <li
-                      key={
-                        item.quality
-                      }
-                      className="grid gap-1.5"
-                    >
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="capitalize">
-                          {
-                            item.quality
-                          }
-                        </span>
+                return (
+                  <li key={item.quality} className="grid gap-1.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="capitalize">{item.quality}</span>
 
-                        <span className="tabular-nums text-muted-foreground">
-                          {share.toFixed(
-                            1,
-                          )}
-                          %
-                        </span>
-                      </div>
+                      <span className="tabular-nums text-muted-foreground">
+                        {share.toFixed(1)}%
+                      </span>
+                    </div>
 
-                      <div className="h-2 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full bg-chart-1"
-                          style={{
-                            width: `${share}%`,
-                          }}
-                        />
-                      </div>
-                    </li>
-                  )
-                },
-              )}
+                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-chart-1"
+                        style={{
+                          width: `${share}%`,
+                        }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
-            <AnalyticsEmptyState>
-              No RTC quality
-              samples yet.
-            </AnalyticsEmptyState>
+            <AnalyticsEmptyState>No RTC quality samples yet.</AnalyticsEmptyState>
           )}
         </Panel>
       </div>
 
       <Panel>
-        <PanelTitle
-          title="Top rooms"
-          description="Busiest rooms in the selected range"
-        />
+        <PanelTitle title="Top rooms" description="Busiest rooms in the selected range" />
 
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-96 text-sm">
-            <thead>
-              <tr className="border-b text-muted-foreground">
-                <th
-                  scope="col"
-                  className="pb-2 text-left font-normal"
-                >
+          <Table className="w-full min-w-96 text-sm">
+            <TableHeader>
+              <TableRow className="border-b text-muted-foreground">
+                <TableHead scope="col" className="pb-2 text-left font-normal">
                   Room
-                </th>
+                </TableHead>
 
-                <th
-                  scope="col"
-                  className="pb-2 text-right font-normal"
-                >
+                <TableHead scope="col" className="pb-2 text-right font-normal">
                   Participants
-                </th>
+                </TableHead>
 
-                <th
-                  scope="col"
-                  className="pb-2 text-right font-normal"
-                >
+                <TableHead scope="col" className="pb-2 text-right font-normal">
                   Minutes
-                </th>
-              </tr>
-            </thead>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
 
-            <tbody>
-              {data.topRooms
-                .length ===
-              0 ? (
-                <tr>
-                  <td
-                    colSpan={3}
-                    className="py-8 text-center text-muted-foreground"
-                  >
-                    No room
-                    activity in
-                    this period.
-                  </td>
-                </tr>
+            <TableBody>
+              {data.topRooms.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
+                    No room activity in this period.
+                  </TableCell>
+                </TableRow>
               ) : (
-                data.topRooms.map(
-                  (room) => (
-                    <tr
-                      key={
-                        room.id
-                      }
-                      className="border-b last:border-0"
-                    >
-                      <td className="py-3 font-mono text-[0.8125rem]">
-                        {
-                          room.name
-                        }
-                      </td>
+                data.topRooms.map((room) => (
+                  <TableRow key={room.id} className="border-b last:border-0">
+                    <TableCell className="py-3 font-mono text-[0.8125rem]">{room.name}</TableCell>
 
-                      <td className="py-3 text-right tabular-nums">
-                        {formatNumber(
-                          room.participants,
-                        )}
-                      </td>
+                    <TableCell className="py-3 text-right tabular-nums">
+                      {formatNumber(room.participants)}
+                    </TableCell>
 
-                      <td className="py-3 text-right tabular-nums">
-                        {formatNumber(
-                          room.minutes,
-                        )}
-                      </td>
-                    </tr>
-                  ),
-                )
+                    <TableCell className="py-3 text-right tabular-nums">
+                      {formatNumber(room.minutes)}
+                    </TableCell>
+                  </TableRow>
+                ))
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </Panel>
     </div>
-  )
+  );
 }

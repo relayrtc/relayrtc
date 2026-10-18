@@ -10,6 +10,7 @@ const authority = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("participant"),
+      subjectId: identifier.optional(),
       roomId: identifier,
       participantId: identifier,
       sessionId: identifier,

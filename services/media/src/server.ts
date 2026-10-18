@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { createRoomRuntimeStore } from "./engine/room-runtime-store.js";
 import { buildApp } from "./app.js";
@@ -58,6 +59,40 @@ const start = async (): Promise<void> => {
     await database.close();
     throw error;
   }
+  let guestSweep: Promise<void> | undefined;
+  const knownGuests = new Map<string, { roomId: string; participantId: string }>();
+  const sweepGuests = async () => {
+    try {
+      const previouslyKnown = [...knownGuests.values()];
+      const rows = await database.db.execute(
+        sql`SELECT ps.id,r.id AS room_id,guest_session_authorized(ps.id) AS allowed FROM participant_session ps JOIN participant p ON p.id=ps.participant_id JOIN room r ON r.id=p.room_id WHERE left(p.id,7)='guestp_' AND ps.media_node_id=${config.nodeId} AND (ps.connection_state IN ('connected','reconnecting') OR EXISTS(SELECT 1 FROM participant_removal_target t WHERE t.session_id=ps.id AND t.status<>'completed')) ORDER BY ps.joined_at DESC LIMIT 500`,
+      );
+      const present = new Set(rows.map((r) => String(r.id)));
+      for (const old of previouslyKnown)
+        if (!present.has(old.participantId)) {
+          await engine.removeParticipant(old);
+          knownGuests.delete(old.participantId);
+        }
+      for (const r of rows)
+        knownGuests.set(String(r.id), { roomId: String(r.room_id), participantId: String(r.id) });
+      for (const row of rows)
+        if (row.allowed !== true)
+          await engine.removeParticipant({
+            roomId: String(row.room_id),
+            participantId: String(row.id),
+          });
+    } catch {
+      // Fail closed for known guest producers on authority-store failure; ordinary RTC is unaffected.
+      for (const guest of knownGuests.values())
+        await engine.removeParticipant(guest).catch(() => undefined);
+    }
+  };
+  const guestTimer = setInterval(() => {
+    guestSweep ??= sweepGuests().finally(() => {
+      guestSweep = undefined;
+    });
+  }, 2000);
+  guestTimer.unref();
   const usageTimer = setInterval(() => void engine.flushUsage(), 2_000);
   usageTimer.unref();
   let checkingQuality = false;
@@ -74,6 +109,10 @@ const start = async (): Promise<void> => {
   qualityTimer.unref();
   qualityOutbox.start();
   const app = buildApp({
+    database: database.db,
+    rememberGuest: (roomId, participantId) => {
+      knownGuests.set(participantId, { roomId, participantId });
+    },
     config,
     engine,
     qualityDelivery: () => ({
@@ -86,6 +125,8 @@ const start = async (): Promise<void> => {
   });
   lifecycle.app = app;
   app.addHook("onClose", async () => {
+    clearInterval(guestTimer);
+    await guestSweep;
     clearInterval(usageTimer);
     clearInterval(qualityTimer);
     await engine.close();

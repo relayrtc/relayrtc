@@ -1,0 +1,143 @@
+import { z } from "zod";
+import {
+  createClipSchema,
+  clipResourceSchema,
+  clipWindowSchema,
+  rollingBufferPolicySchema,
+} from "@relayrtc/validation";
+
+/** OpenAPI for the clip slice, derived from the same validators used by the API and console. */
+export function clipOpenApi() {
+  const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+  const response = (schema: unknown, status = 200) => ({
+    [status]: {
+      description: status === 202 ? "Accepted; poll the returned clip resource" : "Success",
+      content: { "application/json": { schema } },
+    },
+  });
+  const body = (schema: unknown) => ({
+    required: true,
+    content: { "application/json": { schema } },
+  });
+  const scope = ["projectId", "environmentId"].map((name) => ({
+    in: "query",
+    name,
+    required: false,
+    schema: { type: "string" },
+    description: "Console scope; secret-key scope is derived from the credential.",
+  }));
+  const path = (name: string) => ({
+    in: "path",
+    name,
+    required: true,
+    schema: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
+  });
+  const mutation = {
+    in: "header",
+    name: "Idempotency-Key",
+    required: false,
+    schema: { type: "string", maxLength: 128 },
+    description: "Reuse for the same command body when retrying an uncertain result.",
+  };
+  const clip = { parameters: [...scope, path("clipId")] },
+    stream = { parameters: [...scope, path("streamId")] };
+  return {
+    openapi: "3.1.0",
+    info: { title: "RelayRTC clips and rolling buffers", version: "0.6.0" },
+    servers: [{ url: "/v1" }],
+    security: [{ bearerAuth: [] }],
+    paths: {
+      "/streams/{streamId}/clips": {
+        ...stream,
+        get: {
+          summary: "List clips",
+          parameters: [
+            { in: "query", name: "cursor", schema: { type: "string" } },
+            {
+              in: "query",
+              name: "limit",
+              schema: { type: "integer", minimum: 1, maximum: 100, default: 30 },
+            },
+          ],
+          responses: response(ref("ClipPage")),
+        },
+        post: {
+          summary: "Request a retained interval",
+          parameters: [mutation],
+          requestBody: body(ref("CreateClip")),
+          responses: response(ref("Clip"), 202),
+        },
+      },
+      "/streams/{streamId}/clip-window": {
+        ...stream,
+        get: {
+          summary: "Read retained source intervals",
+          responses: response({
+            type: "object",
+            required: ["data"],
+            properties: { data: { type: "array", items: ref("ClipWindow") } },
+          }),
+        },
+      },
+      "/streams/{streamId}/buffer-policy": {
+        ...stream,
+        get: {
+          summary: "Get rolling buffer policy",
+          responses: response(ref("BufferPolicyResult")),
+        },
+        put: {
+          summary: "Update rolling buffer policy with its current version",
+          parameters: [mutation],
+          requestBody: body(ref("BufferPolicyUpdate")),
+          responses: response(ref("BufferPolicyResult")),
+        },
+      },
+      "/clips/{clipId}": {
+        ...clip,
+        get: { summary: "Observe a clip job", responses: response(ref("Clip")) },
+        delete: {
+          summary: "Revoke access and schedule deletion",
+          parameters: [mutation],
+          responses: response(ref("Clip"), 202),
+        },
+      },
+      "/clips/{clipId}/publish": {
+        ...clip,
+        post: {
+          summary: "Permit application-authorized viewer grants for a ready clip",
+          parameters: [mutation],
+          requestBody: body({ type: "object", additionalProperties: false }),
+          responses: response(ref("Clip")),
+        },
+      },
+    },
+    components: {
+      securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+      schemas: {
+        CreateClip: z.toJSONSchema(createClipSchema, { io: "input" }),
+        Clip: z.toJSONSchema(clipResourceSchema),
+        ClipWindow: z.toJSONSchema(clipWindowSchema),
+        ClipPage: {
+          type: "object",
+          required: ["data", "nextCursor"],
+          properties: {
+            data: { type: "array", items: ref("Clip") },
+            nextCursor: { type: ["string", "null"] },
+          },
+        },
+        BufferPolicyUpdate: z.toJSONSchema(
+          z
+            .object({ version: z.number().int().nonnegative(), policy: rollingBufferPolicySchema })
+            .strict(),
+          { io: "input" },
+        ),
+        BufferPolicyResult: z.toJSONSchema(
+          z.object({
+            version: z.number().int().nonnegative(),
+            policy: rollingBufferPolicySchema.nullable(),
+          }),
+        ),
+      },
+    },
+  };
+}

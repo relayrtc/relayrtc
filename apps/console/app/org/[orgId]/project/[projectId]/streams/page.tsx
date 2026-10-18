@@ -1,0 +1,58 @@
+import { cookies } from "next/headers";
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { requireProject } from "@/lib/console-data";
+import { StreamsManager } from "@/components/project/streams-manager";
+import { listStreamsAction } from "@/actions/streaming";
+import { getStreamListActivityAction } from "@/actions/stream-list";
+
+export const metadata: Metadata = {
+  title: "Streams",
+  description: "Manage live sources and private playback.",
+};
+export const dynamic = "force-dynamic";
+
+export default async function StreamsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ orgId: string; projectId: string }>;
+  searchParams: Promise<{ environmentId?: string }>;
+}) {
+  const { orgId, projectId } = await params;
+  const { environmentId } = await searchParams;
+  const data = await requireProject(orgId, projectId);
+  const environments = data.environments.filter((item) => item.status === "active");
+  const remembered = (await cookies()).get(`relayrtc.environment.${projectId}`)?.value;
+  const selected = environmentId
+    ? environments.find((item) => item.id === environmentId)
+    : (environments.find((item) => item.id === remembered) ??
+      environments.find((item) => item.type === "development") ??
+      environments[0]);
+  if (environmentId && !selected) notFound();
+  const result = selected
+    ? await listStreamsAction({ projectId, environmentId: selected.id })
+    : null;
+  const activity =
+    selected && result?.data
+      ? await getStreamListActivityAction({
+          projectId,
+          environmentId: selected.id,
+          streamIds: result.data.data.map((stream) => stream.id),
+        })
+      : null;
+  return (
+    <StreamsManager
+      key={selected?.id ?? "empty"}
+      projectId={projectId}
+      environmentId={selected?.id ?? ""}
+      environments={environments}
+      canManage={data.canManage}
+      initialRows={result?.data?.data ?? []}
+      initialCursor={result?.data?.nextCursor ?? null}
+      initialError={result?.error?.description ?? null}
+      initialActivity={activity?.data ?? {}}
+      initialActivityError={activity?.error?.description ?? null}
+    />
+  );
+}

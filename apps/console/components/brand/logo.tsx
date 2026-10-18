@@ -1,16 +1,23 @@
-import Link from 'next/link'
-import { cn } from '@/lib/utils'
+import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 export function LogoMark({ className }: { className?: string }) {
   return (
-    <svg       aria-hidden="true"
-      viewBox="0 0 32 32"
+    <svg
+      aria-hidden="true"
+      viewBox="100 110 1060 1060"
+      width="28"
+      height="28"
       fill="none"
-      className={cn('size-6', className)}>
-
-<g transform="translate(0.000000,1254.000000) scale(0.100000,-0.100000)"
-fill="#000000" stroke="none">
-<path d="M1480 10235 c0 -3 55 -71 123 -152 67 -81 144 -174 172 -207 27 -34
+      className={cn("size-7 shrink-0", className)}
+    >
+      <g
+        transform="translate(0.000000,1254.000000) scale(0.100000,-0.100000)"
+        fill="currentColor"
+        stroke="none"
+      >
+        <path
+          d="M1480 10235 c0 -3 55 -71 123 -152 67 -81 144 -174 172 -207 27 -34
 86 -104 130 -156 45 -52 231 -275 415 -495 183 -220 356 -426 383 -457 l50
 -58 2261 -3 2261 -2 122 -28 c408 -91 725 -261 1008 -542 141 -139 227 -245
 319 -392 l58 -91 96 -33 c130 -45 319 -141 423 -216 106 -76 225 -201 290
@@ -22,22 +29,29 @@ fill="#000000" stroke="none">
 -551 30 -37 93 -113 140 -170 141 -169 202 -243 265 -323 l60 -76 1350 4
 c1361 3 1409 4 1690 42 455 60 825 190 1145 403 552 365 906 968 1001 1699 18
 145 21 198 16 407 -6 264 -24 411 -76 629 -166 692 -627 1358 -1213 1754 -275
-186 -576 318 -903 397 -309 75 28 69 -3927 72 -1952 2 -3548 0 -3548 -2z"/>
-<path d="M6580 8083 c205 -116 354 -221 535 -377 255 -220 294 -244 424 -271
+186 -576 318 -903 397 -309 75 28 69 -3927 72 -1952 2 -3548 0 -3548 -2z"
+        />
+        <path
+          d="M6580 8083 c205 -116 354 -221 535 -377 255 -220 294 -244 424 -271
 119 -25 205 -7 461 95 160 64 350 130 376 130 8 0 14 4 14 9 0 12 -442 154
--730 235 -401 112 -869 210 -1115 232 l-70 6 105 -59z"/>
-<path d="M4160 6330 c-560 -45 -1122 -400 -1459 -920 -165 -255 -273 -571
+-730 235 -401 112 -869 210 -1115 232 l-70 6 105 -59z"
+        />
+        <path
+          d="M4160 6330 c-560 -45 -1122 -400 -1459 -920 -165 -255 -273 -571
 -301 -880 -8 -84 -10 -348 -8 -800 4 -647 5 -679 26 -762 70 -288 229 -525
 474 -708 140 -105 335 -184 516 -210 50 -7 247 -10 557 -8 l480 3 -4 2140 c-2
-1177 -4 2141 -5 2142 -6 7 -198 10 -276 3z"/>
-<path d="M6108 4613 c32 -44 67 -88 233 -294 279 -348 1478 -1852 1674 -2101
+1177 -4 2141 -5 2142 -6 7 -198 10 -276 3z"
+        />
+        <path
+          d="M6108 4613 c32 -44 67 -88 233 -294 279 -348 1478 -1852 1674 -2101
 l140 -178 1383 0 c760 0 1382 3 1382 6 0 3 -35 45 -77 93 -43 48 -170 193
 -283 321 -186 212 -297 338 -765 865 -172 194 -458 512 -655 730 -252 278
 -345 359 -510 444 -130 67 -224 99 -358 122 -108 18 -169 19 -1149 19 l-1034
-0 19 -27z"/>
-</g>
-</svg>
-  )
+0 19 -27z"
+        />
+      </g>
+    </svg>
+  );
 }
 
 export function Logo({
@@ -45,21 +59,26 @@ export function Logo({
   className,
   onClick,
 }: {
-  href?: string
-  className?: string
-  onClick?: () => void
+  href?: string;
+  className?: string;
+  onClick?: () => void;
 }) {
   const content = (
     <>
       <LogoMark />
-      <span className="text-[1.05rem] font-semibold tracking-tight">Relayrtc</span>
+      <span className="text-[1.05rem] font-semibold tracking-tight">RelayRTC</span>
     </>
-  )
-  const classes = cn('inline-flex items-center gap-2 text-foreground', className)
-  if (!href) return <span className={classes}>{content}</span>
+  );
+  const classes = cn("inline-flex items-center gap-2 text-foreground", className);
+  if (!href) return <span className={classes}>{content}</span>;
   return (
-    <Link href={href} className={classes} {...(onClick ? { onClick } : {})} aria-label="RelayRTC home">
+    <Link
+      href={href}
+      className={classes}
+      {...(onClick ? { onClick } : {})}
+      aria-label="RelayRTC home"
+    >
       {content}
     </Link>
-  )
+  );
 }

@@ -53,7 +53,7 @@ func (handler *Handler) tryRefresh(client *client, claims auth.Claims, joined *j
 	for _, permission := range next.Permissions {
 		sameGrant = sameGrant && hasPermission(claims.Permissions, permission)
 	}
-	if !sameGrant || next.TokenID == claims.TokenID || !next.ExpiresAt.Time.After(claims.ExpiresAt.Time) {
+	if !handler.guestAuthorized(next) || !sameGrant || next.TokenID == claims.TokenID || !next.ExpiresAt.Time.After(claims.ExpiresAt.Time) {
 		reject("forbidden", "Credential refresh must preserve identity and permissions and extend expiration")
 		return true, nil
 	}

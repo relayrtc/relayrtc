@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -343,6 +344,12 @@ func (handler *Handler) serve(client *client, claims auth.Claims, rawToken, clie
 				return nil, claims
 			}
 		case <-usage.C:
+			if joined != nil && !handler.guestAuthorized(claims) {
+				ctx, cancel := context.WithTimeout(handler.shutdown, 2*time.Second)
+				_ = handler.RemoveParticipantSession(ctx, claims.RoomID, claims.ParticipantID, joined.session.ID)
+				cancel()
+				return joined, claims
+			}
 			if joined != nil {
 				handler.flushClientUsage(client, joined.session.ID)
 			}
@@ -419,10 +426,23 @@ func (handler *Handler) recordSessionLocation(sessionID, clientIP string) {
 	}()
 }
 
+func (handler *Handler) guestAuthorized(claims auth.Claims) bool {
+	verifier, ok := handler.sessionStore.(interface {
+		AuthorizeGuest(context.Context, auth.Claims) bool
+	})
+	if !ok {
+		return !strings.HasPrefix(claims.ParticipantID, "guestp_")
+	}
+	ctx, cancel := context.WithTimeout(handler.shutdown, 2*time.Second)
+	defer cancel()
+	return verifier.AuthorizeGuest(ctx, claims)
+}
+
 func (handler *Handler) handleMessage(client *client, claims auth.Claims, rawToken string, joined *joinedSession, clientIP string, data []byte) (bool, *joinedSession) {
 	client.operationMu.Lock()
 	defer client.operationMu.Unlock()
-	if client.isRevoked() {
+	if client.isRevoked() || !handler.guestAuthorized(claims) {
+		client.rejectRevoked()
 		return true, joined
 	}
 	if joined != nil {
