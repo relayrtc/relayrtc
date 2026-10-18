@@ -69,7 +69,7 @@ export const ingestCredentialSchema = z
   .object({ ttlSeconds: z.number().int().min(60).max(86400).default(3600) })
   .strict();
 export const playbackGrantSchema = z
-  .object({ ttlSeconds: z.number().int().min(30).max(3600).default(300) })
+  .object({ ttlSeconds: z.number().int().min(30).max(3600).default(300), mode: z.enum(["live", "dvr"]).default("live"), broadcastId: streamingIdSchema.optional() })
   .strict();
 export const streamingObjectNameSchema = z
   .string()
