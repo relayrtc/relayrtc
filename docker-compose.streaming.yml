@@ -22,6 +22,34 @@ services:
       STREAMING_ALLOWED_ORIGINS: ${STREAMING_ALLOWED_ORIGINS:-http://localhost:3002,http://localhost:3005}
       STREAMING_MAX_SESSIONS: ${STREAMING_MAX_SESSIONS:-8}
       STREAMING_MAX_STREAMS_PER_ENVIRONMENT: ${STREAMING_MAX_STREAMS_PER_ENVIRONMENT:-100}
+      STREAMING_DESTINATION_ENCRYPTION_KEY: ${STREAMING_DESTINATION_ENCRYPTION_KEY:?Set a separate destination encryption key}
+      STREAMING_SOURCE_ALLOWED_HOSTS: ${STREAMING_SOURCE_ALLOWED_HOSTS:-}
+      STREAMING_MAX_SOURCE_JOBS: ${STREAMING_MAX_SOURCE_JOBS:-4}
+      STREAMING_MAX_SCHEDULES: ${STREAMING_MAX_SCHEDULES:-1000}
+      STREAMING_MAX_SCHEDULES_PER_ENVIRONMENT: ${STREAMING_MAX_SCHEDULES_PER_ENVIRONMENT:-100}
+      STREAMING_SCHEDULE_NOTIFICATIONS_ENABLED: ${STREAMING_SCHEDULE_NOTIFICATIONS_ENABLED:-false}
+      STREAMING_MIXERS_ENABLED: ${STREAMING_MIXERS_ENABLED:-true}
+      STREAMING_MAX_MIXERS: ${STREAMING_MAX_MIXERS:-2}
+      STREAMING_MAX_MIXERS_PER_ENVIRONMENT: ${STREAMING_MAX_MIXERS_PER_ENVIRONMENT:-1}
+      STREAMING_MAX_CLIP_JOBS: ${STREAMING_MAX_CLIP_JOBS:-4}
+      STREAMING_MAX_CLIPS_PER_MINUTE: ${STREAMING_MAX_CLIPS_PER_MINUTE:-10}
+      STREAMING_MAX_CLIP_DURATION_SECONDS: ${STREAMING_MAX_CLIP_DURATION_SECONDS:-120}
+      STREAMING_GUESTS_ENABLED: ${STREAMING_GUESTS_ENABLED:-true}
+      STREAMING_GUEST_SIGNALING_URL: ${STREAMING_GUEST_SIGNALING_URL:-ws://localhost:8081/v1/connect}
+      STREAMING_DVR_ENABLED: ${STREAMING_DVR_ENABLED:-true}
+      STREAMING_MAX_BUFFERS_PER_ENVIRONMENT: ${STREAMING_MAX_BUFFERS_PER_ENVIRONMENT:-2}
+      STREAMING_MAX_BUFFERS: ${STREAMING_MAX_BUFFERS:-4}
+      STREAMING_MAX_RECORDINGS: ${STREAMING_MAX_RECORDINGS:-4}
+      STREAMING_MAX_RECORDINGS_PER_ENVIRONMENT: ${STREAMING_MAX_RECORDINGS_PER_ENVIRONMENT:-2}
+      STREAMING_MAX_RECORDING_BYTES: ${STREAMING_MAX_RECORDING_BYTES:-536870912}
+      STREAMING_MAX_DESTINATIONS: ${STREAMING_MAX_DESTINATIONS:-8}
+      STREAMING_MAX_EGRESS_BITRATE: ${STREAMING_MAX_EGRESS_BITRATE:-24000000}
+      STREAMING_MAX_EGRESS_BYTES: ${STREAMING_MAX_EGRESS_BYTES:-20000000000}
+      STREAMING_BROADCASTS_ENABLED: ${STREAMING_BROADCASTS_ENABLED:-true}
+      STREAMING_MAX_BROADCASTS: ${STREAMING_MAX_BROADCASTS:-16}
+      STREAMING_MAX_BROADCASTS_PER_ENVIRONMENT: ${STREAMING_MAX_BROADCASTS_PER_ENVIRONMENT:-4}
+      STREAMING_MAX_OUTPUT_JOBS: ${STREAMING_MAX_OUTPUT_JOBS:-16}
+      STREAMING_MAX_OUTPUT_JOBS_PER_WORKER: ${STREAMING_MAX_OUTPUT_JOBS_PER_WORKER:-4}
     depends_on:
       streaming-storage-init:
         condition: service_completed_successfully
@@ -61,6 +89,8 @@ services:
     image: bluenviron/mediamtx:1.21.2
     environment:
       MTX_AUTHHTTPADDRESS: http://gateway:${STREAMING_GATEWAY_KEY:?Set gateway key}@api:8080/internal/v1/streaming/gateway-auth
+      # The private API proxies HLS with this credential; browsers use scoped API grants.
+      MTX_HLSCDNSECRET: ${STREAMING_GATEWAY_KEY:?Set gateway key}
       MTX_WEBRTCADDITIONALHOSTS: ${STREAMING_WEBRTC_HOSTS:-127.0.0.1}
       MTX_RTMPENCRYPTION: ${STREAMING_RTMP_ENCRYPTION:-no}
     volumes:
@@ -86,6 +116,7 @@ services:
       STREAMING_API_ORIGIN: http://api:8080
       STREAMING_WORKER_KEY: ${STREAMING_WORKER_KEY:?Set worker key}
       STREAMING_WORKER_ID: streaming-local-1
+      STREAMING_WORKER_CONCURRENCY: ${STREAMING_WORKER_CONCURRENCY:-4}
       STREAMING_RTP_PORT_BASE: 20000
     networks:
       relayrtc:
@@ -99,7 +130,84 @@ services:
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
-    cpus: 2
+    cpus: ${STREAMING_WORKER_CPUS:-4}
+    mem_limit: ${STREAMING_WORKER_MEMORY:-4g}
+    pids_limit: 256
+    security_opt: [no-new-privileges:true]
+
+  streaming-outputs:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/streaming.Dockerfile
+      target: runner
+    command: [node, --enable-source-maps, services/streaming/dist/output-server.js]
+    environment:
+      STREAMING_API_ORIGIN: http://api:8080
+      STREAMING_WORKER_KEY: ${STREAMING_WORKER_KEY:?Set worker key}
+      STREAMING_WORKER_ID: streaming-outputs-1
+      STREAMING_OUTPUT_CONCURRENCY: ${STREAMING_OUTPUT_CONCURRENCY:-4}
+      STREAMING_HEALTH_PORT: 8091
+    networks: [relayrtc]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    cpus: 1
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt: [no-new-privileges:true]
+
+  streaming-sources:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/streaming.Dockerfile
+      target: runner
+    command: [node, --enable-source-maps, services/streaming/dist/restream-server.js]
+    environment:
+      STREAMING_API_ORIGIN: http://api:8080
+      STREAMING_WORKER_KEY: ${STREAMING_WORKER_KEY:?Set worker key}
+      STREAMING_WORKER_ID: streaming-sources-1
+      STREAMING_HEALTH_PORT: 8093
+    networks: [relayrtc]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    cpus: 1
+    mem_limit: 1g
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - "/tmp:size=64m,mode=1777"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  streaming-recordings:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/streaming.Dockerfile
+      target: runner
+    command: [node, --enable-source-maps, services/streaming/dist/recording-server.js]
+    environment:
+      STREAMING_API_ORIGIN: http://api:8080
+      STREAMING_WORKER_KEY: ${STREAMING_WORKER_KEY:?Set worker key}
+      STREAMING_WORKER_ID: streaming-recordings-1
+      TMPDIR: /tmp/recordings
+      STREAMING_HEALTH_PORT: 8092
+    tmpfs:
+      - /tmp/recordings:size=768m,mode=1777
+    networks: [relayrtc]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    cpus: 1
     mem_limit: 2g
     pids_limit: 256
     security_opt: [no-new-privileges:true]
