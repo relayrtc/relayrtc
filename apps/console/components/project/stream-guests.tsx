@@ -1,4 +1,7 @@
 "use client";
+import { StreamingHeader, StreamEmptyState } from "./stream-ui";
+import { buttonVariants } from "@/components/ui/button";
+import { Users } from "lucide-react";
 import Link from "next/link";
 import { GuestsManager } from "./guests-manager";
 import { useStreamWorkspace } from "./stream-workspace";
@@ -7,43 +10,57 @@ export function StreamGuests() {
     useStreamWorkspace()!;
   if (stream.source.kind !== "room")
     return (
-      <section className="space-y-3 rounded-xl border p-5">
-        <h2 className="font-semibold">Guests need an RTC room source</h2>
-        <p className="text-sm text-muted-foreground">
-          Use a dedicated room with 2–4 seats to bring guests into the live stage.
-        </p>
-        <Link href={href("settings")} className="text-sm underline underline-offset-4">
-          Configure the source
-        </Link>
-      </section>
+      <div className="space-y-5">
+        <StreamingHeader title="Guests" description="Invite people to join your live broadcast." />
+        <StreamEmptyState
+          icon={Users}
+          title="Bring guests on stage"
+          description="Guests need a WebRTC room source with 2 to 4 seats. Configure a room source to enable invitations and guest controls."
+          actions={
+            <Link href={href("settings")} className={buttonVariants({ size: "sm" })}>
+              Configure source
+            </Link>
+          }
+        />
+      </div>
     );
   if (!broadcastId)
     return (
-      <section className="space-y-3 rounded-xl border p-5">
-        <h2 className="font-semibold">Create a broadcast first</h2>
-        <p className="text-sm text-muted-foreground">
-          Invitations and guest permissions belong to a broadcast run.
-        </p>
-        <Link href={href("broadcasts")} className="text-sm underline underline-offset-4">
-          Create a broadcast
-        </Link>
-      </section>
+      <div className="space-y-5">
+        <StreamingHeader
+          title="Guests"
+          description="Manage invitations, requests and the people on stage."
+        />
+        <StreamEmptyState
+          icon={Users}
+          title="Create a broadcast first"
+          description="Guest invitations and permissions belong to a broadcast. Create one to get your stage ready."
+          actions={
+            canManage && (
+              <Link href={href("broadcasts/new")} className={buttonVariants({ size: "sm" })}>
+                Create broadcast
+              </Link>
+            )
+          }
+        />
+      </div>
     );
   const accepting =
     !!broadcast &&
     broadcast.desiredState === "running" &&
     !["created", "stopping", "stopped", "failed"].includes(broadcast.state);
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Use a dedicated RTC room with 2 to 4 total seats. Guests choose their own devices after
-        accepting.
-      </p>
+    <div className="space-y-5">
+      <StreamingHeader
+        title="Guests"
+        description="Manage your stage, invitations and guest requests."
+      />
+
       {!accepting && (
         <div className="space-y-2 rounded-xl border bg-muted/20 p-4">
           <p className="text-sm">
             This broadcast is not accepting guests. Start a broadcast before sending invitations;
-            ended runs keep their history.
+            ended broadcasts keep their history.
           </p>
           <Link className="text-sm underline underline-offset-4" href={href()}>
             Open overview

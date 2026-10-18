@@ -1,6 +1,9 @@
 "use client";
+import { StreamEmptyState } from "./stream-ui";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { StreamGuestClient, type StreamGuestOptions } from "@relayrtc/client";
 import type { GuestStage } from "@relayrtc/types";
@@ -18,13 +21,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+
 export function GuestsManager({
   projectId,
   environmentId,
@@ -38,6 +35,11 @@ export function GuestsManager({
   broadcastId: string;
   canManage: boolean;
 }) {
+  const task = useStreamingTask();
+  const query = useSearchParams();
+  const router = useRouter();
+  const inviteOpen = task.active;
+  const setInviteOpen = task.setOpen;
   const scope = useMemo(
     () => ({ projectId, environmentId, streamId, broadcastId }),
     [projectId, environmentId, streamId, broadcastId],
@@ -51,10 +53,11 @@ export function GuestsManager({
   } | null>(null);
   const [stage, setStage] = useState<GuestStage | null>(null),
     [error, setError] = useState(""),
-    [inviteOpen, setInviteOpen] = useState(false),
     [pending, setPending] = useState(false),
     [older, setOlder] = useState<string | undefined>();
-  const [collection, setCollection] = useState<"guests" | "invites" | "guest-requests">("guests");
+  const [collection, setCollection] = useState<"guests" | "invites" | "guest-requests">(
+    query.get("view") === "invites" ? "invites" : "guests",
+  );
   const getStatus = useCallback<StreamGuestOptions["getStatus"]>(
     async (signal) => {
       const settings = await guestStageAction(scope);
@@ -130,9 +133,89 @@ export function GuestsManager({
       setPending(false);
     }
   };
+  if (inviteOpen)
+    return (
+      <StreamingTaskPage
+        title="Invite a guest"
+        description="Invite a viewer from your application to join the broadcast."
+        backHref={task.backHref}
+        guidance="Use the viewer identity supplied by your backend. The invitation appears in your app, where the viewer accepts and chooses which devices to share."
+      >
+        {(error || snapshot.error) && (
+          <p role="alert" className="text-sm text-destructive">
+            {error || snapshot.error?.message}
+          </p>
+        )}
+        {!canManage || !stage?.enabled ? (
+          <p>Enable the guest stage on a running broadcast before inviting a viewer.</p>
+        ) : (
+          <>
+            <form
+              className="space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const data = new FormData(e.currentTarget);
+                void client
+                  .command("invite", {
+                    recipientSubject: String(data.get("subject")),
+                    media: {
+                      audio: data.get("audio") === "on",
+                      video: data.get("video") === "on",
+                      screen: data.get("screen") === "on",
+                    },
+                  })
+                  .then((result) => {
+                    if (result) {
+                      const back = new URL(task.backHref, window.location.origin);
+                      back.searchParams.set("view", "invites");
+                      router.replace(back.pathname + back.search);
+                      setOlder(undefined);
+                      setCollection("invites");
+                    }
+                  });
+              }}
+            >
+              <Label className="grid gap-2">
+                Application subject
+                <Input name="subject" required maxLength={128} />
+              </Label>
+              <Label className="block">
+                <Checkbox value="on" name="audio" defaultChecked /> Audio
+              </Label>
+              <Label className="block">
+                <Checkbox value="on" name="video" /> Camera
+              </Label>
+              <Label className="block">
+                <Checkbox value="on" name="screen" /> Screen sharing
+              </Label>
+              <Button type="submit" disabled={!!snapshot.pending}>
+                Send invitation
+              </Button>
+            </form>
+          </>
+        )}
+      </StreamingTaskPage>
+    );
+
   return (
-    <section className="space-y-3 rounded-lg border p-4" aria-label="Live guests">
-      <h3 className="font-medium">Live guests</h3>
+    <section
+      className="space-y-5 rounded-xl border border-border/70 bg-card/30 p-4 sm:p-5"
+      aria-label="Live guests"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold">Live stage</h2>
+        {canManage && (
+          <Button
+            type="button"
+            size="sm"
+            className="rounded-lg"
+            disabled={!stage?.enabled}
+            onClick={() => setInviteOpen(true)}
+          >
+            Invite guest
+          </Button>
+        )}
+      </div>
       <p className="text-sm text-muted-foreground">
         A dedicated RTC room supports a host and up to three guests. Entering stage mode may briefly
         reconnect the program; subsequent guest changes keep the encoder running.
@@ -143,7 +226,7 @@ export function GuestsManager({
       </p>
       {canManage && (
         <form
-          className="flex flex-wrap items-end gap-2"
+          className="grid items-end gap-4 rounded-lg border border-border/70 bg-background/40 p-4 sm:grid-cols-2"
           onSubmit={(e) => {
             e.preventDefault();
             const data = new FormData(e.currentTarget);
@@ -154,7 +237,7 @@ export function GuestsManager({
             );
           }}
         >
-          <Label>
+          <Label className="flex items-center gap-2 sm:col-span-2">
             <Switch
               value="on"
               name="enabled"
@@ -181,6 +264,7 @@ export function GuestsManager({
               defaultValue={stage?.layout ?? "grid"}
               key={`layout-${stage?.version}`}
               aria-label="Stage layout"
+              className="w-full sm:w-full"
               options={[
                 { value: "grid", label: "Grid" },
                 { value: "single", label: "Single speaker" },
@@ -188,11 +272,13 @@ export function GuestsManager({
               ]}
             />
           </Label>
-          <Button type="submit" disabled={pending || !stage}>
+          <Button
+            type="submit"
+            variant="outline"
+            className="w-fit rounded-lg sm:col-span-2"
+            disabled={pending || !stage}
+          >
             Save stage
-          </Button>
-          <Button type="button" disabled={!stage?.enabled} onClick={() => setInviteOpen(true)}>
-            Invite guest
           </Button>
         </form>
       )}
@@ -209,23 +295,37 @@ export function GuestsManager({
           setCollection(value);
         }}
       >
-        <TabsList aria-label="Guest views">
+        <TabsList
+          variant="line"
+          aria-label="Guest views"
+          className="h-10 w-full justify-start gap-4 border-b border-border/60"
+        >
           <TabsTrigger value="guests">Roster</TabsTrigger>
           <TabsTrigger value="guest-requests">Requests</TabsTrigger>
           <TabsTrigger value="invites">Invitations</TabsTrigger>
         </TabsList>
         <TabsContent key={collection} value={collection} className="space-y-3 pt-2">
           {snapshot.roster && !snapshot.roster.data.length && (
-            <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              {collection === "guests"
-                ? "No guests on stage yet. Invite someone or approve a request."
-                : collection === "invites"
-                  ? "No invitations in this view."
-                  : "No guest requests in this view."}
-            </p>
+            <StreamEmptyState
+              title={
+                collection === "guests"
+                  ? "No guests on stage"
+                  : collection === "invites"
+                    ? "No invitations yet"
+                    : "No guest requests"
+              }
+              description={
+                collection === "guests"
+                  ? "Invite someone to join your broadcast or approve a request."
+                  : "Guest activity will appear here when someone responds in your application."
+              }
+            />
           )}
           {snapshot.roster?.data.map((g) => (
-            <div key={g.id} className="space-y-2 rounded border p-3">
+            <div
+              key={g.id}
+              className="space-y-3 rounded-xl border border-border/70 bg-background/50 p-4"
+            >
               <p>
                 {g.name} · {g.kind} · {g.state} · version {g.version}
               </p>
@@ -361,57 +461,6 @@ export function GuestsManager({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Invite a guest</DialogTitle>
-            <DialogDescription>
-              Use the application subject bound by your backend. The invited viewer must accept and
-              choose their own devices.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const data = new FormData(e.currentTarget);
-              void client
-                .command("invite", {
-                  recipientSubject: String(data.get("subject")),
-                  media: {
-                    audio: data.get("audio") === "on",
-                    video: data.get("video") === "on",
-                    screen: data.get("screen") === "on",
-                  },
-                })
-                .then((result) => {
-                  if (result) {
-                    setInviteOpen(false);
-                    setOlder(undefined);
-                    setCollection("invites");
-                  }
-                });
-            }}
-          >
-            <Label className="grid gap-2">
-              Application subject
-              <Input name="subject" required maxLength={128} />
-            </Label>
-            <Label className="block">
-              <Checkbox value="on" name="audio" defaultChecked /> Audio
-            </Label>
-            <Label className="block">
-              <Checkbox value="on" name="video" /> Camera
-            </Label>
-            <Label className="block">
-              <Checkbox value="on" name="screen" /> Screen sharing
-            </Label>
-            <Button type="submit" disabled={!!snapshot.pending}>
-              Send invitation
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
     </section>
   );
 }
