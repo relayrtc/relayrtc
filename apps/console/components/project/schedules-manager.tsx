@@ -1,4 +1,7 @@
 "use client";
+import { StreamTable } from "./stream-table";
+import { localDateInput, localDateToIso } from "@/lib/streaming/setup";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useStreamWorkspace } from "./stream-workspace";
 import {
@@ -22,19 +25,13 @@ import {
 } from "@/actions/schedules";
 import type { ConsoleSchedule } from "@/lib/streaming/schedule-contracts";
 import type { ConsoleEnvironment } from "@/lib/console-types";
-import { PageHeader } from "@/components/page/page-header";
+import { StreamingHeader as PageHeader, StreamToolbar, StreamEmptyState } from "./stream-ui";
 import { SimpleSelect } from "@/components/page/simple-select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+
 import {
   Sheet,
   SheetContent,
@@ -75,10 +72,6 @@ const localTime = (value: string, zone: string) => {
     return value;
   }
 };
-const utc = (value: string) => {
-  const parsed = new Date(`${value}Z`);
-  return value && Number.isFinite(parsed.getTime()) ? parsed.toISOString() : "";
-};
 export function SchedulesManager({
   projectId,
   environmentId,
@@ -98,7 +91,9 @@ export function SchedulesManager({
   initialError: string | null;
   initialLimits: { activeSchedules: number; maxActiveSchedules: number } | null;
 }) {
+  const task = useStreamingTask();
   const workspace = useStreamWorkspace();
+  const [query, setQuery] = useState("");
   const scopedStreamId = workspace?.streamId;
   const [destinationOptions, setDestinationOptions] = useState<ConsoleDestination[]>([]);
   const [destinationsReady, setDestinationsReady] = useState(!scopedStreamId);
@@ -118,6 +113,23 @@ export function SchedulesManager({
     [name, setName] = useState(""),
     [destinations, setDestinations] = useState(""),
     [timing, setTiming] = useState<ScheduleTiming>(empty);
+  const [browserZone, setBrowserZone] = useState("UTC");
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      setBrowserZone(zone);
+      if (task.active) {
+        setName(workspace?.stream.name ?? "");
+        setTiming({
+          ...empty,
+          startsAt: new Date(Date.now() + 3600000).toISOString(),
+          endsAt: new Date(Date.now() + 7200000).toISOString(),
+          timeZone: zone,
+        });
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [task.active, workspace?.stream.name]);
   const mounted = useRef(true),
     sequence = useRef(0),
     keys = useRef(new Map<string, string>());
@@ -170,6 +182,15 @@ export function SchedulesManager({
     };
   }, [projectId, environmentId, selectedId]);
   const execute = async (command: "save" | "cancel" | "start-now") => {
+    if (
+      command === "save" &&
+      (!timing.startsAt ||
+        !timing.endsAt ||
+        Date.parse(timing.endsAt) <= Date.parse(timing.startsAt))
+    ) {
+      setError("Choose a valid start and an end after it in your local time zone.");
+      return;
+    }
     setPending(true);
     setError(null);
     const identity = JSON.stringify({
@@ -229,6 +250,7 @@ export function SchedulesManager({
       keys.current.delete(identity);
       setSelected(result.data);
       setForm(false);
+      if (task.active) task.setOpen(false);
       setConfirm(false);
       await load();
     } finally {
@@ -265,7 +287,7 @@ export function SchedulesManager({
     setError(null);
   };
   useEffect(() => {
-    if (!form || editing || !scopedStreamId) return;
+    if ((!form && !task.active) || editing || !scopedStreamId) return;
     let active = true;
     void listDestinationsAction({ projectId, environmentId, streamId: scopedStreamId })
       .then((result) => {
@@ -275,7 +297,7 @@ export function SchedulesManager({
           const enabled = result.data.data.filter((d) => d.enabled);
           setDestinationsReady(true);
           setDestinationOptions(enabled);
-          setDestinations(enabled.map((d) => d.id).join(","));
+          setDestinations("");
         }
       })
       .catch(() => {
@@ -284,7 +306,7 @@ export function SchedulesManager({
     return () => {
       active = false;
     };
-  }, [form, editing, projectId, environmentId, scopedStreamId]);
+  }, [form, task.active, editing, projectId, environmentId, scopedStreamId]);
   const numericFields = [
     ["sourceWaitSeconds", "Wait for publisher (seconds)", 10, 600],
     ["catchUpSeconds", "Allow scheduler catch-up (seconds)", 0, 3600],
@@ -292,13 +314,220 @@ export function SchedulesManager({
     ["viewerEarlySeconds", "Waiting page opens early (seconds)", 0, 86400],
     ["viewerAfterSeconds", "Ended-event metadata remains available (seconds)", 0, 3600],
   ] as const;
+  const visibleRows = rows.filter((row) =>
+    `${row.name} ${row.id} ${row.state}`.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  if (task.active || form)
+    return (
+      <StreamingTaskPage
+        title={editing ? "Edit schedule" : "Schedule a broadcast"}
+        description="Choose when a broadcast starts and ends. Your publisher must be connected separately; scheduling does not activate a camera or encoder."
+        backHref={task.backHref}
+        onBack={task.active ? undefined : () => setForm(false)}
+        guidance="Dates use your browser's time zone. Review the start and end below before saving. Platform destinations are optional; private playback is included."
+      >
+        {!canManage ? (
+          <p>Management access is required.</p>
+        ) : (
+          <>
+            {error && (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            {!editing && (
+              <>
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor="schedule-name">Name</Label>
+                  <Input
+                    id="schedule-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </div>
+                {workspace ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Destinations</p>
+                    {destinationOptions.length ? (
+                      destinationOptions.map((d) => (
+                        <Label key={d.id} className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={destinations.split(",").includes(d.id)}
+                            onCheckedChange={(e) =>
+                              setDestinations((previous) =>
+                                e
+                                  ? [...previous.split(",").filter(Boolean), d.id].join(",")
+                                  : previous
+                                      .split(",")
+                                      .filter((id) => id !== d.id)
+                                      .join(","),
+                              )
+                            }
+                          />
+                          {d.name}
+                        </Label>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No enabled destinations. Private playback is still available.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {" "}
+                    <div className="grid min-w-0 gap-2">
+                      <Label htmlFor="schedule-stream">Stream ID</Label>
+                      <Input
+                        id="schedule-stream"
+                        value={streamId}
+                        onChange={(e) => setStreamId(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid min-w-0 gap-2">
+                      <Label htmlFor="schedule-destinations">
+                        Destination IDs (optional, comma separated)
+                      </Label>
+                      <Input
+                        id="schedule-destinations"
+                        value={destinations}
+                        onChange={(e) => setDestinations(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="schedule-start">Start (your local time)</Label>
+              <Input
+                id="schedule-start"
+                type="datetime-local"
+                value={localDateInput(timing.startsAt)}
+                onChange={(e) =>
+                  setTiming({
+                    ...timing,
+                    startsAt: localDateToIso(e.target.value),
+                    timeZone: browserZone,
+                  })
+                }
+              />
+            </div>
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="schedule-end">End (your local time)</Label>
+              <Input
+                id="schedule-end"
+                type="datetime-local"
+                value={localDateInput(timing.endsAt)}
+                onChange={(e) =>
+                  setTiming({
+                    ...timing,
+                    endsAt: localDateToIso(e.target.value),
+                    timeZone: browserZone,
+                  })
+                }
+              />
+            </div>
+            <div className="rounded-xl border bg-muted/20 p-4 text-sm space-y-2">
+              <p>
+                Time zone: <strong>{browserZone}</strong>
+              </p>
+              {timing.startsAt && <p>Starts {localTime(timing.startsAt, browserZone)}</p>}
+              {timing.endsAt && <p>Ends {localTime(timing.endsAt, browserZone)}</p>}
+              {timing.startsAt && (
+                <p className="text-xs text-muted-foreground">
+                  UTC reference: {timing.startsAt}. During a repeated daylight-saving hour, the
+                  earlier occurrence is selected.
+                </p>
+              )}
+            </div>
+            <details className="rounded-lg border border-border/70 p-4">
+              <summary className="cursor-pointer text-sm font-medium">Advanced timing</summary>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {" "}
+                {numericFields.map(([field, label, min, max]) => (
+                  <div key={field} className="space-y-2">
+                    <Label htmlFor={`schedule-${field}`}>{label}</Label>
+                    <Input
+                      id={`schedule-${field}`}
+                      type="number"
+                      min={min}
+                      max={max}
+                      value={timing[field]}
+                      onChange={(e) => setTiming({ ...timing, [field]: Number(e.target.value) })}
+                    />
+                  </div>
+                ))}
+              </div>
+            </details>
+            <Label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={timing.notifyBeforeSeconds !== null}
+                onCheckedChange={(e) =>
+                  setTiming({ ...timing, notifyBeforeSeconds: e ? 300 : null })
+                }
+              />
+              Queue a reminder through the configured signed webhook provider
+            </Label>
+            {timing.notifyBeforeSeconds !== null && (
+              <>
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor="schedule-reminder">Reminder lead (seconds)</Label>
+                  <Input
+                    id="schedule-reminder"
+                    type="number"
+                    min={30}
+                    max={86400}
+                    value={timing.notifyBeforeSeconds}
+                    onChange={(e) =>
+                      setTiming({ ...timing, notifyBeforeSeconds: Number(e.target.value) })
+                    }
+                  />
+                </div>
+              </>
+            )}
+            <Button
+              disabled={
+                pending ||
+                !destinationsReady ||
+                !timing.startsAt ||
+                !timing.endsAt ||
+                (!editing && (!streamId || !name))
+              }
+              onClick={() => {
+                void execute("save");
+              }}
+            >
+              Save schedule
+            </Button>
+          </>
+        )}
+      </StreamingTaskPage>
+    );
+
   return (
-    <div className="space-y-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
         title="Schedules"
-        description="Plan broadcasts and follow their automatic start and stop."
+        description="Schedule broadcasts and track their start and end times."
+        actions={
+          canManage && (
+            <Button size="lg" disabled={!environmentId} onClick={() => task.setOpen(true)}>
+              <Plus />
+              Schedule broadcast
+            </Button>
+          )
+        }
       />
-      <div className="flex flex-wrap gap-2">
+      <StreamToolbar>
+        <Input
+          type="search"
+          aria-label="Search schedules"
+          placeholder="Search schedules..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          className="w-full bg-background sm:max-w-xs"
+        />
         {!workspace && (
           <SimpleSelect
             aria-label="Environment"
@@ -321,13 +550,7 @@ export function SchedulesManager({
           <RefreshCw />
           Refresh
         </Button>
-        {canManage && (
-          <Button disabled={!environmentId} onClick={() => openForm()}>
-            <Plus />
-            Schedule broadcast
-          </Button>
-        )}
-      </div>
+      </StreamToolbar>
       {limits && (
         <p className="text-sm text-muted-foreground">
           Active schedules: {limits.activeSchedules}/{limits.maxActiveSchedules}. Live output
@@ -339,8 +562,8 @@ export function SchedulesManager({
           {error}
         </p>
       )}
-      <div className="overflow-x-auto rounded-xl border">
-        <Table className="w-full text-left text-sm">
+      <StreamTable>
+        <Table hidden={!visibleRows.length} className="w-full text-left text-sm">
           <TableHeader>
             <TableRow className="border-b">
               <TableHead className="p-4">Event</TableHead>
@@ -350,7 +573,7 @@ export function SchedulesManager({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {[...rows]
+            {[...visibleRows]
               .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
               .map((s) => (
                 <TableRow key={s.id} className="border-b last:border-0">
@@ -363,7 +586,7 @@ export function SchedulesManager({
                     <p className="text-xs text-muted-foreground">{s.timeZone}</p>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline">
+                    <Badge variant="secondary" className="capitalize">
                       {s.state === "starting" ? "Waiting for publisher" : s.state}
                     </Badge>
                   </TableCell>
@@ -376,12 +599,18 @@ export function SchedulesManager({
               ))}
           </TableBody>
         </Table>
-        {!rows.length && (
-          <p className="p-4 text-sm text-muted-foreground">
-            No scheduled broadcasts in this environment.
-          </p>
+        {!visibleRows.length && (
+          <StreamEmptyState
+            className="border-0 bg-transparent"
+            title={query ? "No matches found" : "No schedules yet"}
+            description={
+              query
+                ? "Try a different search. Load more items to expand your results."
+                : "Schedule your next broadcast and it will appear here."
+            }
+          />
         )}
-      </div>
+      </StreamTable>
       {cursor && (
         <Button
           variant="outline"
@@ -393,149 +622,7 @@ export function SchedulesManager({
           Load more
         </Button>
       )}
-      <Dialog open={form} onOpenChange={setForm}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editing ? "Edit schedule" : "Schedule broadcast"}</DialogTitle>
-            <DialogDescription>
-              Enter UTC times explicitly. The event is displayed in your chosen time zone. Its
-              stream, outputs and recording policy are saved when it is created.
-            </DialogDescription>
-          </DialogHeader>
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          {!editing && (
-            <>
-              <Label htmlFor="schedule-name">Name</Label>
-              <Input id="schedule-name" value={name} onChange={(e) => setName(e.target.value)} />
-              {workspace ? (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Destinations</p>
-                  {destinationOptions.length ? (
-                    destinationOptions.map((d) => (
-                      <Label key={d.id} className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={destinations.split(",").includes(d.id)}
-                          onCheckedChange={(e) =>
-                            setDestinations((previous) =>
-                              e
-                                ? [...previous.split(",").filter(Boolean), d.id].join(",")
-                                : previous
-                                    .split(",")
-                                    .filter((id) => id !== d.id)
-                                    .join(","),
-                            )
-                          }
-                        />
-                        {d.name}
-                      </Label>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No enabled destinations. Private playback is still available.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {" "}
-                  <Label htmlFor="schedule-stream">Stream ID</Label>
-                  <Input
-                    id="schedule-stream"
-                    value={streamId}
-                    onChange={(e) => setStreamId(e.target.value)}
-                  />
-                  <Label htmlFor="schedule-destinations">
-                    Destination IDs (optional, comma separated)
-                  </Label>
-                  <Input
-                    id="schedule-destinations"
-                    value={destinations}
-                    onChange={(e) => setDestinations(e.target.value)}
-                  />
-                </>
-              )}
-            </>
-          )}
-          <Label htmlFor="schedule-start">Start (UTC)</Label>
-          <Input
-            id="schedule-start"
-            type="datetime-local"
-            value={timing.startsAt.slice(0, 16)}
-            onChange={(e) => setTiming({ ...timing, startsAt: utc(e.target.value) })}
-          />
-          <Label htmlFor="schedule-end">End (UTC)</Label>
-          <Input
-            id="schedule-end"
-            type="datetime-local"
-            value={timing.endsAt.slice(0, 16)}
-            onChange={(e) => setTiming({ ...timing, endsAt: utc(e.target.value) })}
-          />
-          <Label htmlFor="schedule-zone">Display time zone</Label>
-          <Input
-            id="schedule-zone"
-            value={timing.timeZone}
-            onChange={(e) => setTiming({ ...timing, timeZone: e.target.value })}
-          />
-          {timing.startsAt && (
-            <p className="text-sm text-muted-foreground">
-              Starts {localTime(timing.startsAt, timing.timeZone)} in {timing.timeZone}.
-            </p>
-          )}
-          {numericFields.map(([field, label, min, max]) => (
-            <div key={field} className="space-y-2">
-              <Label htmlFor={`schedule-${field}`}>{label}</Label>
-              <Input
-                id={`schedule-${field}`}
-                type="number"
-                min={min}
-                max={max}
-                value={timing[field]}
-                onChange={(e) => setTiming({ ...timing, [field]: Number(e.target.value) })}
-              />
-            </div>
-          ))}
-          <Label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={timing.notifyBeforeSeconds !== null}
-              onCheckedChange={(e) => setTiming({ ...timing, notifyBeforeSeconds: e ? 300 : null })}
-            />
-            Queue a reminder through the configured signed webhook provider
-          </Label>
-          {timing.notifyBeforeSeconds !== null && (
-            <>
-              <Label htmlFor="schedule-reminder">Reminder lead (seconds)</Label>
-              <Input
-                id="schedule-reminder"
-                type="number"
-                min={30}
-                max={86400}
-                value={timing.notifyBeforeSeconds}
-                onChange={(e) =>
-                  setTiming({ ...timing, notifyBeforeSeconds: Number(e.target.value) })
-                }
-              />
-            </>
-          )}
-          <Button
-            disabled={
-              pending ||
-              !destinationsReady ||
-              !timing.startsAt ||
-              !timing.endsAt ||
-              (!editing && (!streamId || !name))
-            }
-            onClick={() => {
-              void execute("save");
-            }}
-          >
-            Save schedule
-          </Button>
-        </DialogContent>
-      </Dialog>
+
       <Sheet
         open={!!selected}
         onOpenChange={(open) => {
@@ -549,7 +636,7 @@ export function SchedulesManager({
           </SheetHeader>
           {selected && (
             <div className="space-y-4 px-4 pb-6">
-              <Badge variant="outline">
+              <Badge variant="secondary" className="capitalize">
                 {selected.state === "starting" ? "Waiting for publisher" : selected.state}
               </Badge>
               {error && (
