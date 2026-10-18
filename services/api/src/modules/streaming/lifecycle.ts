@@ -182,7 +182,7 @@ export function registerStreamingMaintenance(
           } else if (expiredLease) {
             await gateway.removePath(programPath(session.id, session.generation));
             await transition(db, session, "reconnecting", "WORKER_LEASE_EXPIRED");
-          } else if (stream.source.kind !== "room" && session.ingressId) {
+          } else if (!session.mixerId && stream.source.kind !== "room" && session.ingressId) {
             const current = await gateway.path(ingestPath(stream.id));
             if (!current?.ready && Date.now() - session.createdAt.getTime() > 10000) {
               await db.execute(
@@ -225,8 +225,9 @@ export function registerStreamingMaintenance(
         );
       }
       await db.execute(sql`UPDATE streaming_stream t SET status='deleted',updated_at=now() WHERE status='deleting'
-        AND id=ANY(${retiring.map((row) => row.id)}::text[])
+        AND id=ANY(ARRAY[${sql.join(retiring.map((row) => sql`${row.id}`), sql`, `)}]::text[])
         AND NOT EXISTS(SELECT 1 FROM streaming_session s WHERE s.stream_id=t.id AND s.state NOT IN ('ended','failed'))
+        AND NOT EXISTS(SELECT 1 FROM restream_session r WHERE r.stream_id=t.id AND r.ended_at IS NULL)
         AND NOT EXISTS(SELECT 1 FROM streaming_object o JOIN streaming_session s ON s.id=o.session_id WHERE s.stream_id=t.id)`);
       await db.execute(sql`UPDATE streaming_operation o SET status='completed',completed_at=now() FROM streaming_stream t WHERE o.stream_id=t.id AND o.status='pending'
         AND ((o.kind='delete' AND t.status='deleted') OR (o.kind='stop' AND (o.session_id IS NULL OR EXISTS(SELECT 1 FROM streaming_session s WHERE s.id=o.session_id AND s.state IN ('ended','failed')))))`);
