@@ -328,6 +328,9 @@ importers:
 
   services/streaming:
     dependencies:
+      '@relayrtc/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@relayrtc/types':
         specifier: workspace:*
         version: link:../../packages/types
