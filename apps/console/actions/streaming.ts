@@ -1,6 +1,5 @@
 "use server";
 
-import { headers } from "next/headers";
 import { z } from "zod";
 import {
   createStreamSchema,
@@ -8,7 +7,7 @@ import {
   streamingIdSchema,
   streamScopeSchema,
 } from "@relayrtc/validation";
-import { reportingOrigin, sessionCookie } from "@/lib/reporting/request";
+import { requestStreaming } from "@/lib/streaming/client";
 import {
   credentialSchema,
   detailSchema,
@@ -18,63 +17,10 @@ import {
   playbackSchema,
   streamSchema,
   usageSchema,
-  type StreamingResult,
 } from "@/lib/streaming/contracts";
 
 const scope = streamScopeSchema.required();
 const resource = scope.extend({ streamId: streamingIdSchema });
-const errorSchema = z.object({ code: z.string().max(100), description: z.string().max(600) });
-
-async function requestStreaming<T>(
-  projectId: string,
-  environmentId: string,
-  path: string,
-  schema: z.ZodType<T>,
-  method = "GET",
-  body?: unknown,
-  query: Record<string, string> = {},
-  idempotencyKey?: string,
-): Promise<StreamingResult<T>> {
-  try {
-    const cookie = sessionCookie((await headers()).get("cookie") ?? "");
-    if (!cookie)
-      return {
-        data: null,
-        error: { code: "AUTHENTICATION_REQUIRED", description: "Sign in to access streams." },
-      };
-    const requestHeaders: Record<string, string> = { cookie, accept: "application/json" };
-    if (method !== "GET") {
-      if (!process.env.BETTER_AUTH_URL) throw new Error("Console origin unavailable");
-      requestHeaders.origin = new URL(process.env.BETTER_AUTH_URL).origin;
-    }
-    if (idempotencyKey) requestHeaders["idempotency-key"] = idempotencyKey;
-    if (body !== undefined) requestHeaders["content-type"] = "application/json";
-    const parameters = new URLSearchParams({ ...query, projectId, environmentId });
-    const response = await fetch(new URL(`/v1/${path}?${parameters}`, reportingOrigin()), {
-      method,
-      headers: requestHeaders,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(20000),
-    });
-    const payload: unknown = await response.json();
-    if (!response.ok) {
-      const error = errorSchema.safeParse(payload);
-      if (error.success && response.status < 500) return { data: null, error: error.data };
-      throw new Error("Streaming API unavailable");
-    }
-    return { data: schema.parse(payload), error: null };
-  } catch {
-    return {
-      data: null,
-      error: {
-        code: "STREAMING_UNAVAILABLE",
-        description: "Streaming is unavailable. Check that streaming is enabled or try again.",
-      },
-    };
-  }
-}
 const invalid = {
   data: null,
   error: {
@@ -84,11 +30,16 @@ const invalid = {
 } as const;
 
 export async function listStreamsAction(input: unknown) {
-  const parsed = scope.extend({ cursor: streamingIdSchema.optional() }).safeParse(input);
+  const parsed = scope
+    .extend({
+      cursor: streamingIdSchema.optional(),
+      limit: z.number().int().min(1).max(100).default(30),
+    })
+    .safeParse(input);
   if (!parsed.success) return invalid;
-  const { projectId, environmentId, cursor } = parsed.data;
+  const { projectId, environmentId, cursor, limit } = parsed.data;
   return requestStreaming(projectId, environmentId, "streams", pageSchema, "GET", undefined, {
-    limit: "30",
+    limit: String(limit),
     ...(cursor ? { cursor } : {}),
   });
 }

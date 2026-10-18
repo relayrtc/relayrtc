@@ -39,7 +39,15 @@ export const pageSchema = z.object({
 export const operationSchema = z.object({
   id: z.string(),
   streamId: z.string(),
-  kind: z.enum(["start", "stop", "delete"]),
+  kind: z.enum([
+    "start",
+    "stop",
+    "delete",
+    "broadcast.start",
+    "broadcast.stop",
+    "broadcast.output.retry",
+  ]),
+  broadcastId: z.string().nullable().optional(),
   status: z.enum(["pending", "completed", "failed"]),
   errorCode: z.string().nullable(),
 });
