@@ -1,4 +1,5 @@
 "use client";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useStreamWorkspace } from "./stream-workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,19 +23,13 @@ import {
   addMixerOverlayAction,
   removeMixerOverlayAction,
 } from "@/actions/mixers";
-import { PageHeader } from "@/components/page/page-header";
+import { StreamingHeader as PageHeader, StreamToolbar, StreamEmptyState } from "./stream-ui";
 import { SimpleSelect } from "@/components/page/simple-select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
+
 import {
   AlertDialog,
   AlertDialogContent,
@@ -76,6 +71,9 @@ export function MixerStudio({
   canManage: boolean;
   initialError: string | null;
 }) {
+  const task = useStreamingTask();
+  const creating = task.active;
+  const setCreating = task.setOpen;
   const workspace = useStreamWorkspace();
   const router = useRouter(),
     pathname = usePathname();
@@ -89,7 +87,6 @@ export function MixerStudio({
     [sceneVersion, setSceneVersion] = useState(0),
     [error, setError] = useState(initialError),
     [pending, setPending] = useState(false),
-    [creating, setCreating] = useState(false),
     [stopping, setStopping] = useState(false),
     [secondary, setSecondary] = useState<string[]>(["", "", ""]);
   const selected = useRef<string | null>(null),
@@ -164,6 +161,7 @@ export function MixerStudio({
     const timer = setInterval(() => {
       void refresh();
     }, 4000);
+
     return () => {
       clearTimeout(kickoff);
       clearInterval(timer);
@@ -205,6 +203,55 @@ export function MixerStudio({
       setPending(false);
     }
   }
+  async function publishScene() {
+    if (!mixer || pending) return;
+    invalidate();
+    setPending(true);
+    setError(null);
+    const saveInput = { version: sceneVersion, scene: draft };
+    const saving = requestKey("save-scene", { sceneId, configuration: saveInput });
+    try {
+      const saved = await saveMixerSceneAction({
+        projectId,
+        environmentId,
+        mixerId: mixer.id,
+        sceneId,
+        configuration: saveInput,
+        idempotencyKey: saving.key,
+      });
+      if (saved.error) {
+        setError(saved.error.description);
+        return;
+      }
+      commandKeys.current.delete(saving.identity);
+      setDraft(saved.data.scene);
+      setSceneVersion(saved.data.version);
+      const configuration = { version: mixer.version, sceneId, sceneVersion: saved.data.version };
+      const activation = requestKey("activate", configuration);
+      const result = await activateMixerSceneAction({
+        projectId,
+        environmentId,
+        mixerId: mixer.id,
+        configuration,
+        idempotencyKey: activation.key,
+      });
+      if (result.error) {
+        setError(`Draft saved. Publishing failed: ${result.error.description}`);
+        return;
+      }
+      commandKeys.current.delete(activation.identity);
+      setMixer(result.data.mixer);
+      setOperation(result.data.operation);
+      operationId.current = result.data.operation.id;
+      await refresh();
+    } catch {
+      setError(
+        "Scene publication could not be confirmed. Check the confirmed program revision before retrying.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
   function changeMixer(id: string) {
     if (pending) return;
     invalidate();
@@ -230,6 +277,15 @@ export function MixerStudio({
       mixer.state !== "stopping" &&
       !["stopped", "failed"].includes(mixer.state) &&
       !pending;
+  const sourceName = (id: string) =>
+    id === "primary"
+      ? "Primary source"
+      : (streams.find((s) => s.id === mixer?.sources.find((input) => input.id === id)?.streamId)
+          ?.name ?? id);
+  const readyToPublish =
+    !workspace ||
+    (workspace.broadcast?.desiredState === "running" &&
+      workspace.stream.sessions.some((s) => s.state === "live"));
   const sources = mixer?.sources ?? [],
     nextZ = () =>
       Math.max(
@@ -239,11 +295,91 @@ export function MixerStudio({
         ...draft.texts.map((l) => l.z),
       ) + 1;
   const selectedBroadcast = workspace?.broadcast ?? broadcasts.find((b) => b.id === broadcastId);
+  if (creating)
+    return (
+      <StreamingTaskPage
+        title="Create a mixer"
+        description="Combine live sources into one program, then compose and publish scenes in the studio."
+        backHref={task.backHref}
+        guidance="Use video streams up to 720p at 30 fps in the same environment. The primary stream must belong to one running broadcast. Additional sources need their own active publishers."
+      >
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {!broadcastId && <p>Create a broadcast before adding a mixer.</p>}
+        {!canManage || !broadcastId ? (
+          <p>Select an available broadcast with management access.</p>
+        ) : (
+          <>
+            <div className="space-y-4 p-6">
+              <p className="text-sm">Primary: {selectedBroadcast?.streamId}</p>
+              {secondary.map((value, index) => (
+                <SimpleSelect
+                  key={index}
+                  aria-label={`Additional source ${index + 1}`}
+                  value={value || "none"}
+                  options={[
+                    { value: "none", label: "No additional source" },
+                    ...streams
+                      .filter(
+                        (s) =>
+                          s.id !== selectedBroadcast?.streamId &&
+                          !secondary.some((id, i) => i !== index && id === s.id),
+                      )
+                      .map((s) => ({ value: s.id, label: s.name })),
+                  ]}
+                  onValueChange={(value) =>
+                    setSecondary((previous) =>
+                      previous.map((v, i) => (i === index ? (value === "none" ? "" : value) : v)),
+                    )
+                  }
+                />
+              ))}
+              <p className="text-sm text-muted-foreground">
+                This broadcast must be the only run using its program stream. Start its source and
+                broadcast before activating a scene.
+              </p>
+              <Button
+                disabled={pending}
+                onClick={() => {
+                  const configuration = {
+                    sources: secondary
+                      .map((streamId, index) => ({ id: `source-${String(index + 1)}`, streamId }))
+                      .filter((s) => s.streamId),
+                  };
+                  void run(
+                    "create",
+                    { broadcastId, configuration },
+                    (key) =>
+                      createMixerAction({
+                        ...scope,
+                        broadcastId,
+                        configuration,
+                        idempotencyKey: key,
+                      }),
+                    (m) => {
+                      selected.current = m.id;
+                      loaded.current = null;
+                      setMixer(m);
+                      setCreating(false);
+                    },
+                  );
+                }}
+              >
+                Create mixer
+              </Button>
+            </div>
+          </>
+        )}
+      </StreamingTaskPage>
+    );
   return (
-    <div className="space-y-6">
+    <div className="flex min-w-0 flex-col gap-5 [&_button]:rounded-lg [&_input]:rounded-lg [&_[data-slot=select-trigger]]:rounded-lg">
       <PageHeader
         title="Mixer studio"
-        description="Combine multiple cameras, screen shares or streams into one picture. Choose their layout and switch scenes during the broadcast."
+        description="Arrange cameras, screen shares and streams, then switch scenes live."
         actions={
           <Button
             disabled={
@@ -259,7 +395,7 @@ export function MixerStudio({
           </Button>
         }
       />
-      <div className="flex flex-wrap gap-3">
+      <StreamToolbar>
         {!workspace && (
           <SimpleSelect
             aria-label="Environment"
@@ -299,16 +435,22 @@ export function MixerStudio({
           <RefreshCw />
           Refresh
         </Button>
-      </div>
+      </StreamToolbar>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
-      {!broadcastId && (
-        <p className="text-sm text-muted-foreground">
-          Create a broadcast first, then select it here.
-        </p>
+      {!mixer && (
+        <StreamEmptyState
+          icon={Layers}
+          title={broadcastId ? "Build your live scene" : "Select a broadcast first"}
+          description={
+            broadcastId
+              ? "Create a mixer to arrange live sources, add overlays and switch scenes during your broadcast."
+              : "Create and start a broadcast before setting up your mixer studio."
+          }
+        />
       )}
       {mixer && (
         <>
@@ -336,16 +478,18 @@ export function MixerStudio({
                 : ""}
             </p>
           )}
-          <div className="grid gap-6 xl:grid-cols-2">
-            <section className="space-y-3 rounded-xl border p-4">
-              <h2 className="font-medium">Draft scene</h2>
+          <div className="grid items-start gap-5 xl:grid-cols-2">
+            <section className="space-y-5 rounded-xl border border-border/70 bg-card/30 p-4 sm:p-5">
+              <h2 className="text-sm font-semibold">Draft scene</h2>
               <p className="text-sm text-muted-foreground">
-                Layout guide only. Save and activate to change the server program.
+                Layout guide only. Publish the scene to save your changes and update the live
+                program.
               </p>
               <SceneDraft scene={draft} />
               <div className="flex flex-wrap gap-2">
                 <SimpleSelect
                   aria-label="Scene"
+                  placeholder="Choose a saved scene"
                   value={sceneVersion ? sceneId : ""}
                   onValueChange={chooseScene}
                   options={scenes.map((s) => ({
@@ -373,13 +517,15 @@ export function MixerStudio({
                   Reload saved scene
                 </Button>
               </div>
-              <Label htmlFor="scene-name">Scene name</Label>
-              <Input
-                id="scene-name"
-                value={draft.name}
-                disabled={!editable}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              />
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="scene-name">Scene name</Label>
+                <Input
+                  id="scene-name"
+                  value={draft.name}
+                  disabled={!editable}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                />
+              </div>
               <SimpleSelect
                 aria-label="Layout"
                 value={draft.layout}
@@ -402,25 +548,27 @@ export function MixerStudio({
                   { value: "custom", label: "Custom positions" },
                 ]}
               />
-              <Label htmlFor="scene-background">Background</Label>
-              <Input
-                id="scene-background"
-                type="color"
-                value={draft.background}
-                disabled={!editable}
-                onChange={(e) => setDraft({ ...draft, background: e.target.value })}
-              />
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="scene-background">Background</Label>
+                <Input
+                  id="scene-background"
+                  type="color"
+                  value={draft.background}
+                  disabled={!editable}
+                  onChange={(e) => setDraft({ ...draft, background: e.target.value })}
+                />
+              </div>
               <div className="space-y-3">
                 <h3 className="text-sm font-medium">Video sources</h3>
                 {draft.layers.map((layer, index) => (
-                  <div key={index} className="space-y-2 rounded-lg border p-3">
+                  <div key={index} className="space-y-3 rounded-xl bg-muted/40 p-4">
                     <div className="flex gap-2">
                       <SimpleSelect
                         aria-label={`Layer ${index + 1} source`}
                         value={layer.sourceId}
                         options={sources.map((s) => ({
                           value: s.id,
-                          label: s.id === "primary" ? "Primary source" : s.id,
+                          label: sourceName(s.id),
                         }))}
                         onValueChange={(sourceId) =>
                           setDraft({
@@ -523,7 +671,7 @@ export function MixerStudio({
                             })
                           }
                         />
-                        {source.id}
+                        {sourceName(source.id)}
                       </Label>
                       {audio && (
                         <>
@@ -592,7 +740,7 @@ export function MixerStudio({
               <div className="space-y-3">
                 <h3 className="text-sm font-medium">Text overlays</h3>
                 {draft.texts.map((text, index) => (
-                  <div key={text.id} className="space-y-2 rounded-lg border p-3">
+                  <div key={text.id} className="space-y-3 rounded-xl bg-muted/40 p-4">
                     <Input
                       aria-label="Overlay text"
                       value={text.text}
@@ -690,49 +838,51 @@ export function MixerStudio({
               </div>
               <div className="space-y-3">
                 <h3 className="text-sm font-medium">Approved image overlays</h3>
-                <Label htmlFor="mixer-overlay-file">PNG, up to 640×360 and 1 MiB</Label>
-                <Input
-                  id="mixer-overlay-file"
-                  type="file"
-                  accept="image/png"
-                  disabled={!editable}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (!file) return;
-                    if (file.size > 1048576 || file.type !== "image/png") {
-                      setError("Choose a PNG up to 1 MiB.");
-                      return;
-                    }
-                    try {
-                      const dataBase64 = await new Promise<string>((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-                        reader.onerror = () => reject(new Error("File unavailable"));
-                        reader.readAsDataURL(file);
-                      });
-                      const configuration = {
-                        name: file.name,
-                        contentType: "image/png" as const,
-                        dataBase64,
-                      };
-                      await run(
-                        "overlay",
-                        configuration,
-                        (key) =>
-                          addMixerOverlayAction({
-                            ...scope,
-                            mixerId: mixer.id,
-                            configuration,
-                            idempotencyKey: key,
-                          }),
-                        () => undefined,
-                      );
-                    } catch {
-                      setError("The image could not be read.");
-                    }
-                  }}
-                />
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor="mixer-overlay-file">PNG, up to 640×360 and 1 MiB</Label>
+                  <Input
+                    id="mixer-overlay-file"
+                    type="file"
+                    accept="image/png"
+                    disabled={!editable}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      if (file.size > 1048576 || file.type !== "image/png") {
+                        setError("Choose a PNG up to 1 MiB.");
+                        return;
+                      }
+                      try {
+                        const dataBase64 = await new Promise<string>((resolve, reject) => {
+                          const reader = new FileReader();
+                          reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+                          reader.onerror = () => reject(new Error("File unavailable"));
+                          reader.readAsDataURL(file);
+                        });
+                        const configuration = {
+                          name: file.name,
+                          contentType: "image/png" as const,
+                          dataBase64,
+                        };
+                        await run(
+                          "overlay",
+                          configuration,
+                          (key) =>
+                            addMixerOverlayAction({
+                              ...scope,
+                              mixerId: mixer.id,
+                              configuration,
+                              idempotencyKey: key,
+                            }),
+                          () => undefined,
+                        );
+                      } catch {
+                        setError("The image could not be read.");
+                      }
+                    }}
+                  />
+                </div>
                 {mixer.overlays.map((overlay) => (
                   <div key={overlay.id} className="flex flex-wrap gap-2 text-sm">
                     <span>
@@ -840,37 +990,24 @@ export function MixerStudio({
                   Save draft
                 </Button>
                 <Button
-                  variant="outline"
-                  disabled={!editable || !sceneVersion || operation?.status === "pending"}
-                  onClick={() => {
-                    const configuration = { version: mixer.version, sceneId, sceneVersion };
-                    void run(
-                      "activate",
-                      configuration,
-                      (key) =>
-                        activateMixerSceneAction({
-                          ...scope,
-                          mixerId: mixer.id,
-                          configuration,
-                          idempotencyKey: key,
-                        }),
-                      (result) => {
-                        setMixer(result.mixer);
-                        setOperation(result.operation);
-                        operationId.current = result.operation.id;
-                      },
-                    );
-                  }}
+                  disabled={!editable || !readyToPublish || operation?.status === "pending"}
+                  onClick={() => void publishScene()}
                 >
-                  Activate saved scene
+                  {pending ? "Publishing?" : "Publish scene"}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Activation uses the saved scene version. Unsaved edits stay in this draft.
+              {!readyToPublish && (
+                <p className="text-sm text-muted-foreground">
+                  Connect the primary source and start its broadcast before publishing a scene.
+                </p>
+              )}
+              <p className="grid gap-1.5 text-xs text-muted-foreground">
+                Save draft keeps edits for later. Publish scene saves the draft and applies it to
+                the live program.
               </p>
             </section>
             <section className="space-y-4 rounded-xl border p-4">
-              <h2 className="font-medium">Program output</h2>
+              <h2 className="text-sm font-semibold">Program output</h2>
               <StreamPreview
                 projectId={projectId}
                 environmentId={environmentId}
@@ -891,7 +1028,7 @@ export function MixerStudio({
                 delivery resolution. Missing sources use black video and silence. CPU overload uses
                 a safe slate.
               </p>
-              <p className="text-xs text-muted-foreground">
+              <p className="grid gap-1.5 text-xs text-muted-foreground">
                 First activation and stopping the mixer change the source generation and can briefly
                 rebuffer playback. Scene changes within a running mixer preserve the program
                 encoder.
@@ -900,70 +1037,7 @@ export function MixerStudio({
           </div>
         </>
       )}
-      <Sheet open={creating} onOpenChange={setCreating}>
-        <SheetContent>
-          <SheetHeader>
-            <SheetTitle>Create mixer</SheetTitle>
-            <SheetDescription>
-              Bind independent streams to this broadcast. Primary is the broadcast’s own source.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="space-y-4 p-6">
-            <p className="text-sm">Primary: {selectedBroadcast?.streamId}</p>
-            {secondary.map((value, index) => (
-              <SimpleSelect
-                key={index}
-                aria-label={`Additional source ${index + 1}`}
-                value={value || "none"}
-                options={[
-                  { value: "none", label: "No additional source" },
-                  ...streams
-                    .filter((s) => s.id !== selectedBroadcast?.streamId)
-                    .map((s) => ({ value: s.id, label: s.name })),
-                ]}
-                onValueChange={(value) =>
-                  setSecondary((previous) =>
-                    previous.map((v, i) => (i === index ? (value === "none" ? "" : value) : v)),
-                  )
-                }
-              />
-            ))}
-            <p className="text-sm text-muted-foreground">
-              This broadcast must be the only run using its program stream. Start its source and
-              broadcast before activating a scene.
-            </p>
-            <Button
-              disabled={pending}
-              onClick={() => {
-                const configuration = {
-                  sources: secondary
-                    .map((streamId, index) => ({ id: `source-${String(index + 1)}`, streamId }))
-                    .filter((s) => s.streamId),
-                };
-                void run(
-                  "create",
-                  { broadcastId, configuration },
-                  (key) =>
-                    createMixerAction({
-                      ...scope,
-                      broadcastId,
-                      configuration,
-                      idempotencyKey: key,
-                    }),
-                  (m) => {
-                    selected.current = m.id;
-                    loaded.current = null;
-                    setMixer(m);
-                    setCreating(false);
-                  },
-                );
-              }}
-            >
-              Create mixer
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
+
       <AlertDialog open={stopping} onOpenChange={setStopping}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1025,9 +1099,9 @@ function BoxEditor({
   }) => void;
 }) {
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       {(["x", "y", "width", "height", "z", "opacity"] as const).map((field) => (
-        <Label key={field} className="text-xs text-muted-foreground">
+        <Label key={field} className="grid gap-1.5 text-xs text-muted-foreground">
           {field}
           <Input
             type="number"
