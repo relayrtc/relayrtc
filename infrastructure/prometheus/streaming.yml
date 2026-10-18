@@ -22,9 +22,18 @@ scrape_configs:
   - job_name: streaming-worker
     static_configs:
       - targets: [streaming-worker:8090]
+  - job_name: streaming-outputs
+    static_configs:
+      - targets: [streaming-outputs:8091]
+  - job_name: streaming-recordings
+    static_configs:
+      - targets: [streaming-recordings:8092]
   - job_name: streaming-gateway
     authorization:
       type: Bearer
       credentials_file: /run/secrets/streaming-gateway-key
     static_configs:
       - targets: [streaming-gateway:9998]
+  - job_name: streaming-sources
+    static_configs:
+      - targets: [streaming-sources:8093]
