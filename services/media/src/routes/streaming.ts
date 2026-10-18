@@ -5,6 +5,7 @@ import type { MediaEngine } from "../engine/media-engine.js";
 
 const exportSchema = z
   .object({
+    dynamic:z.boolean().default(false),
     exportId: z.string().regex(/^[A-Za-z0-9_-]{1,160}$/u),
     roomId: z.string().max(128),
     receiverIp: z.ipv4(),

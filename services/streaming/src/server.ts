@@ -1,3 +1,5 @@
+import { createGuestStageControl } from "./guest-stage.js";
+import { startMixerEngine } from "./mixer-engine.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -25,11 +27,12 @@ const environment = z
     STREAMING_API_ORIGIN: z.url(),
     STREAMING_WORKER_KEY: z.string().min(32),
     STREAMING_WORKER_ID: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/u),
+    STREAMING_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(4),
     STREAMING_RTP_PORT_BASE: z.coerce
       .number()
       .int()
       .min(10000)
-      .max(64970)
+      .max(64780)
       .multipleOf(2)
       .default(20000),
     STREAMING_FFMPEG: z.string().default("ffmpeg"),
@@ -46,6 +49,8 @@ if (
 )
   throw new Error("Invalid streaming API origin");
 const jobSchema = z.object({
+  mixerId: z.string().nullable().default(null),
+  guestStage: z.boolean().default(false),
   sessionId: z.string(),
   streamId: z.string(),
   generation: z.number().int(),
@@ -58,14 +63,15 @@ const jobSchema = z.object({
   leaseSeconds: z.number().int(),
 });
 const shutdown = new AbortController();
-let active: ChildProcess | undefined;
+const encoders = new Set<ChildProcess>();
+const jobs = new Map<number, Promise<void>>();
 let lastControlSuccess = 0;
 let encoderFailures = 0;
 const health = createServer((request, response) => {
   if (request.url === "/metrics") {
     response.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
     response.end(
-      `relayrtc_streaming_worker_busy ${active ? "1" : "0"}\nrelayrtc_streaming_worker_control_age_seconds ${String(lastControlSuccess ? (Date.now() - lastControlSuccess) / 1000 : 999999)}\nrelayrtc_streaming_encoder_failures_total ${String(encoderFailures)}\nrelayrtc_streaming_worker_resident_bytes ${String(process.memoryUsage().rss)}\n`,
+      `relayrtc_streaming_worker_busy ${String(encoders.size)}\nrelayrtc_streaming_worker_control_age_seconds ${String(lastControlSuccess ? (Date.now() - lastControlSuccess) / 1000 : 999999)}\nrelayrtc_streaming_encoder_failures_total ${String(encoderFailures)}\nrelayrtc_streaming_worker_resident_bytes ${String(process.memoryUsage().rss)}\n`,
     );
   } else if (request.url === "/ready") {
     response.writeHead(
@@ -102,7 +108,7 @@ async function call(
   lastControlSuccess = Date.now();
   return response.json();
 }
-async function reservePorts() {
+async function reservePorts(portBase: number) {
   const sockets: ReturnType<typeof createSocket>[] = [];
   try {
     for (let offset = 0; offset < 24; offset++) {
@@ -110,7 +116,7 @@ async function reservePorts() {
       sockets.push(socket);
       await new Promise<void>((resolve, reject) => {
         socket.once("error", reject);
-        socket.bind(environment.STREAMING_RTP_PORT_BASE + offset, "0.0.0.0", () => {
+        socket.bind(portBase + offset, "0.0.0.0", () => {
           socket.removeListener("error", reject);
           resolve();
         });
@@ -127,7 +133,9 @@ async function reservePorts() {
     throw error;
   }
 }
-async function runJob(value: unknown) {
+async function runJob(value: unknown, slot: number) {
+  let active: ChildProcess | undefined;
+  const portBase = environment.STREAMING_RTP_PORT_BASE + slot * 24;
   const job = jobSchema.parse(value),
     abort = new AbortController();
   const signal = AbortSignal.any([abort.signal, shutdown.signal]);
@@ -140,6 +148,7 @@ async function runJob(value: unknown) {
   let exportCreated = false,
     heartbeat: Promise<void> | undefined,
     archive: Promise<void> | undefined;
+  let mixerEngine: Awaited<ReturnType<typeof startMixerEngine>> | undefined;
   let sourceInfo: z.infer<typeof streamSourceInfoSchema> | undefined;
   const pulse = async () => {
     const result = z
@@ -147,7 +156,12 @@ async function runJob(value: unknown) {
       .parse(
         await call(
           "heartbeat",
-          { sequence: ++sequence, status: "running", sourceInfo },
+          {
+            sequence: ++sequence,
+            status: "running",
+            sourceInfo,
+            ...(mixerEngine ? { mixer: mixerEngine.report() } : {}),
+          },
           token,
           signal,
         ),
@@ -183,15 +197,12 @@ async function runJob(value: unknown) {
   try {
     let input;
     if (job.source.kind === "room") {
-      const sockets = await reservePorts();
+      const sockets = await reservePorts(portBase);
       try {
         const result = (await call(
           "room-export",
           {
-            ports: Array.from(
-              { length: 12 },
-              (_v, i) => environment.STREAMING_RTP_PORT_BASE + i * 2,
-            ),
+            ports: Array.from({ length: 12 }, (_v, i) => portBase + i * 2),
           },
           token,
           signal,
@@ -206,12 +217,56 @@ async function runJob(value: unknown) {
       input = await externalInput(job.sourceUrl, environment.STREAMING_FFPROBE, signal);
     }
     sourceInfo = input.sourceInfo;
-    active = startEncoder(
-      environment.STREAMING_FFMPEG,
-      encoderArguments(input, job.profile, job.programUrl, job.maxDurationSeconds),
-      signal,
-    );
+    if (job.mixerId || job.guestStage) {
+      const stageControl = job.guestStage
+        ? createGuestStageControl(
+            directory,
+            () =>
+              call(
+                "room-export",
+                { ports: Array.from({ length: 12 }, (_v, i) => portBase + i * 2) },
+                token,
+                signal,
+              ),
+            job.mixerId ? () => call("mixer", {}, token, signal) : undefined,
+          )
+        : undefined;
+      mixerEngine = await startMixerEngine({
+        primary: input,
+        profile: job.profile,
+        programUrl: job.programUrl,
+        maxDurationSeconds: job.maxDurationSeconds,
+        directory,
+        binary: environment.STREAMING_FFMPEG,
+        origin,
+        signal,
+        token: () => token,
+        control: stageControl ? stageControl.control : () => call("mixer", {}, token, signal),
+        ...(stageControl
+          ? {
+              inputForSource: stageControl.inputForSource,
+              onSourcesReady: () => call("room-export/resume", {}, token, signal),
+            }
+          : {}),
+        onFatal: () => {
+          abort.abort();
+        },
+      });
+      active = mixerEngine.output;
+    } else {
+      active = startEncoder(
+        environment.STREAMING_FFMPEG,
+        encoderArguments(input, job.profile, job.programUrl, job.maxDurationSeconds),
+        signal,
+      );
+    }
+    encoders.add(required(active));
     const exited = new Promise<void>((resolve) => {
+      const child = required(active);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        resolve();
+        return;
+      }
       required(active).once("error", () => {
         resolve();
       });
@@ -225,7 +280,13 @@ async function runJob(value: unknown) {
     }
     await exited;
     finished = signal.aborted;
-  } catch {
+  } catch (error) {
+    if (!signal.aborted)
+      process.stderr.write(
+        error instanceof Error && error.message.startsWith("SOURCE_UNAVAILABLE:")
+          ? `Streaming input probe failed: ${error.message}\n`
+          : "Streaming source setup failed\n",
+      );
     finished = signal.aborted;
   } finally {
     if (!finished) encoderFailures++;
@@ -234,7 +295,9 @@ async function runJob(value: unknown) {
     abort.abort();
     await heartbeat;
     await archive;
+    await mixerEngine?.close();
     await stopEncoder(active);
+    if (active) encoders.delete(active);
     active = undefined;
     const finalSignal = AbortSignal.timeout(5000);
     if (exportCreated)
@@ -255,13 +318,29 @@ async function runJob(value: unknown) {
 }
 while (!shutdown.signal.aborted) {
   try {
+    const slot = Array.from({ length: environment.STREAMING_WORKER_CONCURRENCY }, (_, i) => i).find(
+      (i) => !jobs.has(i),
+    );
+    if (slot === undefined) {
+      await delay(500, undefined, { signal: shutdown.signal });
+      continue;
+    }
     const result = (await call(
       "claim",
       { workerId: environment.STREAMING_WORKER_ID },
       environment.STREAMING_WORKER_KEY,
     )) as { job: unknown };
-    if (result.job) await runJob(result.job);
-    else await delay(1000, undefined, { signal: shutdown.signal });
+    if (result.job) {
+      const task = runJob(result.job, slot)
+        .catch(() => {
+          encoderFailures++;
+          process.stderr.write("Streaming job setup failed\n");
+        })
+        .finally(() => {
+          jobs.delete(slot);
+        });
+      jobs.set(slot, task);
+    } else await delay(1000, undefined, { signal: shutdown.signal });
   } catch {
     if (!isShuttingDown()) {
       process.stderr.write("Streaming worker will retry its control connection\n");
@@ -269,7 +348,8 @@ while (!shutdown.signal.aborted) {
     }
   }
 }
-await stopEncoder(active);
+await Promise.allSettled([...jobs.values()]);
+await Promise.all([...encoders].map((encoder) => stopEncoder(encoder)));
 await new Promise<void>((resolve) => {
   health.close(() => {
     resolve();

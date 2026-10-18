@@ -12,14 +12,33 @@ export interface ExportTrack {
   codec: string;
   sdp: string;
 }
-interface Input {
+export interface EncoderInput {
   args: string[];
   video: string[];
   audio: string[];
   sourceInfo: z.infer<typeof streamSourceInfoSchema>;
 }
-export async function roomInput(tracks: ExportTrack[], directory: string): Promise<Input> {
-  const result: Input = {
+function encoderDiagnostic(text: string, urls: readonly string[]) {
+  let safe = text;
+  for (const value of urls) {
+    try {
+      const url = new URL(value);
+      safe = safe.replaceAll(value, "[redacted URL]");
+      const secrets = [decodeURIComponent(url.password), ...url.searchParams.values()];
+      for (const secret of secrets)
+        if (secret.length >= 16) safe = safe.replaceAll(secret, "[redacted credential]");
+    } catch {
+      /* Most encoder arguments are not URLs. */
+    }
+  }
+  return safe
+    .replace(/(?:rtsps?|rtmps?|https?):\/\/[^\s"'<>]+/giu, "[redacted URL]")
+    .replace(/\b(?:Bearer|Basic)\s+\S+/giu, "[redacted authorization]")
+    .slice(0, 2000)
+    .trim();
+}
+export async function roomInput(tracks: ExportTrack[], directory: string): Promise<EncoderInput> {
+  const result: EncoderInput = {
     args: [],
     video: [],
     audio: [],
@@ -52,7 +71,8 @@ export async function externalInput(
   url: string,
   ffprobe: string,
   signal: AbortSignal,
-): Promise<Input> {
+): Promise<EncoderInput> {
+  const childEnvironment = { PATH: process.env.PATH };
   const output = await new Promise<string>((resolve, reject) => {
     const process = spawn(
       ffprobe,
@@ -61,16 +81,29 @@ export async function externalInput(
         "error",
         "-rtsp_transport",
         "tcp",
-        "-rw_timeout",
+        "-timeout",
         "10000000",
+        "-analyzeduration",
+        "2000000",
+        "-probesize",
+        "2000000",
         "-show_streams",
         "-of",
         "json",
         url,
       ],
-      { windowsHide: true, stdio: ["ignore", "pipe", "ignore"], signal },
+      {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        signal,
+        env: childEnvironment,
+      },
     );
     let data = "";
+    let diagnostic = "";
+    process.stderr.on("data", (chunk: Buffer) => {
+      diagnostic += chunk.toString().slice(0, Math.max(0, 8192 - diagnostic.length));
+    });
     const timer = setTimeout(() => process.kill("SIGKILL"), 12000);
     process.stdout.on("data", (chunk: Buffer) => {
       data += chunk.toString();
@@ -80,7 +113,7 @@ export async function externalInput(
     process.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(data);
-      else reject(new Error("SOURCE_UNAVAILABLE"));
+      else reject(new Error(`SOURCE_UNAVAILABLE: ${encoderDiagnostic(diagnostic, [url])}`));
     });
   });
   const parsed = z
@@ -114,7 +147,7 @@ export async function externalInput(
       "512",
       "-rtsp_transport",
       "tcp",
-      "-rw_timeout",
+      "-timeout",
       "10000000",
       "-fflags",
       "+genpts+discardcorrupt",
@@ -134,7 +167,7 @@ export async function externalInput(
   };
 }
 export function encoderArguments(
-  input: Input,
+  input: EncoderInput,
   profile: StreamProfile,
   output: string,
   maxDuration: number,
@@ -236,8 +269,23 @@ export function encoderArguments(
   return args;
 }
 export function startEncoder(binary: string, args: string[], signal: AbortSignal): ChildProcess {
-  // FFmpeg diagnostics include authenticated URLs. Do not relay stderr or argv to logs.
-  return spawn(binary, args, { windowsHide: true, stdio: "ignore", signal });
+  const child = spawn(binary, args, {
+    windowsHide: true,
+    stdio: ["ignore", "ignore", "pipe"],
+    env: { PATH: process.env.PATH },
+    signal,
+  });
+  let diagnostic = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    diagnostic += chunk.toString().slice(0, Math.max(0, 8192 - diagnostic.length));
+  });
+  child.once("close", (code) => {
+    if (code !== 0 && !signal.aborted)
+      process.stderr.write(
+        `Streaming encoder exited (${String(code)}): ${encoderDiagnostic(diagnostic, args)}\n`,
+      );
+  });
+  return child;
 }
 export async function stopEncoder(process: ChildProcess | undefined) {
   if (process?.exitCode !== null || process.signalCode !== null) return;

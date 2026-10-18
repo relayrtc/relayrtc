@@ -1,6 +1,8 @@
+import { DynamicStreamingExports } from "./dynamic-streaming-export.js";
 import type { Consumer, PlainTransport, Producer, Router } from "mediasoup/types";
 
 export interface StreamingExportRequest {
+  dynamic?: boolean;
   exportId: string;
   roomId: string;
   receiverIp: string;
@@ -11,6 +13,7 @@ export interface StreamingExportRequest {
   layout: "single" | "grid";
 }
 export interface StreamingExportTrack {
+  participantId?: string;
   id: string;
   kind: "audio" | "video";
   trackType: string;
@@ -30,8 +33,10 @@ interface ExportState {
 
 // No participant is added to the room. Export consumers have their own bounded lease.
 export class StreamingExports {
+  readonly #dynamic=new DynamicStreamingExports();
   readonly #exports = new Map<string, ExportState>();
   async create(request: StreamingExportRequest, router: Router, producers: Map<string, Producer>) {
+    if(request.dynamic)return this.#dynamic.create(request,router,producers);
     const existing = this.#exports.get(request.exportId);
     if (existing) {
       if (!existing.ready || existing.lost) throw new Error("STREAM_EXPORT_NOT_READY");
@@ -158,6 +163,7 @@ export class StreamingExports {
     }
   }
   async control(exportId: string, action: "resume" | "renew" | "close") {
+    if(this.#dynamic.has(exportId))return this.#dynamic.control(exportId,action);
     if (action === "close") {
       this.close(exportId);
       return { bytes: 0 };
@@ -181,6 +187,7 @@ export class StreamingExports {
     return { bytes };
   }
   close(exportId: string) {
+    this.#dynamic.close(exportId);
     const state = this.#exports.get(exportId);
     if (!state) return;
     clearTimeout(state.timer);
@@ -189,6 +196,7 @@ export class StreamingExports {
     for (const transport of state.transports) transport.close();
   }
   closeAll() {
+    this.#dynamic.closeAll();
     for (const id of this.#exports.keys()) this.close(id);
   }
 }
