@@ -123,6 +123,8 @@ services:
       rtc-internal:
         ipv4_address: 172.30.0.20
     depends_on:
+      api:
+        condition: service_healthy
       streaming-gateway:
         condition: service_started
       media:
