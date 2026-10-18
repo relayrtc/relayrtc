@@ -1,6 +1,7 @@
 "use client";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { Radio, Video, Gamepad2, Link2, MoreHorizontal, Plus, RefreshCw } from "lucide-react";
 import {
   listDestinationsAction,
   createDestinationAction,
@@ -8,18 +9,19 @@ import {
   rotateDestinationSecretAction,
   deleteDestinationAction,
 } from "@/actions/destinations";
+import { StreamingHeader, StreamToolbar, StreamEmptyState } from "./stream-ui";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SimpleSelect } from "@/components/page/simple-select";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
+
 import {
   AlertDialog,
   AlertDialogContent,
@@ -36,6 +38,7 @@ export function DestinationsManager({
   environmentId,
   streamId,
 }: Scope & { canManage: boolean }) {
+  const task = useStreamingTask();
   const scope = { projectId, environmentId, streamId };
   const [rows, setRows] = useState<ConsoleDestination[]>([]),
     [error, setError] = useState<string | null>(null);
@@ -43,6 +46,7 @@ export function DestinationsManager({
     [form, setForm] = useState<{
       mode: "create" | "edit" | "rotate";
       row?: ConsoleDestination;
+      suggestedName?: string;
     } | null>(null);
   const [removing, setRemoving] = useState<ConsoleDestination | null>(null);
   const sequence = useRef(0),
@@ -75,149 +79,183 @@ export function DestinationsManager({
       clearTimeout(timer);
     };
   }, [load]);
-  return (
-    <section className="space-y-3 border-t pt-4" aria-label="Stream destinations">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-medium">Destinations</h3>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() => {
-              void load();
+  if (task.active || form)
+    return (
+      <StreamingTaskPage
+        title={
+          form?.mode === "rotate"
+            ? "Replace stream key"
+            : form?.mode === "edit"
+              ? "Edit destination"
+              : "Add a destination"
+        }
+        description="Send this stream to an external platform using the server URL and stream key provided by that platform."
+        guidance="Destinations send video to external platforms. Changes apply to new broadcasts. Stop an active broadcast to disconnect its current destinations."
+        backHref={task.backHref}
+        onBack={task.active ? undefined : () => setForm(null)}
+      >
+        {!canManage ? (
+          <p>Management access is required.</p>
+        ) : (
+          <DestinationForm
+            {...scope}
+            {...(form ?? { mode: "create" as const })}
+            onSaved={() => {
+              if (task.active) task.setOpen(false);
+              else {
+                setForm(null);
+                void load();
+              }
             }}
-          >
-            <RefreshCw />
-            Refresh
-          </Button>
-          {canManage && (
-            <Button size="sm" disabled={pending} onClick={() => setForm({ mode: "create" })}>
+          />
+        )}
+      </StreamingTaskPage>
+    );
+
+  return (
+    <section className="space-y-5" aria-label="Stream destinations">
+      <StreamingHeader
+        title="Broadcast destinations"
+        description="Send your stream to multiple platforms from one broadcast."
+        actions={
+          canManage && (
+            <Button onClick={() => task.setOpen(true)}>
               <Plus />
               Add destination
             </Button>
-          )}
-        </div>
+          )
+        }
+      />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { name: "YouTube", icon: Video, color: "text-red-500" },
+          { name: "Twitch", icon: Gamepad2, color: "text-violet-500" },
+          { name: "Facebook Live", icon: Radio, color: "text-blue-500" },
+          { name: "Custom RTMP", icon: Link2, color: "text-foreground" },
+        ].map(({ name, icon: Icon, color }) => (
+          <div
+            key={name}
+            className="flex flex-col items-start rounded-xl border border-border/70 bg-card/30 p-4"
+          >
+            <Icon className={`mb-3 size-6 ${color}`} />
+            <h3 className="text-sm font-semibold">{name}</h3>
+            <p className="mb-4 mt-1 text-xs leading-relaxed text-muted-foreground">
+              {name === "Custom RTMP"
+                ? "Use any RTMP server."
+                : "Use your platform's streaming credentials."}
+            </p>
+            {canManage && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-auto w-full rounded-lg"
+                onClick={() => setForm({ mode: "create", suggestedName: name })}
+              >
+                Add destination
+              </Button>
+            )}
+          </div>
+        ))}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Send your video to YouTube, Twitch or another streaming platform using its server URL and
-        stream key. Destinations are optional for private playback, recordings and clips. Changes
-        apply to new broadcasts; stop an existing run to disconnect its saved outputs.
-      </p>
+      <StreamToolbar>
+        <span className="mr-auto text-sm font-medium">
+          Saved destinations{" "}
+          <span className="ml-1 text-xs text-muted-foreground">({rows.length})</span>
+        </span>
+        <Button size="sm" variant="outline" disabled={pending} onClick={() => void load()}>
+          <RefreshCw />
+          Refresh
+        </Button>
+      </StreamToolbar>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
       {!rows.length && (
-        <p className="text-sm text-muted-foreground">
-          {pending
-            ? "Loading destinations..."
-            : "No destinations yet. Add a platform server URL and stream key, then select it when creating a broadcast."}
-        </p>
+        <StreamEmptyState
+          title={pending ? "Loading destinations" : "No destinations yet"}
+          description="Add a platform's server URL and stream key, then select it when creating a broadcast."
+          icon={Link2}
+        />
       )}
       {rows.map((row) => (
-        <div key={row.id} className="space-y-2 rounded-lg border p-3 text-sm">
-          <p className="font-medium">
-            {row.name} <Badge variant="outline">{row.enabled ? "Enabled" : "Disabled"}</Badge>
-          </p>
-          <p className="break-all">
-            {row.protocol}://{row.host}:{row.port} · {row.profile}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Stream key: •••••••• · credential version {row.credentialVersion}
-          </p>
-          <p className="break-all font-mono text-xs">{row.id}</p>
+        <div
+          key={row.id}
+          className="flex items-start justify-between gap-4 rounded-xl border border-border/70 bg-card/30 p-4 text-sm"
+        >
+          <div className="min-w-0 space-y-2">
+            <p className="font-medium">
+              {row.name} <Badge variant="outline">{row.enabled ? "Enabled" : "Disabled"}</Badge>
+            </p>
+            <p className="break-all">
+              {row.protocol}://{row.host}:{row.port} · {row.profile}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Stream key saved securely / Quality: {row.profile}
+            </p>
+            <p className="break-all font-mono text-[10px] text-muted-foreground">{row.id}</p>
+          </div>
           {canManage && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => setForm({ mode: "edit", row })}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={`Actions for ${row.name}`}
+                className="inline-grid size-8 place-items-center rounded-lg text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
               >
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => {
-                  setPending(true);
-                  void updateDestinationAction({
-                    ...scope,
-                    destinationId: row.id,
-                    idempotencyKey: crypto.randomUUID(),
-                    configuration: { version: row.version, enabled: !row.enabled },
-                  })
-                    .then((result) => {
-                      if (result.error) setError(result.error.description);
-                      else void load();
+                <MoreHorizontal className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44 rounded-xl p-1.5">
+                <DropdownMenuItem disabled={pending} onClick={() => setForm({ mode: "edit", row })}>
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={pending}
+                  onClick={() => {
+                    setPending(true);
+                    void updateDestinationAction({
+                      ...scope,
+                      destinationId: row.id,
+                      idempotencyKey: crypto.randomUUID(),
+                      configuration: { version: row.version, enabled: !row.enabled },
                     })
-                    .catch(() =>
-                      setError("The destination could not be updated. Refresh before retrying."),
-                    )
-                    .finally(() => setPending(false));
-                }}
-              >
-                {row.enabled ? "Disable" : "Enable"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pending}
-                onClick={() => setForm({ mode: "rotate", row })}
-              >
-                Replace key
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={pending}
-                onClick={() => {
-                  removeKey.current = crypto.randomUUID();
-                  setRemoving(row);
-                }}
-              >
-                Remove
-              </Button>
-            </div>
+                      .then((result) => {
+                        if (result.error) setError(result.error.description);
+                        else void load();
+                      })
+                      .catch(() =>
+                        setError("The destination could not be updated. Refresh before retrying."),
+                      )
+                      .finally(() => setPending(false));
+                  }}
+                >
+                  {row.enabled ? "Disable" : "Enable"}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={pending}
+                  onClick={() => setForm({ mode: "rotate", row })}
+                >
+                  Replace key
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  disabled={pending}
+                  onClick={() => {
+                    removeKey.current = crypto.randomUUID();
+                    setRemoving(row);
+                  }}
+                >
+                  Remove
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       ))}
-      <Sheet
-        open={form !== null}
-        onOpenChange={(open) => {
-          if (!open) setForm(null);
-        }}
-      >
-        <SheetContent className="overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>
-              {form?.mode === "create"
-                ? "Add destination"
-                : form?.mode === "rotate"
-                  ? "Replace stream key"
-                  : "Edit destination"}
-            </SheetTitle>
-            <SheetDescription>
-              Use the server URL and key supplied by your streaming platform. Stored URLs and keys
-              are private.
-            </SheetDescription>
-          </SheetHeader>
-          {form && (
-            <DestinationForm
-              key={`${form.mode}:${form.row?.id ?? "new"}`}
-              {...scope}
-              {...form}
-              onSaved={() => {
-                setForm(null);
-                void load();
-              }}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
+
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Changes apply to new broadcasts. Stop an active broadcast to disconnect its current
+        destinations.
+      </p>
       <AlertDialog
         open={removing !== null}
         onOpenChange={(open) => {
@@ -228,8 +266,8 @@ export function DestinationsManager({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              New runs will no longer offer this destination. Existing runs continue with their
-              saved connection until you stop them. Output history remains available.
+              New broadcasts will no longer offer this destination. Existing broadcasts continue
+              with their saved connection until you stop them. Output history remains available.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -269,9 +307,15 @@ export function DestinationsManager({
 function DestinationForm({
   mode,
   row,
+  suggestedName,
   onSaved,
   ...scope
-}: Scope & { mode: "create" | "edit" | "rotate"; row?: ConsoleDestination; onSaved: () => void }) {
+}: Scope & {
+  mode: "create" | "edit" | "rotate";
+  row?: ConsoleDestination;
+  suggestedName?: string;
+  onSaved: () => void;
+}) {
   const [pending, setPending] = useState(false),
     [error, setError] = useState<string | null>(null);
   const [profile, setProfile] = useState(row?.profile ?? "remux");
@@ -335,56 +379,65 @@ function DestinationForm({
         {mode !== "rotate" && (
           <>
             <div className="space-y-2">
-              <Label htmlFor="destination-name">Name</Label>
-              <Input
-                id="destination-name"
-                name="name"
-                required
-                maxLength={120}
-                defaultValue={row?.name ?? ""}
-                placeholder="YouTube"
-              />
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="destination-name">Name</Label>
+                <Input
+                  id="destination-name"
+                  name="name"
+                  required
+                  maxLength={120}
+                  defaultValue={row?.name ?? suggestedName ?? ""}
+                  placeholder="YouTube"
+                />
+              </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="destination-endpoint">
-                Server URL{mode === "edit" ? " (leave blank to keep)" : ""}
-              </Label>
-              <Input
-                id="destination-endpoint"
-                name="endpoint"
-                required={mode === "create"}
-                maxLength={512}
-                placeholder="rtmps://your-platform.example/live2"
-                autoComplete="off"
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="destination-endpoint">
+                  Server URL{mode === "edit" ? " (leave blank to keep)" : ""}
+                </Label>
+                <Input
+                  id="destination-endpoint"
+                  name="endpoint"
+                  required={mode === "create"}
+                  maxLength={512}
+                  placeholder="rtmps://your-platform.example/live2"
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="destination-profile">Output quality</Label>
+              <SimpleSelect
+                className="w-full sm:w-full"
+                id="destination-profile"
+                value={profile}
+                onValueChange={(value) => {
+                  setProfile(value as typeof profile);
+                  key.current = null;
+                }}
+                options={[
+                  { value: "remux", label: "Use stream quality (no extra encoding)" },
+                  { value: "720p", label: "720p · 30 fps" },
+                  { value: "1080p", label: "1080p · 30 fps" },
+                ]}
               />
             </div>
-            <Label htmlFor="destination-profile">Output quality</Label>
-            <SimpleSelect
-              id="destination-profile"
-              value={profile}
-              onValueChange={(value) => {
-                setProfile(value as typeof profile);
-                key.current = null;
-              }}
-              options={[
-                { value: "remux", label: "Use stream quality (no extra encoding)" },
-                { value: "720p", label: "720p · 30 fps" },
-                { value: "1080p", label: "1080p · 30 fps" },
-              ]}
-            />
           </>
         )}
         {mode !== "edit" && (
           <div className="space-y-2">
-            <Label htmlFor="destination-key">Stream key</Label>
-            <Input
-              id="destination-key"
-              name="streamKey"
-              type="password"
-              required
-              maxLength={1024}
-              autoComplete="new-password"
-            />
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="destination-key">Stream key</Label>
+              <Input
+                id="destination-key"
+                name="streamKey"
+                type="password"
+                required
+                maxLength={1024}
+                autoComplete="new-password"
+              />
+            </div>
           </div>
         )}
         <p className="text-xs text-muted-foreground">
