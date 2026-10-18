@@ -71,7 +71,10 @@ export interface StreamSession {
 export interface StreamingOperation {
   id: string;
   streamId: string;
-  kind: "start" | "stop" | "delete";
+  kind:
+    "start" | "stop" | "delete" | "broadcast.start" | "broadcast.stop" | "broadcast.output.retry";
+  broadcastId?: string | null;
+  outputId?: string | null;
   status: "pending" | "completed" | "failed";
   errorCode: string | null;
   createdAt: string;
