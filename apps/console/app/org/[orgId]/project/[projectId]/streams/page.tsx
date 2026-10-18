@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireProject } from "@/lib/console-data";
@@ -21,9 +22,12 @@ export default async function StreamsPage({
   const { environmentId } = await searchParams;
   const data = await requireProject(orgId, projectId);
   const environments = data.environments.filter((item) => item.status === "active");
+  const remembered = (await cookies()).get(`relayrtc.environment.${projectId}`)?.value;
   const selected = environmentId
     ? environments.find((item) => item.id === environmentId)
-    : (environments.find((item) => item.type === "development") ?? environments[0]);
+    : (environments.find((item) => item.id === remembered) ??
+      environments.find((item) => item.type === "development") ??
+      environments[0]);
   if (environmentId && !selected) notFound();
   const result = selected
     ? await listStreamsAction({ projectId, environmentId: selected.id })
