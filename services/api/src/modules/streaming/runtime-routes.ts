@@ -1,3 +1,5 @@
+import { claimMixer } from "./mixer-service.js";
+import { observeMixer } from "./mixer-runtime.js";
 import { timingSafeEqual } from "node:crypto";
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
 import {
@@ -9,7 +11,7 @@ import {
 import { eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { streamSourceInfoSchema } from "@relayrtc/validation";
+import { mixerReportSchema, streamSourceInfoSchema } from "@relayrtc/validation";
 import { ApiError } from "../../http/errors/api-error.js";
 import { validate } from "../../http/validation/validate.js";
 import type { StreamingConfig } from "./config.js";
@@ -32,6 +34,7 @@ const reportSchema = z
     status: z.enum(["running", "failed", "stopped"]),
     error: z.enum(["ENCODER_EXITED", "SOURCE_UNAVAILABLE", "WORKER_SHUTDOWN"]).optional(),
     sourceInfo: streamSourceInfoSchema.optional(),
+    mixer: mixerReportSchema.optional(),
   })
   .strict();
 export interface RuntimeOptions {
@@ -143,22 +146,32 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
         })
         .where(eq(schema.streamingSession.id, candidate.id))
         .returning();
+      const mixerId = await claimMixer(db, required(session), config);
+      const [stage] = await db.execute(
+        sql`SELECT st.broadcast_id FROM stream_guest_stage st JOIN broadcast_run b ON b.id=st.broadcast_id WHERE st.stream_id=${stream.id} AND st.enabled AND ${config.guestsEnabled} AND b.desired_state='running' AND b.state NOT IN ('stopping','stopped','failed')`,
+      );
+      const guestStage = !!stage;
+      await db.execute(
+        sql`UPDATE streaming_session SET mixer_id=${mixerId},guest_stage=${guestStage} WHERE id=${required(session).id}`,
+      );
       const path = programPath(required(session).id, required(session).generation);
       await gateway.ensurePath(path);
       if (stream.source.kind !== "room") await gateway.ensurePath(ingestPath(stream.id));
       const programUrl = new URL(`${config.gatewayRtsp.replace(/\/$/u, "")}/${path}`);
-      programUrl.username = "worker";
-      programUrl.password = gatewayGrant(required(session), "publish");
+      // FFmpeg 7.1 truncates RTSP userinfo to 127 bytes. Preserve the full grant
+      // using MediaMTX's RTSP token query parameter, for both probe/read and publish.
+      programUrl.searchParams.set("token", gatewayGrant(required(session), "publish"));
       const sourceUrl = new URL(
         `${config.gatewayRtsp.replace(/\/$/u, "")}/${ingestPath(stream.id)}`,
       );
-      sourceUrl.username = "worker";
-      sourceUrl.password = gatewayGrant(required(session), "read");
+      sourceUrl.searchParams.set("token", gatewayGrant(required(session), "read"));
       return {
         job: {
           sessionId: required(session).id,
           streamId: stream.id,
           generation: required(session).generation,
+          mixerId,
+          guestStage,
           source: stream.source,
           profile: stream.profile,
           maxDurationSeconds: stream.maxDurationSeconds,
@@ -176,6 +189,19 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
       const { session } = await leased(db, config, request),
         stream = await getStream(db, session.streamId);
       if (session.desiredState !== "running" || stream.status !== "active") return { stop: true };
+      const [desiredMixer] = await db.execute(
+        sql`SELECT m.id FROM mixer m JOIN broadcast_run b ON b.id=m.broadcast_id WHERE ${config.mixersEnabled} AND m.stream_id=${stream.id} AND m.desired_state='running' AND m.snapshot IS NOT NULL AND b.desired_state='running' AND b.state NOT IN ('stopping','stopped','failed')`,
+      );
+      const [stage] = await db.execute(
+        sql`SELECT st.broadcast_id FROM stream_guest_stage st JOIN broadcast_run b ON b.id=st.broadcast_id WHERE st.stream_id=${stream.id} AND st.enabled AND ${config.guestsEnabled} AND b.desired_state='running' AND b.state NOT IN ('stopping','stopped','failed')`,
+      );
+      if (
+        (desiredMixer ? String(desiredMixer.id) : null) !== session.mixerId ||
+        !!stage !== session.guestStage
+      ) {
+        await db.execute(sql`UPDATE streaming_session SET attempts=0 WHERE id=${session.id}`);
+        return { stop: true };
+      }
       if (input.sequence <= session.sampleSequence) return { stop: false, token: grant(session) };
       if (input.status !== "running") {
         await gateway.removePath(programPath(session.id, session.generation));
@@ -226,7 +252,11 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
       const observed =
         Boolean(output?.ready) &&
         program > session.programBytes &&
-        (stream.source.kind === "room" ? roomBytes !== null : Boolean(source?.ready));
+        (session.mixerId || session.guestStage
+          ? true
+          : stream.source.kind === "room"
+            ? roomBytes !== null
+            : Boolean(source?.ready));
       const ingressDelta =
         ingress >= session.ingressBytes ? ingress - session.ingressBytes : ingress;
       const programDelta =
@@ -239,7 +269,7 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
         return { stop: true };
       }
       await db.execute(sql`INSERT INTO streaming_usage_sample(session_id,generation,sequence,stream_id,organization_id,project_id,environment_id,start_at,end_at,source_seconds,ingress_bytes,program_bytes,coverage)
-        VALUES(${session.id},${session.generation},${input.sequence},${stream.id},${stream.organizationId},${stream.projectId},${stream.environmentId},${start.toISOString()},${now.toISOString()},${observed ? Math.min(elapsed, 10) : 0},${ingressDelta},${programDelta},${observed && elapsed <= 10 && !countersReset ? "observed" : "partial"}) ON CONFLICT DO NOTHING`);
+        VALUES(${session.id},${session.generation},${input.sequence},${stream.id},${stream.organizationId},${stream.projectId},${stream.environmentId},${start.toISOString()},${now.toISOString()},${observed ? Math.min(elapsed, 10) : 0},${ingressDelta},${programDelta},${observed && elapsed <= 10 && !countersReset && (stream.source.kind !== "room" || roomBytes !== null) ? "observed" : "partial"}) ON CONFLICT DO NOTHING`);
       const [updated] = await db
         .update(schema.streamingSession)
         .set({
@@ -255,6 +285,7 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
         })
         .where(eq(schema.streamingSession.id, session.id))
         .returning();
+      await observeMixer(db, session, input.mixer, input.sequence, elapsed, observed);
       if (observed) await transition(db, session, "live");
       else if (session.state === "live")
         await transition(db, session, "reconnecting", "SOURCE_UNAVAILABLE");
@@ -278,10 +309,12 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
       const body = {
         exportId: `${session.id}_${String(session.generation)}`,
         roomId: stream.source.roomId,
-        videoTrackIds: stream.profile.audioOnly ? [] : stream.source.videoTrackIds,
-        audioTrackIds: stream.source.audioTrackIds,
+        videoTrackIds:
+          session.guestStage || stream.profile.audioOnly ? [] : stream.source.videoTrackIds,
+        audioTrackIds: session.guestStage ? [] : stream.source.audioTrackIds,
         audioOnly: stream.profile.audioOnly,
-        layout: stream.profile.layout,
+        layout: session.guestStage ? ("grid" as const) : stream.profile.layout,
+        dynamic: session.guestStage,
         receiverIp: config.workerRtpIp,
         ports: input.ports,
       };
@@ -313,7 +346,51 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
           "The selected room tracks are not available",
         );
       }
-      return JSON.parse((await boundedBody(response, 131072)).toString()) as unknown;
+      const result = z
+        .object({
+          tracks: z.array(
+            z.object({
+              id: z.string(),
+              participantId: z.string().optional(),
+              kind: z.enum(["audio", "video"]),
+              trackType: z.string(),
+              codec: z.string(),
+              sdp: z.string(),
+            }),
+          ),
+        })
+        .parse(JSON.parse((await boundedBody(response, 131072)).toString()));
+      if (!session.guestStage) return result;
+      const owners = await db.execute(
+        sql`SELECT ps.id,coalesce(g.id,p.id) AS source_id,(g.id IS NOT NULL) AS is_guest FROM participant_session ps JOIN participant p ON p.id=ps.participant_id LEFT JOIN stream_guest g ON g.participant_id=p.id WHERE p.room_id=${stream.source.roomId} AND ps.id=ANY(ARRAY[${sql.join(
+          result.tracks.map((t) => sql`${t.participantId ?? ""}`),
+          sql`, `,
+        )}]::text[]) AND guest_session_authorized(ps.id)`,
+      );
+      const [stage] = await db.execute(
+        sql`SELECT layout,version FROM stream_guest_stage WHERE stream_id=${stream.id} AND enabled`,
+      );
+      return {
+        ...result,
+        layout: z.enum(["single", "grid", "pip"]).parse(stage?.layout ?? "grid"),
+        revision: Number(stage?.version ?? 1),
+        tracks: result.tracks
+          .filter((t) => owners.some((o) => o.id === t.participantId))
+          .sort(
+            (a, b) =>
+              Number(owners.find((o) => o.id === a.participantId)?.is_guest) -
+                Number(owners.find((o) => o.id === b.participantId)?.is_guest) ||
+              String(a.participantId).localeCompare(String(b.participantId)),
+          )
+          .map((t) => ({
+            ...t,
+            sourceId: z
+              .string()
+              .parse(
+                owners.find((o) => o.id === t.participantId)?.source_id ?? t.participantId ?? t.id,
+              ),
+          })),
+      };
     });
   });
   app.post("/internal/v1/streaming/room-export/:action", async (request) => {
