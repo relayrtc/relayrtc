@@ -1,0 +1,27 @@
+ALTER TABLE recording ADD COLUMN kind text NOT NULL DEFAULT 'recording' CONSTRAINT recording_kind_check CHECK(kind IN ('recording','buffer','clip'));
+ALTER TABLE recording_segment ADD COLUMN media_start_seconds double precision;
+UPDATE recording_segment s SET media_start_seconds=t.start FROM (SELECT recording_id,position,coalesce(sum(duration_seconds) OVER(PARTITION BY recording_id ORDER BY position ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS start FROM recording_segment) t WHERE s.recording_id=t.recording_id AND s.position=t.position;
+ALTER TABLE recording_segment ALTER COLUMN media_start_seconds SET NOT NULL;
+ALTER TABLE recording_segment ALTER COLUMN media_start_seconds SET DEFAULT 0;
+DROP INDEX recording_active_run_idx;
+CREATE UNIQUE INDEX recording_active_run_idx ON recording(broadcast_id,kind) WHERE state IN ('queued','recording','finalizing') AND kind<>'clip';
+CREATE TABLE stream_buffer_policy(stream_id text PRIMARY KEY REFERENCES streaming_stream(id),policy jsonb NOT NULL,version integer NOT NULL DEFAULT 1);
+CREATE TABLE clip_request(
+ id text PRIMARY KEY,source_recording_id text NOT NULL REFERENCES recording(id),recording_id text NOT NULL UNIQUE REFERENCES recording(id),label text NOT NULL DEFAULT '',cut_mode text NOT NULL CONSTRAINT clip_cut_mode_check CHECK(cut_mode IN ('keyframe','precise')),
+ requested_start_seconds double precision NOT NULL,requested_end_seconds double precision NOT NULL,resolved_start_seconds double precision NOT NULL,resolved_end_seconds double precision NOT NULL,
+ published boolean NOT NULL DEFAULT false,prepared boolean NOT NULL DEFAULT false,pins_released boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),
+ CONSTRAINT clip_interval_check CHECK(requested_end_seconds>requested_start_seconds AND resolved_end_seconds>resolved_start_seconds)
+);
+CREATE INDEX clip_source_idx ON clip_request(source_recording_id);
+CREATE TABLE clip_segment_pin(clip_id text NOT NULL REFERENCES clip_request(id),recording_id text NOT NULL,position integer NOT NULL,PRIMARY KEY(clip_id,position),FOREIGN KEY(recording_id,position) REFERENCES recording_segment(recording_id,position));
+CREATE INDEX clip_pin_source_idx ON clip_segment_pin(recording_id,position);
+CREATE FUNCTION validate_clip_parent() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM recording s JOIN recording c ON c.id=NEW.recording_id WHERE s.id=NEW.source_recording_id AND s.stream_id=c.stream_id AND s.broadcast_id=c.broadcast_id AND s.project_id=c.project_id AND s.environment_id=c.environment_id AND s.kind<>'clip' AND c.kind='clip') THEN RAISE EXCEPTION 'Invalid clip scope'; END IF;
+ RETURN NEW; END $$;
+CREATE TRIGGER clip_parent_guard BEFORE INSERT OR UPDATE OF source_recording_id,recording_id ON clip_request FOR EACH ROW EXECUTE FUNCTION validate_clip_parent();
+
+ALTER TABLE webhook_event DROP CONSTRAINT webhook_event_type_check;
+ALTER TABLE webhook_event ADD CONSTRAINT webhook_event_type_check CHECK(event_type IN ('room.created', 'room.started', 'room.ended', 'participant.joined', 'participant.left', 'participant.reconnected', 'track.published', 'track.unpublished', 'connection.degraded', 'connection.recovered', 'stream.created', 'stream.starting', 'stream.live', 'stream.reconnecting', 'stream.ended', 'stream.failed', 'broadcast.created', 'broadcast.starting', 'broadcast.live', 'broadcast.reconnecting', 'broadcast.output_degraded', 'broadcast.stopped', 'broadcast.failed', 'destination.created', 'destination.connected', 'destination.disconnected', 'destination.retrying', 'destination.failed', 'recording.started', 'recording.segment_committed', 'recording.finalizing', 'recording.ready', 'recording.failed', 'recording.deleted', 'schedule.created','schedule.updated','schedule.starting','schedule.started','schedule.missed','schedule.cancelled','schedule.failed','schedule.completed','schedule.reminder','restream.probing','restream.source_connected','restream.source_lost','restream.recovering','restream.stopped','restream.failed','clip.requested','clip.rendering','clip.ready','clip.failed','clip.deleted'));
+ALTER TABLE webhook_endpoint DROP CONSTRAINT webhook_endpoint_event_types_check;
+ALTER TABLE webhook_endpoint ADD CONSTRAINT webhook_endpoint_event_types_check CHECK(cardinality(event_types) BETWEEN 1 AND 54 AND array_position(event_types,NULL) IS NULL AND event_types <@ ARRAY['room.created', 'room.started', 'room.ended', 'participant.joined', 'participant.left', 'participant.reconnected', 'track.published', 'track.unpublished', 'connection.degraded', 'connection.recovered', 'stream.created', 'stream.starting', 'stream.live', 'stream.reconnecting', 'stream.ended', 'stream.failed', 'broadcast.created', 'broadcast.starting', 'broadcast.live', 'broadcast.reconnecting', 'broadcast.output_degraded', 'broadcast.stopped', 'broadcast.failed', 'destination.created', 'destination.connected', 'destination.disconnected', 'destination.retrying', 'destination.failed', 'recording.started', 'recording.segment_committed', 'recording.finalizing', 'recording.ready', 'recording.failed', 'recording.deleted', 'schedule.created','schedule.updated','schedule.starting','schedule.started','schedule.missed','schedule.cancelled','schedule.failed','schedule.completed','schedule.reminder','restream.probing','restream.source_connected','restream.source_lost','restream.recovering','restream.stopped','restream.failed','clip.requested','clip.rendering','clip.ready','clip.failed','clip.deleted']::text[]);
+
