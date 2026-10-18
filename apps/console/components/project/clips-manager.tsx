@@ -1,4 +1,6 @@
 "use client";
+import { StreamTable } from "./stream-table";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { StreamSectionCard } from "./stream-section-card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
@@ -23,7 +25,7 @@ import {
   bufferPolicyAction,
 } from "@/actions/clips";
 import { createAssetGrantAction } from "@/actions/recordings";
-import { PageHeader } from "@/components/page/page-header";
+import { StreamingHeader as PageHeader, StreamToolbar, StreamEmptyState } from "./stream-ui";
 import { SimpleSelect } from "@/components/page/simple-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,7 +63,11 @@ export function ClipsManager({
   streams: { id: string; name: string }[];
   canManage: boolean;
 }) {
+  const task = useStreamingTask();
+  const creating = task.active;
+  const setCreating = task.setOpen;
   const workspace = useStreamWorkspace();
+  const [query, setQuery] = useState("");
   const router = useRouter(),
     pathname = usePathname();
   const [streamId, setStreamId] = useState(workspace?.streamId ?? streams[0]?.id ?? ""),
@@ -70,7 +76,6 @@ export function ClipsManager({
     [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null),
     [pending, setPending] = useState(false),
-    [creating, setCreating] = useState(false),
     [selected, setSelected] = useState<ConsoleClip | null>(null),
     [remove, setRemove] = useState<ConsoleClip | null>(null),
     [download, setDownload] = useState<string | null>(null);
@@ -127,7 +132,11 @@ export function ClipsManager({
         );
       }
       if (detail?.data && detail.data.id === selectedId.current) setSelected(detail.data);
-      if (window.data) setWindows(window.data.data);
+      if (window.error) setError(window.error.description);
+      if (window.data) {
+        setWindows(window.data.data);
+        setRecordingId((current) => current || window.data.data[0]?.recordingId || "");
+      }
       if (policy.data && !bufferDirty.current) {
         setVersion(policy.data.version);
         if (policy.data.policy) setBuffer(policy.data.policy);
@@ -144,6 +153,7 @@ export function ClipsManager({
     const timer = setInterval(() => {
       void refresh();
     }, 4000);
+
     return () => {
       clearInterval(timer);
       invalidate();
@@ -230,8 +240,124 @@ export function ClipsManager({
       setPending(false);
     }
   }
+  const visibleRows = rows.filter((row) =>
+    `${row.label} ${row.id} ${row.state}`.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  if (creating)
+    return (
+      <StreamingTaskPage
+        title="Create a clip"
+        description="Save a highlight from media already retained in a recording or rolling buffer."
+        backHref={task.backHref}
+        guidance="Fast cuts include the surrounding segment boundaries. Precise cuts re-encode your selected interval. Clips have their own retention; publishing allows your application to request viewer access."
+      >
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {!windows.length && (
+          <p className="rounded-xl border p-4 text-sm">
+            No retained media is available. Return to Clips to enable the rolling buffer before
+            starting a new broadcast, or record an active broadcast first.
+          </p>
+        )}
+        {!canManage ? (
+          <p>Management access is required.</p>
+        ) : (
+          <>
+            <div className="space-y-4 p-6">
+              <Label>Recording or buffer</Label>
+              <SimpleSelect
+                value={recordingId}
+                onValueChange={setRecordingId}
+                options={windows.map((w) => ({
+                  value: w.recordingId,
+                  label: `${w.kind}: ${w.startSeconds.toFixed(1)}–${w.endSeconds.toFixed(1)}s`,
+                }))}
+              />
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="clip-label">Label</Label>
+                <Input id="clip-label" value={label} onChange={(e) => setLabel(e.target.value)} />
+              </div>
+              <SimpleSelect
+                aria-label="Interval"
+                value={interval}
+                onValueChange={setIntervalKind}
+                options={[
+                  { value: "last", label: "Last N seconds" },
+                  { value: "media", label: "Media interval" },
+                ]}
+              />
+              {interval === "last" ? (
+                <>
+                  <div className="grid min-w-0 gap-2">
+                    <Label htmlFor="clip-seconds">Seconds</Label>
+                    <Input
+                      id="clip-seconds"
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={seconds}
+                      onChange={(e) => setSeconds(e.target.value)}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid min-w-0 gap-2">
+                    <Label htmlFor="clip-start">Start seconds</Label>
+                    <Input
+                      id="clip-start"
+                      type="number"
+                      min={0}
+                      step="0.1"
+                      value={start}
+                      onChange={(e) => setStart(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid min-w-0 gap-2">
+                    <Label htmlFor="clip-end">End seconds</Label>
+                    <Input
+                      id="clip-end"
+                      type="number"
+                      step="0.1"
+                      value={end}
+                      onChange={(e) => setEnd(e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+              <SimpleSelect
+                aria-label="Cut accuracy"
+                value={cutMode}
+                onValueChange={setCutMode}
+                options={[
+                  { value: "keyframe", label: "Fast: expand to segment keyframes" },
+                  { value: "precise", label: "Precise: re-encode selected interval" },
+                ]}
+              />
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="clip-retention">Retain days</Label>
+                <Input
+                  id="clip-retention"
+                  type="number"
+                  min={1}
+                  max={90}
+                  value={retention}
+                  onChange={(e) => setRetention(e.target.value)}
+                />
+              </div>
+              <Button disabled={pending || !recordingId} onClick={() => void create()}>
+                Create clip
+              </Button>
+            </div>
+          </>
+        )}
+      </StreamingTaskPage>
+    );
   return (
-    <div className="space-y-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
         title="Clips"
         description="Save highlights from a live buffer or recording."
@@ -251,7 +377,15 @@ export function ClipsManager({
           </Button>
         }
       />
-      <div className="flex flex-wrap gap-3">
+      <StreamToolbar>
+        <Input
+          type="search"
+          aria-label="Search clips"
+          placeholder="Search clips..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          className="w-full bg-background sm:max-w-xs"
+        />
         {!workspace && (
           <SimpleSelect
             aria-label="Environment"
@@ -289,88 +423,14 @@ export function ClipsManager({
           <RefreshCw />
           Refresh
         </Button>
-      </div>
+      </StreamToolbar>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
-      <StreamSectionCard
-        title="Live rolling buffer"
-        description={
-          <>Enable before starting a broadcast. Retained media appears below as it arrives.</>
-        }
-      >
-        <Label className="flex gap-2">
-          <Switch
-            checked={buffer.enabled}
-            disabled={!canManage || pending}
-            onCheckedChange={(e) => {
-              bufferDirty.current = true;
-              setBuffer({ ...buffer, enabled: e });
-            }}
-          />
-          Enable buffer for this stream
-        </Label>
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <Label htmlFor="buffer-duration">Retain seconds</Label>
-            <Input
-              id="buffer-duration"
-              type="number"
-              min={30}
-              max={1800}
-              value={buffer.durationSeconds}
-              disabled={!canManage || pending}
-              onChange={(e) => {
-                bufferDirty.current = true;
-                setBuffer({ ...buffer, durationSeconds: Number(e.target.value) });
-              }}
-            />
-          </div>
-          <div>
-            <Label htmlFor="buffer-bytes">Storage cap (MiB)</Label>
-            <Input
-              id="buffer-bytes"
-              type="number"
-              min={16}
-              max={511}
-              value={buffer.maxBytes / 1048576}
-              disabled={!canManage || pending}
-              onChange={(e) => {
-                bufferDirty.current = true;
-                setBuffer({ ...buffer, maxBytes: Number(e.target.value) * 1048576 });
-              }}
-            />
-          </div>
-          <Label className="flex gap-2">
-            <Checkbox checked={consent} onCheckedChange={(e) => setConsent(e)} />I have consent to
-            retain this media.
-          </Label>
-          <Button
-            disabled={!canManage || !streamId || !consent || pending}
-            onClick={() => void saveBuffer()}
-          >
-            Save buffer
-          </Button>
-        </div>
-      </StreamSectionCard>
-      <StreamSectionCard title="Retained intervals">
-        {windows.length ? (
-          windows.map((w) => (
-            <p key={w.recordingId} className="text-sm">
-              {w.kind}: {w.startSeconds.toFixed(1)}–{w.endSeconds.toFixed(1)} seconds · {w.state} ·{" "}
-              {w.recordingId}
-            </p>
-          ))
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            No retained media yet. Start a recording or enable a buffer and start a broadcast.
-          </p>
-        )}
-      </StreamSectionCard>
-      <div className="overflow-x-auto rounded-xl border">
-        <Table className="w-full text-sm">
+      <StreamTable>
+        <Table hidden={!visibleRows.length} className="w-full text-sm">
           <TableHeader>
             <TableRow className="border-b text-left">
               <TableHead className="p-3">Clip</TableHead>
@@ -381,7 +441,7 @@ export function ClipsManager({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((c) => (
+            {visibleRows.map((c) => (
               <TableRow key={c.id} className="border-b">
                 <TableCell className="p-3">
                   <Button
@@ -415,7 +475,98 @@ export function ClipsManager({
             ))}
           </TableBody>
         </Table>
-        {!rows.length && <p className="p-4 text-muted-foreground">No clips yet.</p>}
+        {!visibleRows.length && (
+          <StreamEmptyState
+            className="border-0 bg-transparent"
+            title={query ? "No matches found" : "No clips yet"}
+            description={
+              query
+                ? "Try a different search. Load more items to expand your results."
+                : "Create a highlight from a recording or enable a live buffer for your next broadcast."
+            }
+          />
+        )}
+      </StreamTable>
+      <div className="grid items-start gap-5 lg:grid-cols-2">
+        {" "}
+        <StreamSectionCard
+          title="Live rolling buffer"
+          description={
+            <>Enable before starting a broadcast. Retained media appears below as it arrives.</>
+          }
+        >
+          <Label className="flex items-start gap-2 text-sm leading-relaxed">
+            <Switch
+              checked={buffer.enabled}
+              disabled={!canManage || pending}
+              onCheckedChange={(e) => {
+                bufferDirty.current = true;
+                setBuffer({ ...buffer, enabled: e });
+              }}
+            />
+            Enable buffer for this stream
+          </Label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="buffer-duration">Buffer duration (seconds)</Label>
+                <Input
+                  id="buffer-duration"
+                  type="number"
+                  min={30}
+                  max={1800}
+                  value={buffer.durationSeconds}
+                  disabled={!canManage || pending}
+                  onChange={(e) => {
+                    bufferDirty.current = true;
+                    setBuffer({ ...buffer, durationSeconds: Number(e.target.value) });
+                  }}
+                />
+              </div>
+            </div>
+            <div>
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="buffer-bytes">Storage cap (MiB)</Label>
+                <Input
+                  id="buffer-bytes"
+                  type="number"
+                  min={16}
+                  max={511}
+                  value={buffer.maxBytes / 1048576}
+                  disabled={!canManage || pending}
+                  onChange={(e) => {
+                    bufferDirty.current = true;
+                    setBuffer({ ...buffer, maxBytes: Number(e.target.value) * 1048576 });
+                  }}
+                />
+              </div>
+            </div>
+            <Label className="flex items-start gap-2 text-sm leading-relaxed">
+              <Checkbox checked={consent} onCheckedChange={(e) => setConsent(e)} />I have consent to
+              retain this media.
+            </Label>
+            <Button
+              disabled={!canManage || !streamId || !consent || pending}
+              onClick={() => void saveBuffer()}
+            >
+              Save buffer
+            </Button>
+          </div>
+        </StreamSectionCard>
+        <StreamSectionCard title="Retained intervals">
+          {windows.length ? (
+            windows.map((w) => (
+              <p key={w.recordingId} className="text-sm">
+                {w.kind}: {w.startSeconds.toFixed(1)}–{w.endSeconds.toFixed(1)} seconds · {w.state}{" "}
+                · {w.recordingId}
+              </p>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No retained media yet. Start a recording or enable a buffer and start a broadcast.
+            </p>
+          )}
+        </StreamSectionCard>
       </div>
       {cursor && (
         <Button
@@ -433,90 +584,7 @@ export function ClipsManager({
           Load more
         </Button>
       )}
-      <Sheet open={creating} onOpenChange={setCreating}>
-        <SheetContent className="overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Create clip</SheetTitle>
-            <SheetDescription>Select retained media and a cut interval.</SheetDescription>
-          </SheetHeader>
-          <div className="space-y-4 p-6">
-            <Label>Recording or buffer</Label>
-            <SimpleSelect
-              value={recordingId}
-              onValueChange={setRecordingId}
-              options={windows.map((w) => ({
-                value: w.recordingId,
-                label: `${w.kind}: ${w.startSeconds.toFixed(1)}–${w.endSeconds.toFixed(1)}s`,
-              }))}
-            />
-            <Label htmlFor="clip-label">Label</Label>
-            <Input id="clip-label" value={label} onChange={(e) => setLabel(e.target.value)} />
-            <SimpleSelect
-              aria-label="Interval"
-              value={interval}
-              onValueChange={setIntervalKind}
-              options={[
-                { value: "last", label: "Last N seconds" },
-                { value: "media", label: "Media interval" },
-              ]}
-            />
-            {interval === "last" ? (
-              <>
-                <Label htmlFor="clip-seconds">Seconds</Label>
-                <Input
-                  id="clip-seconds"
-                  type="number"
-                  min={1}
-                  max={120}
-                  value={seconds}
-                  onChange={(e) => setSeconds(e.target.value)}
-                />
-              </>
-            ) : (
-              <>
-                <Label htmlFor="clip-start">Start seconds</Label>
-                <Input
-                  id="clip-start"
-                  type="number"
-                  min={0}
-                  step="0.1"
-                  value={start}
-                  onChange={(e) => setStart(e.target.value)}
-                />
-                <Label htmlFor="clip-end">End seconds</Label>
-                <Input
-                  id="clip-end"
-                  type="number"
-                  step="0.1"
-                  value={end}
-                  onChange={(e) => setEnd(e.target.value)}
-                />
-              </>
-            )}
-            <SimpleSelect
-              aria-label="Cut accuracy"
-              value={cutMode}
-              onValueChange={setCutMode}
-              options={[
-                { value: "keyframe", label: "Fast: expand to segment keyframes" },
-                { value: "precise", label: "Precise: re-encode selected interval" },
-              ]}
-            />
-            <Label htmlFor="clip-retention">Retain days</Label>
-            <Input
-              id="clip-retention"
-              type="number"
-              min={1}
-              max={90}
-              value={retention}
-              onChange={(e) => setRetention(e.target.value)}
-            />
-            <Button disabled={pending || !recordingId} onClick={() => void create()}>
-              Create clip
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
+
       <Sheet
         open={!!selected}
         onOpenChange={(open) => {
@@ -553,7 +621,7 @@ export function ClipsManager({
                     recordingId={selected.recordingId}
                     assetId={selected.assetId}
                   />
-                  <div className="flex gap-2">
+                  <div className="flex items-start gap-2 text-sm leading-relaxed">
                     <Button
                       disabled={!canManage || pending || selected.published}
                       onClick={() => void command("publish", selected)}

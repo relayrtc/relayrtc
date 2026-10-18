@@ -1,4 +1,6 @@
 "use client";
+import { StreamTable } from "./stream-table";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useStreamWorkspace } from "./stream-workspace";
 import {
@@ -22,19 +24,13 @@ import {
   setRecordingPolicyAction,
   createAssetGrantAction,
 } from "@/actions/recordings";
-import { PageHeader } from "@/components/page/page-header";
+import { StreamingHeader as PageHeader, StreamToolbar, StreamEmptyState } from "./stream-ui";
 import { SimpleSelect } from "@/components/page/simple-select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+
 import {
   Sheet,
   SheetContent,
@@ -81,7 +77,11 @@ export function RecordingsManager({
   initialCursor: string | null;
   initialError: string | null;
 }) {
+  const task = useStreamingTask();
+  const creating = task.active;
+  const setCreating = task.setOpen;
   const workspace = useStreamWorkspace();
+  const [query, setQuery] = useState("");
   const scopedStreamId = workspace?.streamId;
   const router = useRouter(),
     pathname = usePathname(),
@@ -90,7 +90,6 @@ export function RecordingsManager({
     [cursor, setCursor] = useState(initialCursor),
     [error, setError] = useState(initialError),
     [pending, setPending] = useState(false),
-    [creating, setCreating] = useState(false),
     [selected, setSelected] = useState<ConsoleRecording | null>(null),
     [confirmDelete, setConfirmDelete] = useState(false),
     [download, setDownload] = useState<string | null>(null);
@@ -99,6 +98,33 @@ export function RecordingsManager({
     [policy, setPolicy] = useState<RecordingPolicy>(defaultPolicy),
     [version, setVersion] = useState(0),
     [consent, setConsent] = useState(false);
+  const [loadedPolicyStream, setLoadedPolicyStream] = useState("");
+  const policyLoading = creating && loadedPolicyStream !== streamId;
+  const canRecord =
+    !!workspace?.broadcast &&
+    workspace.broadcast.desiredState === "running" &&
+    !["stopping", "stopped", "failed"].includes(workspace.broadcast.state);
+  useEffect(() => {
+    if (!creating || !streamId) return;
+    let active = true;
+    void getRecordingPolicyAction({ projectId, environmentId, streamId })
+      .then((result) => {
+        if (!active) return;
+        if (result.error) setError(result.error.description);
+        else {
+          setPolicy(result.data.policy ?? defaultPolicy);
+          setVersion(result.data.version);
+          setConsent(false);
+          setLoadedPolicyStream(streamId);
+        }
+      })
+      .catch(() => {
+        if (active) setError("Recording settings could not be loaded. Return and try again.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [creating, projectId, environmentId, streamId]);
   const sequence = useRef(0),
     mounted = useRef(true),
     keys = useRef(new Map<string, string>());
@@ -164,6 +190,12 @@ export function RecordingsManager({
     const idempotencyKey = key(identity);
     try {
       if (action === "start" || action === "policy") {
+        if (policyLoading || (action === "start" && workspace && !canRecord)) {
+          setError(
+            "Start a broadcast before recording. You can save an automatic policy for the next broadcast.",
+          );
+          return;
+        }
         if (!consent) {
           setError(
             "Confirm that participants have been informed and the required recording consent has been obtained.",
@@ -224,6 +256,7 @@ export function RecordingsManager({
   };
   const loadPolicy = async () => {
     setPending(true);
+    setError(null);
     try {
       const result = await getRecordingPolicyAction({ projectId, environmentId, streamId });
       if (!mounted.current) return;
@@ -231,6 +264,7 @@ export function RecordingsManager({
       else {
         setPolicy(result.data.policy ?? defaultPolicy);
         setVersion(result.data.version);
+        setLoadedPolicyStream(streamId);
         setConsent(false);
       }
     } catch {
@@ -239,13 +273,199 @@ export function RecordingsManager({
       if (mounted.current) setPending(false);
     }
   };
+  const visibleRows = rows.filter((row) =>
+    `${row.id} ${row.state} ${row.createdAt}`.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  if (creating)
+    return (
+      <StreamingTaskPage
+        title="Set up recording"
+        description="Save this broadcast for private playback and MP4 download."
+        backHref={task.backHref}
+        guidance="Start recording during a live broadcast, or enable automatic recording for future broadcasts. Saving automatic settings does not record the current broadcast."
+      >
+        {workspace && !canRecord && (
+          <p className="mb-4 rounded-xl border p-4 text-sm">
+            There is no running broadcast selected. Save an automatic policy here, or start a
+            broadcast before requesting a recording.
+          </p>
+        )}
+        {policyLoading && error && (
+          <Button variant="outline" disabled={pending} onClick={() => void loadPolicy()}>
+            Retry loading policy
+          </Button>
+        )}
+        {!canManage ? (
+          <p>Management access is required.</p>
+        ) : (
+          <>
+            {error && (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            {!workspace && (
+              <>
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor="recording-stream">Stream ID</Label>
+                  <Input
+                    id="recording-stream"
+                    value={streamId}
+                    onChange={(e) => {
+                      setStreamId(e.target.value);
+                      setVersion(0);
+                      setConsent(false);
+                    }}
+                    placeholder="Copy the ID from Streams"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={pending || !streamId}
+                  onClick={() => {
+                    void loadPolicy();
+                  }}
+                >
+                  Load saved policy
+                </Button>
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor="recording-broadcast">Broadcast ID for manual recording</Label>
+                  <Input
+                    id="recording-broadcast"
+                    value={broadcastId}
+                    onChange={(e) => setBroadcastId(e.target.value)}
+                    placeholder="Optional when exactly one broadcast is running"
+                  />
+                </div>
+              </>
+            )}
+            <Label>Start policy</Label>
+            <SimpleSelect
+              value={policy.mode}
+              options={[
+                { value: "manual", label: "Manual" },
+                { value: "automatic", label: "Automatic on broadcast start" },
+              ]}
+              onValueChange={(value) =>
+                setPolicy({ ...policy, mode: value === "automatic" ? "automatic" : "manual" })
+              }
+            />
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="recording-duration">Maximum duration (seconds)</Label>
+              <Input
+                id="recording-duration"
+                type="number"
+                min={10}
+                max={86400}
+                value={policy.maxDurationSeconds}
+                onChange={(e) =>
+                  setPolicy({ ...policy, maxDurationSeconds: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="recording-retention">Keep recording (days)</Label>
+              <Input
+                id="recording-retention"
+                type="number"
+                min={1}
+                max={90}
+                value={policy.retentionSeconds / 86400}
+                onChange={(e) =>
+                  setPolicy({ ...policy, retentionSeconds: Number(e.target.value) * 86400 })
+                }
+              />
+            </div>
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor="recording-region">Storage region</Label>
+              <Input
+                id="recording-region"
+                value={policy.region}
+                onChange={(e) => setPolicy({ ...policy, region: e.target.value })}
+              />
+            </div>
+            <Label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={policy.exportMp4}
+                onCheckedChange={(e) => setPolicy({ ...policy, exportMp4: e })}
+              />
+              Create MP4 download
+            </Label>
+            <Label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={policy.allowPartial}
+                onCheckedChange={(e) => setPolicy({ ...policy, allowPartial: e })}
+              />
+              Allow playable partial recordings after interruptions
+            </Label>
+            <Label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={policy.segmentEvents}
+                onCheckedChange={(e) => setPolicy({ ...policy, segmentEvents: e })}
+              />
+              Send a webhook for each saved segment
+            </Label>
+            <Label className="flex items-start gap-2 text-sm">
+              <Checkbox checked={consent} onCheckedChange={(e) => setConsent(e)} />
+              Participants have been informed and the required recording consent has been obtained.
+            </Label>
+            <div className="flex gap-2">
+              <Button
+                disabled={pending || policyLoading || !consent || !streamId}
+                variant="outline"
+                onClick={() => {
+                  void execute("policy");
+                }}
+              >
+                Save policy
+              </Button>
+              <Button
+                disabled={
+                  pending || policyLoading || !consent || !streamId || (!!workspace && !canRecord)
+                }
+                onClick={() => {
+                  void execute("start");
+                }}
+              >
+                Start recording now
+              </Button>
+            </div>
+          </>
+        )}
+      </StreamingTaskPage>
+    );
+
   return (
-    <div className="space-y-6">
+    <div className="flex min-w-0 flex-col gap-5">
       <PageHeader
         title="Recordings"
         description="Save broadcast output and manage private video playback."
+        actions={
+          canManage && (
+            <Button
+              size="lg"
+              disabled={!environmentId}
+              onClick={() => {
+                setCreating(true);
+                setConsent(false);
+                if (workspace) void loadPolicy();
+              }}
+            >
+              <Plus />
+              Recording settings
+            </Button>
+          )
+        }
       />
-      <div className="flex flex-wrap gap-2">
+      <StreamToolbar>
+        <Input
+          type="search"
+          aria-label="Search recordings"
+          placeholder="Search recordings..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          className="w-full bg-background sm:max-w-xs"
+        />
         {!workspace && (
           <SimpleSelect
             aria-label="Environment"
@@ -268,27 +488,14 @@ export function RecordingsManager({
           <RefreshCw />
           Refresh
         </Button>
-        {canManage && (
-          <Button
-            disabled={!environmentId}
-            onClick={() => {
-              setCreating(true);
-              setConsent(false);
-              if (workspace) void loadPolicy();
-            }}
-          >
-            <Plus />
-            Recording settings
-          </Button>
-        )}
-      </div>
+      </StreamToolbar>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
-      <div className="overflow-x-auto rounded-xl border">
-        <Table className="w-full text-left text-sm">
+      <StreamTable>
+        <Table hidden={!visibleRows.length} className="w-full text-left text-sm">
           <TableHeader>
             <TableRow className="border-b">
               <TableHead className="p-4">Recording</TableHead>
@@ -299,18 +506,20 @@ export function RecordingsManager({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row) => (
+            {visibleRows.map((row) => (
               <TableRow key={row.id} className="border-b last:border-0">
                 <TableCell className="p-4">
                   <p className="font-medium">{new Date(row.createdAt).toLocaleString()}</p>
                   <p className="text-xs text-muted-foreground">{row.streamId}</p>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline">{row.state}</Badge>
+                  <Badge variant="secondary" className="capitalize">
+                    {row.state.replaceAll("_", " ")}
+                  </Badge>
                   {row.partial && <Badge variant="secondary">Partial</Badge>}
                 </TableCell>
                 <TableCell>{Math.round(row.durationSeconds)} seconds</TableCell>
-                <TableCell>{(row.storedBytes / 1048576).toFixed(1)} MB</TableCell>
+                <TableCell>{(row.storedBytes / 1048576).toFixed(1)} MiB</TableCell>
                 <TableCell>
                   <Button
                     size="sm"
@@ -327,12 +536,18 @@ export function RecordingsManager({
             ))}
           </TableBody>
         </Table>
-        {!rows.length && (
-          <p className="p-4 text-sm text-muted-foreground">
-            No recordings in this environment. Start a broadcast, then request a recording.
-          </p>
+        {!visibleRows.length && (
+          <StreamEmptyState
+            className="border-0 bg-transparent"
+            title={query ? "No matches found" : "No recordings yet"}
+            description={
+              query
+                ? "Try a different search. Load more items to expand your results."
+                : "Start a broadcast, then record it or enable automatic recording."
+            }
+          />
         )}
-      </div>
+      </StreamTable>
       {cursor && (
         <Button
           variant="outline"
@@ -343,134 +558,7 @@ export function RecordingsManager({
           Load more
         </Button>
       )}
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Recording settings</DialogTitle>
-            <DialogDescription>
-              Record the shared broadcast output. Automatic policy changes apply to newly created
-              broadcasts.
-            </DialogDescription>
-          </DialogHeader>
-          {error && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
-          {!workspace && (
-            <>
-              <Label htmlFor="recording-stream">Stream ID</Label>
-              <Input
-                id="recording-stream"
-                value={streamId}
-                onChange={(e) => {
-                  setStreamId(e.target.value);
-                  setVersion(0);
-                  setConsent(false);
-                }}
-                placeholder="Copy the ID from Streams"
-              />
-              <Button
-                variant="outline"
-                disabled={pending || !streamId}
-                onClick={() => {
-                  void loadPolicy();
-                }}
-              >
-                Load saved policy
-              </Button>
-              <Label htmlFor="recording-broadcast">Broadcast ID for manual recording</Label>
-              <Input
-                id="recording-broadcast"
-                value={broadcastId}
-                onChange={(e) => setBroadcastId(e.target.value)}
-                placeholder="Optional when exactly one broadcast is running"
-              />
-            </>
-          )}
-          <Label>Start policy</Label>
-          <SimpleSelect
-            value={policy.mode}
-            options={[
-              { value: "manual", label: "Manual" },
-              { value: "automatic", label: "Automatic on broadcast start" },
-            ]}
-            onValueChange={(value) =>
-              setPolicy({ ...policy, mode: value === "automatic" ? "automatic" : "manual" })
-            }
-          />
-          <Label htmlFor="recording-duration">Maximum duration (seconds)</Label>
-          <Input
-            id="recording-duration"
-            type="number"
-            min={10}
-            max={86400}
-            value={policy.maxDurationSeconds}
-            onChange={(e) => setPolicy({ ...policy, maxDurationSeconds: Number(e.target.value) })}
-          />
-          <Label htmlFor="recording-retention">Keep recording (days)</Label>
-          <Input
-            id="recording-retention"
-            type="number"
-            min={1}
-            max={90}
-            value={policy.retentionSeconds / 86400}
-            onChange={(e) =>
-              setPolicy({ ...policy, retentionSeconds: Number(e.target.value) * 86400 })
-            }
-          />
-          <Label htmlFor="recording-region">Storage region</Label>
-          <Input
-            id="recording-region"
-            value={policy.region}
-            onChange={(e) => setPolicy({ ...policy, region: e.target.value })}
-          />
-          <Label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={policy.exportMp4}
-              onCheckedChange={(e) => setPolicy({ ...policy, exportMp4: e })}
-            />
-            Create MP4 download
-          </Label>
-          <Label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={policy.allowPartial}
-              onCheckedChange={(e) => setPolicy({ ...policy, allowPartial: e })}
-            />
-            Allow playable partial recordings after interruptions
-          </Label>
-          <Label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={policy.segmentEvents}
-              onCheckedChange={(e) => setPolicy({ ...policy, segmentEvents: e })}
-            />
-            Send a webhook for each saved segment
-          </Label>
-          <Label className="flex items-start gap-2 text-sm">
-            <Checkbox checked={consent} onCheckedChange={(e) => setConsent(e)} />
-            Participants have been informed and the required recording consent has been obtained.
-          </Label>
-          <div className="flex gap-2">
-            <Button
-              disabled={pending || !consent || !streamId}
-              variant="outline"
-              onClick={() => {
-                void execute("policy");
-              }}
-            >
-              Save policy
-            </Button>
-            <Button
-              disabled={pending || !consent || !streamId}
-              onClick={() => {
-                void execute("start");
-              }}
-            >
-              Start recording now
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+
       <Sheet
         open={!!selected}
         onOpenChange={(open) => {
@@ -492,7 +580,7 @@ export function RecordingsManager({
                   {error}
                 </p>
               )}
-              <Badge variant="outline">
+              <Badge variant="secondary" className="capitalize">
                 {selected.state === "recording" ? "● Recording" : selected.state}
               </Badge>
               {selected.partial && (
