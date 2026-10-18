@@ -1,4 +1,6 @@
 "use client";
+import { StreamTable } from "./stream-table";
+import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
@@ -10,7 +12,13 @@ import {
 } from "@/components/ui/table";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, Search, MoreHorizontal, Radio } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   commandRestreamSourceAction,
   deleteRestreamSourceAction,
@@ -63,6 +71,8 @@ export function RestreamSourcesManager({
   initialError: string | null;
   streams: ConsoleStream[];
 }) {
+  const task = useStreamingTask();
+  const [query, setQuery] = useState("");
   const router = useRouter(),
     pathname = usePathname();
   const [rows, setRows] = useState(initialRows),
@@ -155,54 +165,112 @@ export function RestreamSourcesManager({
       if (mounted.current) setPending(false);
     }
   };
+  const visibleRows = rows.filter((source) =>
+    `${source.name} ${source.protocol} ${source.host ?? ""}`
+      .toLowerCase()
+      .includes(query.trim().toLowerCase()),
+  );
+  if (task.active || editor)
+    return (
+      <StreamingTaskPage
+        title={editor?.source ? "Edit source" : "Add a source"}
+        description="Connect an external feed or encoder to a stream."
+        guidance="Choose HLS to pull an existing playlist, or RTMP or WHIP to receive video from an encoder. Create a compatible stream in this environment before adding the source."
+        backHref={task.backHref}
+        onBack={task.active ? undefined : () => setEditor(null)}
+      >
+        {!canManage ? (
+          <p>Management access is required.</p>
+        ) : (
+          <SourceEditor
+            source={editor?.source ?? null}
+            streams={streams}
+            projectId={projectId}
+            environmentId={environmentId}
+            onSaved={() => {
+              if (task.active) task.setOpen(false);
+              else {
+                setEditor(null);
+                void refresh();
+              }
+            }}
+          />
+        )}
+      </StreamingTaskPage>
+    );
+
   return (
-    <div className="space-y-6">
+    <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         title="Source library"
-        description="Optional external inputs: bring an HLS feed or a registered RTMP/WHIP source into a stream. Connect your own OBS or Streamlabs encoder from the stream Overview page."
+        description="Manage external feeds and encoders connected to your streams."
         actions={
           <>
-            <Button variant="outline" onClick={() => void refresh()}>
-              <RefreshCw className="mr-2 size-4" />
-              Refresh
-            </Button>
             {canManage && (
-              <Button disabled={!environmentId} onClick={() => setEditor({ source: null })}>
-                <Plus className="mr-2 size-4" />
+              <Button size="lg" disabled={!environmentId} onClick={() => task.setOpen(true)}>
+                <Plus />
                 Add source
               </Button>
             )}
           </>
         }
       />
-      <SimpleSelect
-        value={environmentId}
-        onValueChange={(value) =>
-          router.push(`${pathname}?environmentId=${encodeURIComponent(value)}`)
-        }
-        options={environments.map((e) => ({ value: e.id, label: e.name }))}
-      />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative w-full sm:max-w-sm">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            aria-label="Search sources"
+            placeholder="Search sources"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="h-11 rounded-xl bg-card pl-10"
+          />
+        </div>
+        <SimpleSelect
+          aria-label="Environment"
+          className="h-11 rounded-xl bg-card sm:ml-auto sm:min-w-44"
+          value={environmentId}
+          onValueChange={(value) => {
+            document.cookie = `relayrtc.environment.${projectId}=${encodeURIComponent(value)}; Path=/; SameSite=Lax; Max-Age=31536000`;
+            router.push(`${pathname}?environmentId=${encodeURIComponent(value)}`);
+          }}
+          options={environments.map((e) => ({ value: e.id, label: e.name }))}
+        />
+        <Button
+          className="h-11"
+          variant="outline"
+          disabled={!environmentId || pending}
+          onClick={() => void refresh()}
+        >
+          <RefreshCw />
+          Refresh
+        </Button>
+      </div>
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
-      <div className="overflow-x-auto rounded-lg border">
+      <StreamTable>
         <Table className="w-full text-left text-sm">
           <TableHeader>
             <TableRow>
               <TableHead className="p-4">Source</TableHead>
               <TableHead className="p-4">Input</TableHead>
-              <TableHead className="p-4">State</TableHead>
-              <TableHead className="p-4">Actions</TableHead>
+              <TableHead className="p-4">Status</TableHead>
+              <TableHead className="p-4 text-right">
+                <span className="sr-only">Actions</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((source) => (
+            {visibleRows.map((source) => (
               <TableRow key={source.id} className="border-t">
                 <TableCell className="p-4">
                   <Button
                     variant="link"
+                    className="h-auto justify-start gap-2 p-0 font-medium text-foreground"
                     onClick={() => {
                       void getRestreamSourceAction({
                         projectId,
@@ -219,68 +287,90 @@ export function RestreamSourcesManager({
                         });
                     }}
                   >
+                    <Radio className="size-4 text-muted-foreground" />
                     {source.name}
                   </Button>
-                  <p className="text-xs text-muted-foreground">{source.streamId}</p>
+                  <p className="mt-1 font-mono text-xs text-muted-foreground">
+                    {streams.find((stream) => stream.id === source.streamId)?.name ??
+                      source.streamId}
+                  </p>
                 </TableCell>
                 <TableCell className="p-4">
-                  {source.protocol}
+                  {source.protocol === "hls_pull"
+                    ? "HLS pull"
+                    : source.protocol === "rtmp_push"
+                      ? "RTMP encoder"
+                      : "WHIP encoder"}
                   <p className="text-xs text-muted-foreground">
                     {source.host ?? "External encoder"} ·{" "}
                     {source.secretConfigured ? "Credentials masked" : "Stream credentials"}
                   </p>
                 </TableCell>
                 <TableCell className="p-4">
-                  <Badge variant="outline">{source.state}</Badge>
+                  <Badge variant="secondary" className="capitalize">
+                    {source.state.replaceAll("_", " ")}
+                  </Badge>
                   {source.lastError && (
                     <p className="text-xs text-destructive">{source.lastError}</p>
                   )}
                 </TableCell>
-                <TableCell className="p-4">
+                <TableCell className="p-4 text-right">
                   {canManage && (
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
                         disabled={pending}
-                        onClick={() => setEditor({ source })}
+                        aria-label={`Actions for ${source.name}`}
+                        className="inline-grid size-8 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
                       >
-                        Edit
-                      </Button>
-                      {(["probe", "start", "stop"] as const).map((action) => (
-                        <Button
-                          key={action}
-                          size="sm"
-                          variant="outline"
+                        <MoreHorizontal className="size-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44 rounded-xl p-1.5">
+                        <DropdownMenuItem onClick={() => setEditor({ source })}>
+                          Edit source
+                        </DropdownMenuItem>
+                        {(["probe", "start", "stop"] as const).map((action) => (
+                          <DropdownMenuItem
+                            key={action}
+                            disabled={pending}
+                            onClick={() => void command(source, action)}
+                          >
+                            {action === "probe"
+                              ? "Check connection"
+                              : action === "start"
+                                ? "Start source"
+                                : "Stop source"}
+                          </DropdownMenuItem>
+                        ))}
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
                           disabled={pending}
-                          onClick={() => void command(source, action)}
+                          onClick={() => setDeleting(source)}
                         >
-                          {action[0]!.toUpperCase() + action.slice(1)}
-                        </Button>
-                      ))}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={pending}
-                        onClick={() => setDeleting(source)}
-                      >
-                        Delete
-                      </Button>
-                    </div>
+                          Delete source
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </TableCell>
               </TableRow>
             ))}
-            {!rows.length && (
+            {!visibleRows.length && (
               <TableRow>
                 <TableCell className="p-8 text-muted-foreground" colSpan={4}>
-                  No external sources registered.
+                  <p className="font-medium text-foreground">
+                    {query ? "No sources match your search" : "No sources yet"}
+                  </p>
+                  <p className="mt-2">
+                    {query
+                      ? "Try a different name, protocol or host."
+                      : "Add an external feed or encoder to connect it to a stream."}
+                  </p>
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-      </div>
+      </StreamTable>
       <Sheet
         open={!!detail}
         onOpenChange={(open) => {
@@ -290,10 +380,10 @@ export function RestreamSourcesManager({
         <SheetContent className="overflow-y-auto sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>{detail?.name}</SheetTitle>
-            <SheetDescription>Source health and observed usage</SheetDescription>
+            <SheetDescription>Connection health and source usage.</SheetDescription>
           </SheetHeader>
           {detail && (
-            <div className="space-y-4 p-4">
+            <div className="space-y-5 px-5 pb-6">
               <p className="break-all text-sm">Stream: {detail.streamId}</p>
               <p className="text-sm">
                 {detail.state} · H.264/AAC · {detail.session?.attempts ?? 0} attempts
@@ -327,34 +417,7 @@ export function RestreamSourcesManager({
           )}
         </SheetContent>
       </Sheet>
-      <Sheet
-        open={!!editor}
-        onOpenChange={(open) => {
-          if (!open) setEditor(null);
-        }}
-      >
-        <SheetContent className="overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>{editor?.source ? "Edit source" : "Add source"}</SheetTitle>
-            <SheetDescription>
-              Only use sources you are authorized to redistribute.
-            </SheetDescription>
-          </SheetHeader>
-          {editor && (
-            <SourceEditor
-              key={editor.source?.id ?? "new"}
-              source={editor.source}
-              streams={streams}
-              projectId={projectId}
-              environmentId={environmentId}
-              onSaved={() => {
-                setEditor(null);
-                void refresh();
-              }}
-            />
-          )}
-        </SheetContent>
-      </Sheet>
+
       <AlertDialog
         open={!!deleting}
         onOpenChange={(open) => {
@@ -427,7 +490,7 @@ function SourceEditor({
     key = useRef<{ payload: string; key: string } | null>(null);
   return (
     <form
-      className="space-y-4 p-4"
+      className="space-y-4 [&>label:not(:first-child)]:mt-6"
       onSubmit={(event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget),
@@ -469,64 +532,81 @@ function SourceEditor({
           .finally(() => setPending(false));
       }}
     >
-      <Label htmlFor="source-name">Name</Label>
-      <Input id="source-name" name="name" required maxLength={120} defaultValue={source?.name} />
-      <Label htmlFor="external-protocol">Input</Label>
-      <SimpleSelect
-        id="external-protocol"
-        value={protocol}
-        onValueChange={(value) => {
-          if (!source) setProtocol(value as typeof protocol);
-        }}
-        options={[
-          { value: "hls_pull", label: "HLS pull (HTTP/HTTPS)" },
-          { value: "rtmp_push", label: "RTMP encoder" },
-          { value: "whip_push", label: "WHIP encoder" },
-        ]}
-      />
+      <div className="grid gap-2">
+        <Label htmlFor="source-name">Name</Label>
+        <Input id="source-name" name="name" required maxLength={120} defaultValue={source?.name} />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="external-protocol">Input</Label>
+        <SimpleSelect
+          className="w-full sm:w-full"
+          id="external-protocol"
+          value={protocol}
+          onValueChange={(value) => {
+            if (!source) setProtocol(value as typeof protocol);
+          }}
+          options={[
+            { value: "hls_pull", label: "HLS pull (HTTP/HTTPS)" },
+            { value: "rtmp_push", label: "RTMP encoder" },
+            { value: "whip_push", label: "WHIP encoder" },
+          ]}
+        />
+      </div>
+      <p className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
+        {protocol === "hls_pull"
+          ? "Use a public HLS playlist with media hosts allowed by your operator. Connect it to an RTMP stream with no active publisher. Private network addresses are not supported."
+          : "Save the source, then generate credentials on the stream's Overview page. Start monitoring and connect your encoder. Use the live preview to confirm media is arriving."}
+      </p>
       {!source && (
         <>
-          <Label htmlFor="external-stream">Stream</Label>
-          <SimpleSelect
-            id="external-stream"
-            name="streamId"
-            required
-            placeholder="Choose a compatible stream"
-            className="w-full sm:w-full"
-            options={streams
-              .filter(
-                (s) =>
-                  s.status === "active" &&
-                  s.source.kind === (protocol === "whip_push" ? "whip" : "rtmp"),
-              )
-              .map((s) => ({ value: s.id, label: s.name }))}
-          />
+          <div className="grid gap-2">
+            <Label htmlFor="external-stream">Stream</Label>
+            <SimpleSelect
+              key={protocol}
+              id="external-stream"
+              name="streamId"
+              required
+              placeholder="Choose a compatible stream"
+              className="w-full sm:w-full"
+              options={streams
+                .filter(
+                  (s) =>
+                    s.status === "active" &&
+                    s.source.kind === (protocol === "whip_push" ? "whip" : "rtmp"),
+                )
+                .map((s) => ({ value: s.id, label: s.name }))}
+            />
+          </div>
           <p className="text-xs text-muted-foreground">
-            Create an RTMP stream first for an HLS pull or RTMP encoder source.
+            HLS and RTMP sources need an RTMP stream. WHIP sources need a WHIP stream.
           </p>
         </>
       )}
       {protocol === "hls_pull" && (
         <>
-          <Label htmlFor="source-endpoint">HLS URL {source ? "(leave blank to keep)" : ""}</Label>
-          <Input
-            id="source-endpoint"
-            type="password"
-            name="endpoint"
-            autoComplete="off"
-            required={!source}
-            maxLength={2048}
-          />
-          <Label htmlFor="source-authorization">
-            Authorization header {source ? "(leave blank to keep)" : ""}
-          </Label>
-          <Input
-            id="source-authorization"
-            name="authorization"
-            type="password"
-            autoComplete="off"
-            maxLength={2048}
-          />
+          <div className="grid gap-2">
+            <Label htmlFor="source-endpoint">HLS URL {source ? "(leave blank to keep)" : ""}</Label>
+            <Input
+              id="source-endpoint"
+              type="password"
+              name="endpoint"
+              autoComplete="off"
+              required={!source}
+              maxLength={2048}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="source-authorization">
+              Authorization header {source ? "(leave blank to keep)" : ""}
+            </Label>
+            <Input
+              id="source-authorization"
+              name="authorization"
+              type="password"
+              autoComplete="off"
+              maxLength={2048}
+            />
+          </div>
           {source && (
             <Label className="flex items-center gap-2 text-sm leading-relaxed">
               <Checkbox value="on" name="clearAuthorization" />
@@ -539,36 +619,42 @@ function SourceEditor({
           </p>
         </>
       )}
-      <Label htmlFor="source-retries">Reconnect retries</Label>
-      <Input
-        id="source-retries"
-        name="reconnectBudget"
-        type="number"
-        required
-        min={0}
-        max={5}
-        defaultValue={source?.reconnectBudget ?? 3}
-      />
-      <Label htmlFor="source-duration">Maximum duration (seconds)</Label>
-      <Input
-        id="source-duration"
-        name="maxDurationSeconds"
-        type="number"
-        required
-        min={60}
-        max={86400}
-        defaultValue={source?.maxDurationSeconds ?? 14400}
-      />
-      <Label htmlFor="source-bytes">Maximum fetched bytes</Label>
-      <Input
-        id="source-bytes"
-        name="maxBytes"
-        type="number"
-        required
-        min={1048576}
-        max={20000000000}
-        defaultValue={source?.maxBytes ?? 2000000000}
-      />
+      <div className="grid gap-2">
+        <Label htmlFor="source-retries">Reconnect attempts</Label>
+        <Input
+          id="source-retries"
+          name="reconnectBudget"
+          type="number"
+          required
+          min={0}
+          max={5}
+          defaultValue={source?.reconnectBudget ?? 3}
+        />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="source-duration">Maximum duration (seconds)</Label>
+        <Input
+          id="source-duration"
+          name="maxDurationSeconds"
+          type="number"
+          required
+          min={60}
+          max={86400}
+          defaultValue={source?.maxDurationSeconds ?? 14400}
+        />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="source-bytes">Download limit (bytes)</Label>
+        <Input
+          id="source-bytes"
+          name="maxBytes"
+          type="number"
+          required
+          min={1048576}
+          max={20000000000}
+          defaultValue={source?.maxBytes ?? 2000000000}
+        />
+      </div>
       <Label className="flex items-center gap-2 text-sm leading-relaxed">
         <Checkbox required />I have permission to redistribute this source.
       </Label>
