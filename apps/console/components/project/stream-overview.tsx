@@ -51,12 +51,14 @@ import type { ConsoleIngestCredential, ConsoleStreamingOperation } from "@/lib/s
 import { useStreamWorkspace } from "./stream-workspace";
 import { StreamPreview } from "./stream-preview";
 import { BroadcastDetails } from "./broadcasts-manager";
+import type { StreamPlaybackReadiness } from "@relayrtc/types";
 
 export function StreamOverview() {
   const workspace = useStreamWorkspace()!;
   const { projectId, environmentId, streamId, stream, broadcast, canManage, href } = workspace;
   const router = useRouter();
   const [encoder, setEncoder] = useState("streamlabs");
+  const [readiness, setReadiness] = useState<StreamPlaybackReadiness | null>(null);
   const [credential, setCredential] = useState<ConsoleIngestCredential | null>(null),
     [reveal, setReveal] = useState(false);
   const [pending, setPending] = useState(false),
@@ -183,7 +185,9 @@ export function StreamOverview() {
     stream.status !== "active"
       ? "This stream has been retired."
       : session?.state === "live"
-        ? "Your source is live."
+        ? readiness?.viewerReady
+          ? "Your source is sending media and playback is ready."
+          : "Your source is sending media. Playback is preparing."
         : session?.state === "starting"
           ? "Waiting for source video or audio."
           : session?.state === "reconnecting"
@@ -213,6 +217,17 @@ export function StreamOverview() {
     : `${stream.profile.width} x ${stream.profile.height}`;
   const connectionRows = [
     { label: "Source", value: sourceLabel, icon: Radio },
+    {
+      label: "Viewer playback",
+      value: readiness?.viewerReady
+        ? "Ready"
+        : readiness?.status === "failed"
+          ? "Failed"
+          : readiness?.sourceProducing
+            ? "Preparing"
+            : "Waiting for media",
+      icon: Monitor,
+    },
     { label: "Source type", value: sourceName, icon: Video },
     { label: "Output resolution", value: outputResolution, icon: Monitor },
     {
@@ -316,7 +331,12 @@ export function StreamOverview() {
             </span>
           }
         >
-          <StreamPreview projectId={projectId} environmentId={environmentId} streamId={streamId} />
+          <StreamPreview
+            projectId={projectId}
+            environmentId={environmentId}
+            streamId={streamId}
+            onReadiness={setReadiness}
+          />
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="text-muted-foreground">
               {sourceName} / {outputResolution}
@@ -459,6 +479,13 @@ export function StreamOverview() {
               )}
               {credential && (
                 <div className="space-y-3 text-sm">
+                  {credential.handover && (
+                    <p role="status" className="text-xs text-muted-foreground">
+                      {credential.handover.status === "pending"
+                        ? "The old credential is revoked. Teardown was queued; reconnect with this replacement and retry after two seconds if needed."
+                        : "The old publisher has been released. Configure this replacement credential and reconnect your encoder."}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     Expires {new Date(credential.expiresAt).toLocaleString()}. Save the secret
                     before leaving this page.
@@ -635,7 +662,7 @@ export function StreamOverview() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirm === "rotate"
-                ? "The previous credential will stop working and its publisher will disconnect. Update your encoder with the replacement."
+                ? "The previous credential stops working immediately and its publisher disconnects. Playback may pause. Update your encoder with the replacement and reconnect; if teardown is still pending, retry after two seconds."
                 : "Live playback and connected outputs can be interrupted. The RTC room remains available."}
             </AlertDialogDescription>
           </AlertDialogHeader>

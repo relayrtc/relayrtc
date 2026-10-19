@@ -3,6 +3,7 @@ import {
   streamProfileSchema,
   streamSourceSchema,
   streamSourceInfoSchema,
+  streamPlaybackReadinessSchema,
 } from "@relayrtc/validation";
 
 export const streamSchema = z.object({
@@ -56,6 +57,10 @@ export const playbackSchema = z.object({
   sourceSessionId: z.string().nullable(),
   generation: z.number().nullable(),
   state: z.enum(["ready", "starting", "live", "reconnecting", "stopping", "ended", "failed"]),
+  sourceState: z
+    .enum(["ready", "starting", "live", "reconnecting", "stopping", "ended", "failed"])
+    .optional(),
+  readiness: streamPlaybackReadinessSchema.optional(),
 });
 export const grantSchema = z.object({ url: z.url(), expiresAt: z.string(), token: z.string() });
 export const credentialSchema = z.object({
@@ -63,6 +68,13 @@ export const credentialSchema = z.object({
   expiresAt: z.string(),
   secret: z.string(),
   protocol: z.enum(["whip", "rtmp"]),
+  handover: z
+    .object({
+      policy: z.literal("disconnect-and-reconnect"),
+      status: z.enum(["ready", "pending"]),
+      retryAfterSeconds: z.number().nonnegative(),
+    })
+    .optional(),
   url: z.url(),
 });
 export const usageSchema = z.object({

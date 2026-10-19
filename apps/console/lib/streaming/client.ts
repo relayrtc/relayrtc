@@ -6,16 +6,16 @@ import type { StreamingResult } from "./contracts";
 
 const errorSchema = z.object({ code: z.string().max(100), description: z.string().max(600) });
 
-export async function requestStreaming<T>(
+export async function requestStreaming<Output>(
   projectId: string,
   environmentId: string,
   path: string,
-  schema: z.ZodType<T>,
+  schema: { parse(value: unknown): Output },
   method = "GET",
   body?: unknown,
   query: Record<string, string> = {},
   idempotencyKey?: string,
-): Promise<StreamingResult<T>> {
+): Promise<StreamingResult<Output>> {
   try {
     const cookie = sessionCookie((await headers()).get("cookie") ?? "");
     if (!cookie)
