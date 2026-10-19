@@ -8,7 +8,7 @@ import { ApiError } from "../../http/errors/api-error.js";
 import { validate } from "../../http/validation/validate.js";
 import type { StreamingConfig } from "./config.js";
 import { StreamingGateway, ingestPath, programPath } from "./gateway.js";
-import { startSession, stopSessions } from "./lifecycle.js";
+import { startSession } from "./lifecycle.js";
 import { conflict, getStream, type Transaction } from "./repository.js";
 import { equalSecret } from "./runtime-routes.js";
 import { boundedBody } from "./store.js";
@@ -185,14 +185,29 @@ export const ingestRoutes: FastifyPluginAsync<{
       resource.hash
     )
       throw new Error("INVALID_WHIP_LOCATION");
-    const sessionId = await database.transaction(async (db) => {
-      const credentialId = await credential(db, streamId, value);
-      const [session] = await db.execute<{ id: string }>(
-        sql`UPDATE streaming_session SET whip_resource=${resource.pathname} WHERE stream_id=${streamId} AND ingress_credential_id=${credentialId} AND desired_state='running' AND state NOT IN ('ended','failed') RETURNING id`,
-      );
-      if (!session) throw denied();
-      return session.id;
-    });
+    const sessionId = await database
+      .transaction(async (db) => {
+        const credentialId = await credential(db, streamId, value);
+        const [session] = await db.execute<{ id: string }>(
+          sql`UPDATE streaming_session SET whip_resource=${resource.pathname} WHERE stream_id=${streamId} AND ingress_credential_id=${credentialId} AND desired_state='running' AND state NOT IN ('ended','failed') RETURNING id`,
+        );
+        if (!session) throw denied();
+        return session.id;
+      })
+      .catch(async (error: unknown) => {
+        await response.body?.cancel();
+        await fetch(`${config.gatewayWhip}${resource.pathname}`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${value}` },
+          signal: AbortSignal.timeout(5000),
+          redirect: "error",
+        })
+          .then(async (cleanup) => {
+            await cleanup.body?.cancel();
+          })
+          .catch(() => undefined);
+        throw error;
+      });
     reply
       .header("location", `${config.publicOrigin}/v1/ingest/whip/${streamId}/${sessionId}`)
       .header("accept-patch", "application/trickle-ice-sdpfrag");
@@ -240,7 +255,20 @@ export const ingestRoutes: FastifyPluginAsync<{
           redirect: "error",
         });
         if (method === "DELETE" && (response.ok || response.status === 404))
-          await database.transaction((db) => stopSessions(db, streamId));
+          await database.execute(
+            sql`UPDATE streaming_session SET desired_state='stopped',state='stopping',updated_at=now() WHERE id=${sessionId} AND stream_id=${streamId} AND whip_resource=${resource} AND state NOT IN ('ended','failed')`,
+          );
+        if (method === "PATCH" && response.ok)
+          await database.transaction(async (db) => {
+            const credentialId = await credential(db, streamId, value);
+            const [active] = await db.execute(
+              sql`SELECT id FROM streaming_session WHERE id=${sessionId} AND stream_id=${streamId} AND ingress_credential_id=${credentialId} AND whip_resource=${resource} AND desired_state='running' AND state NOT IN ('ended','failed')`,
+            );
+            if (!active) {
+              await response.body?.cancel();
+              throw new ApiError(410, "WHIP_SESSION_GONE", "The WHIP session has ended");
+            }
+          });
         if (response.headers.get("etag"))
           reply.header("etag", required(response.headers.get("etag")));
         const body = await boundedBody(response, 131072);

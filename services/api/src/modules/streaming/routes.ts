@@ -35,9 +35,10 @@ import {
   type Transaction,
   type StreamRow,
 } from "./repository.js";
-import { startSession, stopSessions } from "./lifecycle.js";
+import { finishIngestRotation, startSession, stopSessions } from "./lifecycle.js";
 import { StreamingGateway, ingestPath } from "./gateway.js";
 import { registerStreamingManagementAuth } from "./management-auth.js";
+import { StreamingOrigin } from "./playback.js";
 
 export interface StreamingRoutesOptions {
   database: RelayKitDatabase;
@@ -53,6 +54,7 @@ const paramsSchema = z.object({
 const noBody = z.object({}).strict();
 export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app, options) => {
   const { database, config } = options;
+  const playbackOrigin = new StreamingOrigin(database, config);
   const principal = registerStreamingManagementAuth(app, options);
   const actorKey = (request: FastifyRequest) => {
     const p = principal(request);
@@ -307,10 +309,19 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
             const { credentialId } = validate(paramsSchema, request.params);
             if (rotate) {
               const [old] = await db.execute(
-                sql`UPDATE streaming_ingest_credential SET revoked_at=now() WHERE id=${required(credentialId)} AND stream_id=${stream.id} RETURNING id`,
+                sql`UPDATE streaming_ingest_credential SET revoked_at=now() WHERE id=${required(credentialId)} AND stream_id=${stream.id} AND revoked_at IS NULL RETURNING id`,
               );
-              if (!old) throw missing();
-              await stopSessions(db, stream.id);
+              if (!old) {
+                const [existing] = await db.execute(
+                  sql`SELECT id FROM streaming_ingest_credential WHERE id=${required(credentialId)} AND stream_id=${stream.id}`,
+                );
+                if (!existing) throw missing();
+                throw conflict(
+                  "INGEST_CREDENTIAL_ALREADY_ROTATED",
+                  "This credential was already revoked or rotated. Use the latest replacement credential.",
+                );
+              }
+              await stopSessions(db, stream.id, required(credentialId));
             }
             const [count] = await db.execute(
               sql`SELECT count(*)::int AS n FROM streaming_ingest_credential WHERE stream_id=${stream.id} AND revoked_at IS NULL AND expires_at>now()`,
@@ -347,7 +358,33 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
           }),
         )) as { encryptedSecret: string; [key: string]: unknown };
         const { encryptedSecret, ...rest } = result;
-        return reply.code(201).send({ ...rest, secret: open(encryptedSecret) });
+        let handover: { policy: string; status: string; retryAfterSeconds: number } | undefined;
+        if (rotate) {
+          const { streamId, credentialId } = validate(paramsSchema, request.params);
+          let status = "ready";
+          try {
+            await finishIngestRotation(
+              database,
+              required(streamId),
+              required(credentialId),
+              config,
+            );
+          } catch {
+            status = "pending";
+            app.log.warn(
+              { streamId },
+              "Ingest credential rotation is waiting for publisher teardown",
+            );
+          }
+          handover = {
+            policy: "disconnect-and-reconnect",
+            status,
+            retryAfterSeconds: status === "pending" ? 2 : 0,
+          };
+        }
+        return reply
+          .code(201)
+          .send({ ...rest, secret: open(encryptedSecret), ...(handover ? { handover } : {}) });
       },
     );
   app.post("/streams/:streamId/playback-grants", (request) =>
@@ -401,19 +438,88 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
       return { revoked: true };
     }),
   );
-  app.get("/streams/:streamId/playback", (request) =>
-    withStream(request, "streams:read", async (db, stream) => {
+  app.get("/streams/:streamId/playback", async (request) => {
+    const { stream, session } = await withStream(request, "streams:read", async (db, stream) => {
       const [session] = await db
         .select()
         .from(schema.streamingSession)
         .where(eq(schema.streamingSession.streamId, stream.id))
         .orderBy(sql`${schema.streamingSession.createdAt} DESC`)
         .limit(1);
+      return { stream, session };
+    });
+    const sourceProducing = Boolean(
+      session?.state === "live" &&
+      session.desiredState === "running" &&
+      session.leasedUntil &&
+      session.leasedUntil.getTime() > Date.now() &&
+      session.programBitrate > 0,
+    );
+    const observed =
+      sourceProducing && session
+        ? await playbackOrigin.check(stream, session)
+        : { ready: false, checkedAt: new Date().toISOString() };
+    return withStream(request, "streams:read", async (db, current) => {
+      const [fresh] = session
+        ? await db
+            .select()
+            .from(schema.streamingSession)
+            .where(eq(schema.streamingSession.id, session.id))
+        : [];
+      const viewerReady =
+        observed.ready &&
+        current.status === "active" &&
+        current.playbackEpoch === stream.playbackEpoch &&
+        fresh?.generation === session?.generation &&
+        fresh?.state === "live" &&
+        fresh.desiredState === "running" &&
+        Boolean(fresh.leasedUntil && fresh.leasedUntil.getTime() > Date.now());
+      const producing =
+        sourceProducing &&
+        fresh?.generation === session?.generation &&
+        fresh?.desiredState === "running" &&
+        fresh.state === "live" &&
+        Boolean(fresh.leasedUntil && fresh.leasedUntil.getTime() > Date.now());
+      const state = fresh?.state ?? "ready";
+      const status =
+        current.status !== "active" || state === "ended" || state === "stopping"
+          ? "ended"
+          : state === "failed"
+            ? "failed"
+            : viewerReady
+              ? "ready"
+              : state === "reconnecting"
+                ? "reconnecting"
+                : state === "live"
+                  ? "degraded"
+                  : session
+                    ? "starting"
+                    : "waiting";
       return {
         streamId: stream.id,
         sourceSessionId: session?.id ?? null,
-        generation: session?.generation ?? null,
-        state: session?.state ?? "ready",
+        generation: fresh?.generation ?? session?.generation ?? null,
+        state: state === "live" && !viewerReady ? "reconnecting" : state,
+        sourceState: state,
+        readiness: {
+          status,
+          publisherConnected: Boolean(
+            fresh?.desiredState === "running" &&
+            (stream.source.kind === "room" ? producing : fresh.ingressId),
+          ),
+          sourceProducing: producing,
+          outputStarting: Boolean(
+            current.status === "active" &&
+            fresh?.desiredState === "running" &&
+            ["starting", "reconnecting", "live"].includes(state) &&
+            !viewerReady,
+          ),
+          viewerReady,
+          code: viewerReady
+            ? null
+            : (fresh?.lastError ?? (sourceProducing ? "PLAYBACK_NOT_READY" : null)),
+          checkedAt: observed.checkedAt,
+        },
         profile: stream.profile,
         protocols: ["hls", "ll-hls"],
         grantRequired: true,
@@ -422,8 +528,8 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
         delivery: "single-rendition-fmp4",
         latencyTargetSeconds: null,
       };
-    }),
-  );
+    });
+  });
   app.get("/streams/:streamId/usage", (request) =>
     withStream(request, "streams:read", async (db, stream) => {
       const [row] =
