@@ -32,6 +32,23 @@ export const dvrPlaybackSchema = z.object({
   sourceSessionId: z.string().nullable(),
   generation: z.number().nullable(),
   state: z.enum(["starting", "live", "ended", "unavailable"]),
+  capture: z
+    .object({
+      state: z.enum([
+        "not_configured",
+        "waiting",
+        "queued",
+        "recording",
+        "finalizing",
+        "ready",
+        "failed",
+        "deleting",
+        "deleted",
+      ]),
+      lastError: z.string().nullable(),
+      retrying: z.boolean(),
+    })
+    .optional(),
   startSeconds: z.number().nullable(),
   endSeconds: z.number().nullable(),
   wallStart: z.string().nullable(),

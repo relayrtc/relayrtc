@@ -1,11 +1,18 @@
 import { sql } from "drizzle-orm";
+import type { RelayKitDatabase } from "@relayrtc/database";
 import { z } from "zod";
 import { dvrPolicySchema, rollingBufferPolicySchema } from "@relayrtc/validation";
 import type { DvrPlayback } from "@relayrtc/types";
 import { signStreamingGrant } from "@relayrtc/protocol/streaming-control";
 import { id, conflict, type Transaction, type StreamRow } from "./repository.js";
-import { getRecording } from "./recording-service.js";
+import { getRecording, recordingRowSchema } from "./recording-service.js";
 import type { StreamingConfig } from "./config.js";
+import {
+  boundedMaintenanceTransaction,
+  maintenanceBatch,
+  maintenanceTransaction,
+  type MaintenanceRunner,
+} from "./maintenance.js";
 
 export async function dvrEvent(
   db: Transaction,
@@ -70,7 +77,7 @@ export async function drainDvrWindow(
 ) {
   const data = await dvrWindowData(db, streamId, undefined, windowId, true);
   if (data?.window.state !== "active") return;
-  const expiresAt = new Date(Date.now() + seconds * 1000),
+  const expiresAt = new Date(Date.now() + seconds * 1000).toISOString(),
     end = Number(data.segments.at(-1)?.position ?? -1);
   await db.execute(
     sql`UPDATE dvr_window SET state='draining',expires_at=${expiresAt},end_position=${end} WHERE id=${windowId}`,
@@ -87,81 +94,129 @@ export async function drainDvrWindow(
     );
 }
 
-export async function syncDvrWindows(db: Transaction, config: StreamingConfig) {
-  await db.execute(sql`DELETE FROM dvr_segment_pin WHERE expires_at<=now()`);
-  // A run snapshots its policy once. Later changes apply to new runs; disable drains immediately.
+export async function syncDvrWindows(
+  database: RelayKitDatabase,
+  config: StreamingConfig,
+  run: MaintenanceRunner,
+) {
+  await run("dvr:expired-pins", () =>
+    maintenanceTransaction(database, "dvr:expired-pins", async (db) => {
+      await db.execute(sql`DELETE FROM dvr_segment_pin WHERE expires_at<=now()`);
+    }),
+  );
   const candidates = config.dvrEnabled
-    ? await db.execute(
-        sql`SELECT r.id,p.policy,p.version FROM recording r JOIN stream_dvr_policy p ON p.stream_id=r.stream_id JOIN streaming_stream s ON s.id=r.stream_id JOIN broadcast_run b ON b.id=r.broadcast_id WHERE r.kind='buffer' AND r.state IN ('queued','recording') AND r.stop_requested=false AND p.policy->>'enabled'='true' AND s.status='active' AND b.desired_state='running' AND NOT EXISTS(SELECT 1 FROM dvr_window w WHERE w.recording_id=r.id) ORDER BY r.id LIMIT 20 FOR UPDATE OF r SKIP LOCKED`,
+    ? await database.execute(
+        sql`SELECT r.id FROM recording r JOIN stream_dvr_policy p ON p.stream_id=r.stream_id JOIN streaming_stream s ON s.id=r.stream_id JOIN broadcast_run b ON b.id=r.broadcast_id WHERE r.kind='buffer' AND r.state IN ('queued','recording') AND r.stop_requested=false AND p.policy->>'enabled'='true' AND s.status='active' AND b.desired_state='running' AND NOT EXISTS(SELECT 1 FROM dvr_window w WHERE w.recording_id=r.id) ORDER BY r.created_at LIMIT 32`,
       )
     : [];
-  for (const row of candidates) {
-    const windowId = id("dvr");
-    const inserted = await db.execute(
-      sql`INSERT INTO dvr_window(id,recording_id,policy,policy_version) VALUES(${windowId},${String(row.id)},${JSON.stringify(row.policy)}::jsonb,${Number(row.version)}) ON CONFLICT DO NOTHING RETURNING id`,
-    );
-    if (inserted.length) await dvrEvent(db, windowId, "dvr.enabled");
-  }
-  const rows = await db.execute(
-    sql`SELECT w.*,r.state AS recording_state,r.stop_requested,r.stream_id,b.desired_state,b.state AS run_state,s.status AS owner_status,p.policy AS desired_policy FROM dvr_window w JOIN recording r ON r.id=w.recording_id JOIN streaming_stream s ON s.id=r.stream_id JOIN broadcast_run b ON b.id=r.broadcast_id LEFT JOIN stream_dvr_policy p ON p.stream_id=r.stream_id WHERE w.state<>'disabled' ORDER BY w.id FOR UPDATE OF w LIMIT 100`,
-  );
-  for (const w of rows) {
-    const desired = w.desired_policy ? dvrPolicySchema.parse(w.desired_policy) : null;
-    const policy = dvrPolicySchema.parse(w.policy);
-    if (
-      w.state === "active" &&
-      (!config.dvrEnabled ||
-        !desired?.enabled ||
-        w.owner_status !== "active" ||
-        w.desired_state !== "running" ||
-        w.stop_requested ||
-        !["queued", "recording"].includes(String(w.recording_state)) ||
-        ["stopping", "stopped", "failed"].includes(String(w.run_state)))
-    ) {
-      const seconds =
-        w.owner_status !== "active" || !config.dvrEnabled ? 0 : policy.endedRetentionSeconds;
-      await drainDvrWindow(db, String(w.id), String(w.stream_id), seconds);
-    }
-    const [expired] = await db.execute(
-      sql`UPDATE dvr_window SET state='disabled' WHERE id=${String(w.id)} AND expires_at<=now() RETURNING id`,
-    );
-    if (expired) await dvrEvent(db, String(w.id), "dvr.disabled");
-    if (
-      w.state === "active" &&
-      (!w.last_event_at || z.coerce.date().parse(w.last_event_at).getTime() < Date.now() - 30000)
-    ) {
-      const [range] = await db.execute(
-        sql`SELECT min(position)::int AS first,max(position)::int AS last FROM recording_segment WHERE recording_id=${String(w.recording_id)}`,
-      );
-      if (
-        range?.first !== null &&
-        (Number(range?.first) !== Number(w.last_start) ||
-          Number(range?.last) !== Number(w.last_end))
-      ) {
-        const first = Number(range?.first),
-          last = Number(range?.last),
-          previous = Number(w.last_start);
-        await db.execute(
-          sql`UPDATE dvr_window SET last_start=${first},last_end=${last} WHERE id=${String(w.id)}`,
+  await maintenanceBatch(candidates, (row) =>
+    run(`dvr:admit:${String(row.id)}`, () =>
+      maintenanceTransaction(database, `dvr:admit:${String(row.id)}`, async (db) => {
+        const [current] = await db.execute(
+          sql`SELECT r.id,p.policy,p.version FROM recording r JOIN stream_dvr_policy p ON p.stream_id=r.stream_id JOIN streaming_stream s ON s.id=r.stream_id JOIN broadcast_run b ON b.id=r.broadcast_id WHERE r.id=${String(row.id)} AND r.kind='buffer' AND r.state IN ('queued','recording') AND r.stop_requested=false AND p.policy->>'enabled'='true' AND s.status='active' AND b.desired_state='running' FOR UPDATE OF r SKIP LOCKED`,
         );
-        await dvrEvent(db, String(w.id), "dvr.window_changed", {
-          firstSequence: first,
-          lastSequence: last,
+        if (!current) return;
+        const policy = dvrPolicySchema.parse(current.policy),
+          windowId = id("dvr");
+        const inserted = await db.execute(
+          sql`INSERT INTO dvr_window(id,recording_id,policy,policy_version) VALUES(${windowId},${String(current.id)},${JSON.stringify(policy)}::jsonb,${Number(current.version)}) ON CONFLICT DO NOTHING RETURNING id`,
+        );
+        if (inserted.length) await dvrEvent(db, windowId, "dvr.enabled");
+      }),
+    ),
+  );
+  const windows = await database.execute(
+    sql`SELECT id,recording_id FROM dvr_window WHERE state<>'disabled' ORDER BY id LIMIT 100`,
+  );
+  await maintenanceBatch(windows, (window) =>
+    run(`dvr:window:${String(window.id)}`, async () => {
+      try {
+        await maintenanceTransaction(database, `dvr:window:${String(window.id)}`, async (db) => {
+          await syncDvrWindow(db, String(window.id), config);
+          await db.execute(
+            sql`UPDATE recording SET last_error=NULL WHERE id=${String(window.recording_id)} AND last_error='DVR_MAINTENANCE_RETRY'`,
+          );
         });
-        if (previous >= 0 && first > previous)
-          await dvrEvent(db, String(w.id), "dvr.segment_evicted", {
-            beforeSequence: first,
-            count: first - previous,
-          });
+      } catch (error) {
+        await boundedMaintenanceTransaction(database, (db) =>
+          db.execute(
+            sql`UPDATE recording SET last_error='DVR_MAINTENANCE_RETRY' WHERE id=${String(window.recording_id)} AND (last_error IS NULL OR last_error='DVR_MAINTENANCE_RETRY')`,
+          ),
+        );
+        throw error;
       }
+    }),
+  );
+  await run("dvr:cleanup", () =>
+    maintenanceTransaction(database, "dvr:cleanup", async (db) => {
+      await db.execute(
+        sql`UPDATE recording r SET stop_requested=true WHERE r.kind='buffer' AND r.stop_requested=false AND EXISTS(SELECT 1 FROM dvr_window w WHERE w.recording_id=r.id AND w.state<>'active') AND NOT EXISTS(SELECT 1 FROM stream_buffer_policy p WHERE p.stream_id=r.stream_id AND p.policy->>'enabled'='true')`,
+      );
+      await db.execute(
+        sql`DELETE FROM dvr_delivery_usage WHERE id IN (SELECT id FROM dvr_delivery_usage WHERE created_at<now()-interval '90 days' LIMIT 1000)`,
+      );
+    }),
+  );
+}
+
+async function syncDvrWindow(db: Transaction, windowId: string, config: StreamingConfig) {
+  const [w] = await db.execute(
+    sql`SELECT w.*,r.state AS recording_state,r.stop_requested,r.stream_id,b.desired_state,b.state AS run_state,s.status AS owner_status,p.policy AS desired_policy FROM dvr_window w JOIN recording r ON r.id=w.recording_id JOIN streaming_stream s ON s.id=r.stream_id JOIN broadcast_run b ON b.id=r.broadcast_id LEFT JOIN stream_dvr_policy p ON p.stream_id=r.stream_id WHERE w.id=${windowId} AND w.state<>'disabled' FOR UPDATE OF w SKIP LOCKED`,
+  );
+  if (!w) return;
+  const desired = w.desired_policy ? dvrPolicySchema.parse(w.desired_policy) : null;
+  const policy = dvrPolicySchema.parse(w.policy);
+  if (
+    w.state === "active" &&
+    (!config.dvrEnabled ||
+      !desired?.enabled ||
+      w.owner_status !== "active" ||
+      w.desired_state !== "running" ||
+      w.stop_requested ||
+      !["queued", "recording"].includes(String(w.recording_state)) ||
+      ["stopping", "stopped", "failed"].includes(String(w.run_state)))
+  ) {
+    const seconds =
+      w.owner_status !== "active" || !config.dvrEnabled ? 0 : policy.endedRetentionSeconds;
+    await drainDvrWindow(db, String(w.id), String(w.stream_id), seconds);
+    w.state = "draining";
+  }
+  const [expired] = await db.execute(
+    sql`UPDATE dvr_window SET state='disabled' WHERE id=${String(w.id)} AND expires_at<=now() RETURNING id`,
+  );
+  if (expired) {
+    await dvrEvent(db, String(w.id), "dvr.disabled");
+    w.state = "disabled";
+  }
+  if (
+    w.state === "active" &&
+    (!w.last_event_at || z.coerce.date().parse(w.last_event_at).getTime() < Date.now() - 30000)
+  ) {
+    const [range] = await db.execute(
+      sql`SELECT min(position)::int AS first,max(position)::int AS last FROM recording_segment WHERE recording_id=${String(w.recording_id)}`,
+    );
+    if (
+      range?.first != null &&
+      range.last != null &&
+      (Number(range?.first) !== Number(w.last_start) || Number(range?.last) !== Number(w.last_end))
+    ) {
+      const first = Number(range?.first),
+        last = Number(range?.last),
+        previous = Number(w.last_start);
+      await db.execute(
+        sql`UPDATE dvr_window SET last_start=${first},last_end=${last} WHERE id=${String(w.id)}`,
+      );
+      await dvrEvent(db, String(w.id), "dvr.window_changed", {
+        firstSequence: first,
+        lastSequence: last,
+      });
+      if (previous >= 0 && first > previous)
+        await dvrEvent(db, String(w.id), "dvr.segment_evicted", {
+          beforeSequence: first,
+          count: first - previous,
+        });
     }
   }
-  await db.execute(
-    sql`UPDATE recording r SET stop_requested=true WHERE r.kind='buffer' AND r.stop_requested=false AND EXISTS(SELECT 1 FROM dvr_window w WHERE w.recording_id=r.id AND w.state<>'active') AND NOT EXISTS(SELECT 1 FROM stream_buffer_policy p WHERE p.stream_id=r.stream_id AND p.policy->>'enabled'='true')`,
-  );
-  await db.execute(
-    sql`DELETE FROM dvr_delivery_usage WHERE id IN (SELECT id FROM dvr_delivery_usage WHERE created_at<now()-interval '90 days' LIMIT 1000)`,
-  );
 }
 
 export async function dvrWindowData(
@@ -227,8 +282,30 @@ export async function dvrPlayback(
   const data = await dvrWindowData(db, stream.id, broadcastId);
   const first = data?.segments[0],
     last = data?.segments.at(-1);
+  const [latest] = data
+    ? []
+    : await db.execute(
+        sql`SELECT * FROM recording WHERE stream_id=${stream.id} AND kind='buffer' ${broadcastId ? sql`AND broadcast_id=${broadcastId}` : sql``} ORDER BY created_at DESC LIMIT 1`,
+      );
+  const capture = data?.r ?? (latest ? recordingRowSchema.parse(latest) : null);
+  const [configured] = await db.execute(
+    sql`SELECT policy FROM stream_dvr_policy WHERE stream_id=${stream.id}`,
+  );
   return {
     streamId: stream.id,
+    capture: {
+      state:
+        capture?.state ??
+        (config.dvrEnabled && configured?.policy && dvrPolicySchema.parse(configured.policy).enabled
+          ? "waiting"
+          : "not_configured"),
+      lastError: capture?.last_error ?? null,
+      retrying: Boolean(
+        capture?.last_error &&
+        !["failed", "deleting", "deleted"].includes(capture.state) &&
+        (capture.last_error === "DVR_MAINTENANCE_RETRY" || capture.state !== "ready"),
+      ),
+    },
     broadcastId: data?.r.broadcast_id ?? broadcastId ?? null,
     windowId: data ? String(data.window.id) : null,
     sourceSessionId: data ? String(data.window.id) : null,

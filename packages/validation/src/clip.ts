@@ -51,6 +51,17 @@ export const clipResourceSchema = z.object({
   storageByteSeconds: z.number(),
   createdAt: z.string(),
   expiresAt: z.string().nullable(),
+  progress: z
+    .object({
+      stage: z.enum(["queued", "preparing", "rendering", "ready", "failed", "deleting", "deleted"]),
+      copiedObjects: z.number().int().nonnegative(),
+      totalObjects: z.number().int().nonnegative(),
+      attempts: z.number().int().nonnegative(),
+      maxAttempts: z.number().int().positive(),
+      nextAttemptAt: z.string().nullable(),
+      deadlineAt: z.string().nullable(),
+    })
+    .optional(),
 });
 export const clipWindowSchema = z.object({
   recordingId: z.string(),
