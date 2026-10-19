@@ -146,7 +146,7 @@ export const normalizeRtcStats = (
   let validLoss = false;
   for (const stream of streams.filter((value) => value.direction === "inbound")) {
     const old = previous?.streams?.find((value) => value.id === stream.id);
-    if (!old) continue;
+    if (!old || previous?.stale) continue;
     if (
       old.packetsLost === null ||
       old.packets === null ||
