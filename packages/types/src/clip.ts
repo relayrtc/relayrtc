@@ -46,7 +46,7 @@ export interface ClipResource {
     maxAttempts: number;
     nextAttemptAt: string | null;
     deadlineAt: string | null;
-  };
+  } | undefined;
 }
 export interface RollingBufferPolicy {
   enabled: boolean;
