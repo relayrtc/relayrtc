@@ -140,6 +140,9 @@ func (room *postgresRoom) Joined(ctx context.Context, claims auth.Claims, sessio
 }
 
 func (room *postgresRoom) Save(ctx context.Context, state *RoomState) error {
+	if state.Events == nil {
+		state.Events = []RuntimeEvent{}
+	}
 	encoded, err := json.Marshal(state)
 	if err != nil || len(encoded) > 8_388_608 {
 		return ErrUnavailable
@@ -177,7 +180,7 @@ func (store *PostgresStore) ReadEvents(ctx context.Context, roomID string, after
 	var encoded []byte
 	err := store.pool.QueryRow(ctx, `SELECT coalesce((state->>'Sequence')::bigint, 0),
  coalesce((SELECT jsonb_agg(e.value ORDER BY (e.value->>'Sequence')::bigint)
- FROM jsonb_array_elements(coalesce(state->'Events', '[]'::jsonb)) e
+ FROM jsonb_array_elements(coalesce(nullif(state->'Events', 'null'::jsonb), '[]'::jsonb)) e
  WHERE (e.value->>'Sequence')::bigint > $2), '[]'::jsonb)
  FROM rtc_runtime WHERE room_id = $1`, roomID, after).Scan(&sequence, &encoded)
 	if errors.Is(err, pgx.ErrNoRows) {
