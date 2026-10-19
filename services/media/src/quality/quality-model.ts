@@ -64,6 +64,7 @@ export const intervalNetworkStats = (
 ): SubscriberNetworkStats => {
   if (
     !previous ||
+    previous.stale ||
     current.timestamp <= previous.timestamp ||
     current.timestamp - previous.timestamp > 10_000 ||
     current.packetsLost < previous.packetsLost ||

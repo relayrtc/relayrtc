@@ -29,6 +29,9 @@ const createTransport = (
     appData: {},
     close: vi.fn(),
     closed: false,
+    on: vi.fn(),
+    dtlsState: "connected",
+    iceState: "connected",
     connect: vi.fn(() => Promise.resolve()),
     consume: vi.fn((options: { paused?: boolean; producerId: string }) => {
       const producer = producers.find((candidate) => candidate.id === options.producerId);
@@ -72,6 +75,15 @@ const createTransport = (
           close: vi.fn(),
           id: `producer-${id}-${String(producerIndex++)}`,
           kind: options.kind,
+          paused: false,
+          pause: vi.fn(function (this: { paused: boolean }) {
+            this.paused = true;
+            return Promise.resolve();
+          }),
+          resume: vi.fn(function (this: { paused: boolean }) {
+            this.paused = false;
+            return Promise.resolve();
+          }),
           observer: { once: vi.fn() },
           rtpParameters: options.rtpParameters,
         } as unknown as Producer;

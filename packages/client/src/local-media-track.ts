@@ -1,10 +1,6 @@
 import { MediaCaptureError, normalizeMediaError } from "./errors.js";
 import type { BrowserMediaEnvironment } from "./environment.js";
-import type {
-  LocalMediaTrackListener,
-  LocalMediaTrackSnapshot,
-  MediaSourceKind,
-} from "./types.js";
+import type { LocalMediaTrackListener, LocalMediaTrackSnapshot, MediaSourceKind } from "./types.js";
 
 export class LocalMediaTrackController {
   readonly #environment: BrowserMediaEnvironment;
@@ -13,6 +9,7 @@ export class LocalMediaTrackController {
   #constraints: MediaTrackConstraints = {};
   #deviceId: string | null = null;
   #track: MediaStreamTrack | null = null;
+  #revision = 0;
 
   constructor(source: MediaSourceKind, environment: BrowserMediaEnvironment) {
     this.#source = source;
@@ -29,33 +26,37 @@ export class LocalMediaTrackController {
   }
 
   async enable(constraints: MediaTrackConstraints = {}): Promise<MediaStreamTrack> {
+    const revision = ++this.#revision;
     this.#constraints = constraints;
     const track = await this.#capture(this.#deviceId, constraints);
+    this.#validateCapture(track, revision);
     this.#replace(track);
     return track;
   }
 
   disable(): void {
+    this.#revision++;
     const current = this.#track;
     this.#track = null;
+    current?.removeEventListener("ended", this.#handleEnded);
     current?.stop();
     this.#emit();
   }
 
   async switchDevice(deviceId: string): Promise<MediaStreamTrack | null> {
     if (!deviceId.trim()) {
-      throw new MediaCaptureError(
-        "MEDIA_DEVICE_NOT_FOUND",
-        "A media device ID is required",
-      );
+      throw new MediaCaptureError("MEDIA_DEVICE_NOT_FOUND", "A media device ID is required");
     }
     if (!this.#track) {
+      this.#revision++;
       this.#deviceId = deviceId;
       this.#emit();
       return null;
     }
 
+    const revision = ++this.#revision;
     const track = await this.#capture(deviceId, this.#constraints);
+    this.#validateCapture(track, revision);
     this.#deviceId = deviceId;
     this.#replace(track);
     return track;
@@ -68,7 +69,9 @@ export class LocalMediaTrackController {
 
   #replace(track: MediaStreamTrack): void {
     const previous = this.#track;
+    previous?.removeEventListener("ended", this.#handleEnded);
     this.#track = track;
+    track.addEventListener("ended", this.#handleEnded, { once: true });
     this.#deviceId = track.getSettings().deviceId ?? this.#deviceId;
     previous?.stop();
     this.#emit();
@@ -96,11 +99,28 @@ export class LocalMediaTrackController {
           `The requested ${this.#source} track is unavailable`,
         );
       }
+      for (const extra of stream.getTracks()) if (extra !== track) extra.stop();
       return track;
     } catch (error) {
       throw normalizeMediaError(error);
     }
   }
+
+  #validateCapture(track: MediaStreamTrack, revision: number): void {
+    if (revision !== this.#revision || track.readyState === "ended") {
+      track.stop();
+      throw new MediaCaptureError(
+        "MEDIA_CAPTURE_ABORTED",
+        "The media capture request was cancelled",
+      );
+    }
+  }
+
+  readonly #handleEnded = (): void => {
+    this.#track = null;
+    this.#revision++;
+    this.#emit();
+  };
 
   #emit(): void {
     const snapshot = this.current;

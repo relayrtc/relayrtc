@@ -33,8 +33,8 @@ const room = await relay.join(token);
 await room.microphone.enable();
 await room.camera.enable({ width: 1280, height: 720 });
 
-room.microphone.mute();
-room.microphone.unmute();
+await room.microphone.mute();
+await room.microphone.unmute();
 
 const devices = await room.devices.enumerate();
 if (devices.microphones[0]) {

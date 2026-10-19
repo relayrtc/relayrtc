@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type NodeLease struct {
@@ -74,8 +75,20 @@ func (lease *NodeLease) KeepAlive(ctx context.Context, cancelOwner context.Cance
 				return
 			case <-ticker.C:
 				operation, cancel := context.WithTimeout(ctx, 5*time.Second)
-				result, err := lease.connection.Exec(operation, `UPDATE signaling_node_lease SET heartbeat_at = now(), expires_at = now() + interval '20 seconds'
+				var result pgconn.CommandTag
+				var err error
+				for attempt := 0; attempt < 3; attempt++ {
+					result, err = lease.connection.Exec(operation, `UPDATE signaling_node_lease SET heartbeat_at = now(), expires_at = now() + interval '20 seconds'
  WHERE id = 'owner' AND instance_id = $1 AND expires_at > now()`, lease.InstanceID)
+					var failure *pgconn.PgError
+					if !errors.As(err, &failure) || (failure.Code != "40P01" && failure.Code != "40001") {
+						break
+					}
+					select {
+					case <-operation.Done():
+					case <-time.After(100 * time.Millisecond):
+					}
+				}
 				cancel()
 				if err != nil || result.RowsAffected() != 1 {
 					cancelOwner()

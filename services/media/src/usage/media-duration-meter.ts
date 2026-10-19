@@ -19,6 +19,7 @@ export class MediaDurationMeter {
   constructor(private readonly store: MediaUsageMetricsStore) {}
 
   start(trackId: string, participantId: string, trackType: string, at = Date.now()) {
+    if (this.#tracks.has(trackId)) return;
     if (!Object.hasOwn(usageMediaDurationMetrics, trackType))
       throw new Error(`Unsupported usage track type: ${trackType}`);
     const metrics = usageMediaDurationMetrics[trackType as keyof typeof usageMediaDurationMetrics];

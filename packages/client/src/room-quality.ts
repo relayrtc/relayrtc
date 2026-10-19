@@ -37,13 +37,21 @@ export class RoomQuality {
   }
   async #poll(): Promise<void> {
     if (this.#polling || !this.#isActive()) return;
+    const scope = this.scope();
+    for (const [id, event] of this.#latest) {
+      if (Date.parse(event.occurredAt) + 15000 < Date.now()) {
+        this.#latest.delete(id);
+        if (id === scope?.participantId) this.lost();
+      }
+    }
     this.#polling = true;
     try {
       const stats = await this.rtc.getQualityStats();
       if (!this.#isActive()) return;
       this.#stats = stats;
       this.emit("qualityStatsUpdated", stats);
-      await this.rtc.reportQualityStats(stats);
+      if (stats.stale) this.lost();
+      await this.rtc.reportQualityStats();
     } catch (error) {
       if (this.#isActive())
         this.emit(
@@ -74,6 +82,9 @@ export class RoomQuality {
       return;
     const event = message.payload;
     if (
+      !Number.isFinite(Date.parse(event.occurredAt)) ||
+      Date.parse(event.occurredAt) + 15000 < Date.now() ||
+      Date.parse(event.occurredAt) > Date.now() + 1000 ||
       event.roomId !== scope.roomId ||
       (event.participantId === scope.participantId &&
         event.sessionId &&
@@ -114,6 +125,7 @@ export class RoomQuality {
       quality: "lost",
       occurredAt: new Date().toISOString(),
     } as ConnectionQualityEvent;
+    this.#latest.set(scope.participantId, event);
     this.#transition(event, previous ?? undefined);
   }
 

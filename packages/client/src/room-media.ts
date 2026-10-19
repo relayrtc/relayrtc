@@ -25,8 +25,8 @@ export interface RoomInputControl {
   enable(constraints?: MediaTrackConstraints): Promise<MediaStreamTrack>;
   disable(): Promise<void>;
   switchDevice(deviceId: string): Promise<MediaStreamTrack | null>;
-  mute(): void;
-  unmute(): void;
+  mute(): Promise<void>;
+  unmute(): Promise<void>;
   subscribe(listener: (snapshot: RoomInputSnapshot) => void): () => void;
 }
 
@@ -41,8 +41,8 @@ export interface RoomScreenControl {
   readonly current: RoomScreenSnapshot;
   start(options?: DisplayMediaStreamOptions): Promise<RoomScreenSnapshot>;
   stop(): Promise<void>;
-  mute(): void;
-  unmute(): void;
+  mute(): Promise<void>;
+  unmute(): Promise<void>;
   subscribe(listener: (snapshot: RoomScreenSnapshot) => void): () => void;
 }
 

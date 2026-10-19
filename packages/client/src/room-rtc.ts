@@ -11,8 +11,9 @@ export interface LocalPublication {
   readonly info: Track;
   readonly muted: boolean;
   replaceTrack(track: MediaStreamTrack): Promise<void>;
-  mute(): void;
-  unmute(): void;
+  mute(): Promise<void>;
+  unmute(): Promise<void>;
+  reconcile(track: Track): Promise<void>;
   close(): Promise<void>;
   dispose(): void;
 }
@@ -34,6 +35,12 @@ interface PublicationData extends types.AppData {
   sourceHeight?: number;
   trackType: RoomLocalTrackType;
   publication?: Track;
+}
+
+interface IceCandidateObservation extends RTCStats {
+  candidateType?: string;
+  protocol?: string;
+  relayProtocol?: string;
 }
 
 export class RoomRtc {
@@ -67,22 +74,26 @@ export class RoomRtc {
       this.#transports.map(async (transport): Promise<MediaTransportStats> => {
         const report = await transport.getStats();
         let selected: RTCIceCandidatePairStats | undefined;
-        report.forEach((entry) => {
+        report.forEach((entry: RTCTransportStats) => {
           if (entry.type === "transport" && entry.selectedCandidatePairId)
             selected = report.get(entry.selectedCandidatePairId) as
               RTCIceCandidatePairStats | undefined;
         });
         if (!selected)
-          report.forEach((entry) => {
+          report.forEach((entry: RTCIceCandidatePairStats & { selected?: boolean }) => {
             if (
               entry.type === "candidate-pair" &&
               entry.state === "succeeded" &&
               (entry.selected || entry.nominated)
             )
-              selected = entry as RTCIceCandidatePairStats;
+              selected = entry;
           });
-        const local = selected ? report.get(selected.localCandidateId) : undefined;
-        const remote = selected ? report.get(selected.remoteCandidateId) : undefined;
+        const local = selected
+          ? (report.get(selected.localCandidateId) as IceCandidateObservation | undefined)
+          : undefined;
+        const remote = selected
+          ? (report.get(selected.remoteCandidateId) as IceCandidateObservation | undefined)
+          : undefined;
         const connected = transport.connectionState === "connected";
         return {
           direction: transport === this.#sendTransport ? "send" : "receive",
@@ -119,7 +130,7 @@ export class RoomRtc {
       [...this.#subscriptions.values()].map(({ subscription }) => subscription.track.id),
     );
     const activeReceive = new Map<string, RTCStats>();
-    receive.forEach((entry, id) => {
+    receive.forEach((entry: RTCStats, id: string) => {
       const inbound = entry as RTCInboundRtpStreamStats;
       if (
         entry.type === "inbound-rtp" &&
@@ -129,7 +140,7 @@ export class RoomRtc {
         return;
       activeReceive.set(id, entry);
     });
-    this.#receiveStats = normalizeRtcStats(activeReceive as RTCStatsReport, this.#receiveStats);
+    this.#receiveStats = normalizeRtcStats(activeReceive, this.#receiveStats);
     this.#sendStats = normalizeRtcStats(send, this.#sendStats);
     return {
       ...this.#receiveStats,
@@ -142,10 +153,12 @@ export class RoomRtc {
     };
   }
 
-  async reportQualityStats(stats: RtcQualityStats): Promise<void> {
+  async reportQualityStats(): Promise<void> {
     this.#assertOpen();
     const scope = this.#scope;
-    if (!this.#signaling || !this.#receiveTransport || !scope || stats.timestamp <= 0) return;
+    const stats = this.#receiveStats;
+    if (!this.#signaling || !this.#receiveTransport || !scope || !stats || stats.timestamp <= 0)
+      return;
     const accepted = await this.#signaling.request(
       "rtc.stats.report",
       {
@@ -334,6 +347,10 @@ export class RoomRtc {
     for (const [id, info] of [...this.#deferredTracks]) {
       this.#deferredTracks.delete(id);
       if (local.some((track) => track.id === id)) await this.#unpublish(info);
+    }
+    for (const publication of this.#publications) {
+      const track = local.find((value) => value.id === publication.info.id);
+      if (track) await publication.reconcile(track);
     }
   }
 
@@ -694,7 +711,10 @@ export class RoomRtc {
   async publish(track: MediaStreamTrack, trackType: RoomLocalTrackType): Promise<LocalPublication> {
     this.#assertOpen();
     const transport = this.#sendTransport;
-    if (!transport) throw new RoomError("NOT_CONNECTED", "The room media transport is unavailable");
+    const signaling = this.#signaling;
+    const scope = this.#scope;
+    if (!transport || !signaling || !scope)
+      throw new RoomError("NOT_CONNECTED", "The room media transport is unavailable");
     const height = track.getSettings().height;
     const data: PublicationData = { trackType, ...(height ? { sourceHeight: height } : {}) };
     let producer: types.Producer | undefined;
@@ -710,8 +730,9 @@ export class RoomRtc {
           : {}),
       });
       this.#assertOpen();
-      const info = data.publication;
-      if (!info) throw new RoomError("PROTOCOL_ERROR", "The local publication is unavailable");
+      if (!data.publication)
+        throw new RoomError("PROTOCOL_ERROR", "The local publication is unavailable");
+      let info: Track = data.publication;
       const sender = producer;
       let disposed = false;
       let closing: Promise<void> | undefined;
@@ -719,8 +740,27 @@ export class RoomRtc {
         if (disposed || this.#closed || sender.closed)
           throw new RoomError("MEDIA_NOT_ENABLED", "The local publication is no longer active");
       };
+      const control = async (action: "pause" | "resume"): Promise<void> => {
+        assertActive();
+        const expected = action === "pause" ? "paused" : "resumed";
+        const response = await signaling.request(
+          "rtc.track.control",
+          { ...scope, trackId: info.id, action },
+          "rtc.track.control.accepted",
+        );
+        this.#checkScope(response, scope);
+        assertActive();
+        if (response.track.id !== info.id || response.track.state !== expected)
+          throw new RoomError(
+            "PROTOCOL_ERROR",
+            "The publication control response does not match the request",
+          );
+        info = response.track;
+      };
       const publication: LocalPublication = {
-        info,
+        get info() {
+          return info;
+        },
         get muted() {
           return sender.paused;
         },
@@ -729,13 +769,21 @@ export class RoomRtc {
           await sender.replaceTrack({ track: replacement });
           assertActive();
         },
-        mute: () => {
+        mute: async () => {
           assertActive();
           sender.pause();
+          await control("pause");
         },
-        unmute: () => {
+        unmute: async () => {
           assertActive();
+          await control("resume");
           sender.resume();
+        },
+        reconcile: async (track) => {
+          assertActive();
+          info = track;
+          if ((track.state === "paused") !== sender.paused)
+            await control(sender.paused ? "pause" : "resume");
         },
         dispose: () => {
           if (disposed) return;

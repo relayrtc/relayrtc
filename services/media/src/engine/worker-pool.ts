@@ -27,6 +27,7 @@ import type {
   IngestSubscriberStatsRequest,
   MediaRoomRequest,
   ConnectTransportRequest,
+  ControlTrackRequest,
   ParticipantTransport,
   ParticipantTransportRequest,
   PublishedTrack,
@@ -463,7 +464,29 @@ export class MediasoupWorkerPool implements MediaEngine {
       participantId: request.participantId,
       transport,
     });
+    const updateDurations = () => {
+      if (request.direction !== "send") return;
+      const connected =
+        !transport.closed &&
+        transport.dtlsState === "connected" &&
+        (transport.iceState === "connected" || transport.iceState === "completed");
+      const at = Date.now();
+      for (const producer of room.producers.values()) {
+        if (producer.appData.transportId !== transport.id) continue;
+        if (connected && !producer.paused && !producer.closed)
+          room.durationMeter?.start(
+            producer.id,
+            request.participantId,
+            String(producer.appData.trackType),
+            at,
+          );
+        else room.durationMeter?.stop(producer.id, at);
+      }
+    };
+    transport.on("icestatechange", updateDurations);
+    transport.on("dtlsstatechange", updateDurations);
     transport.observer.once("close", () => {
+      updateDurations();
       clearTimeout(room.transports.get(transport.id)?.connectionTimer);
       room.transports.delete(transport.id);
     });
@@ -480,7 +503,7 @@ export class MediasoupWorkerPool implements MediaEngine {
           ...candidate,
           address,
           ip: address,
-          foundation: `${candidate.foundation}-${iceCandidates.length}`,
+          foundation: `${candidate.foundation}-${String(iceCandidates.length)}`,
         });
       }
     }
@@ -594,6 +617,7 @@ export class MediasoupWorkerPool implements MediaEngine {
           participantId: request.participantId,
           roomId: request.roomId,
           trackType: request.trackType,
+          transportId: request.transportId,
           ...(request.sourceHeight ? { sourceHeight: request.sourceHeight } : {}),
           ...(request.priority ? { priority: request.priority } : {}),
         },
@@ -608,7 +632,11 @@ export class MediasoupWorkerPool implements MediaEngine {
       release();
     }
     room.producers.set(producer.id, producer);
-    room.durationMeter?.start(producer.id, request.participantId, request.trackType);
+    if (
+      transport.dtlsState === "connected" &&
+      (transport.iceState === "connected" || transport.iceState === "completed")
+    )
+      room.durationMeter?.start(producer.id, request.participantId, request.trackType);
     room.producerUsage.set(producer.id, { bytes: 0, sampledAt: Date.now() });
     producer.observer.once("close", () => {
       room.durationMeter?.stop(producer.id);
@@ -626,6 +654,33 @@ export class MediasoupWorkerPool implements MediaEngine {
         room.participantPriorities.get(request.participantId) ??
         (request.trackType === "screen_video" ? "high" : "normal"),
     };
+  }
+
+  controlTrack(request: ControlTrackRequest): Promise<void> {
+    return this.#serializeTerminal(request.roomId, async () => {
+      const room = this.#getRoom(request.roomId);
+      const producer = room.producers.get(request.trackId);
+      if (!producer || producer.closed)
+        throw new MediaEngineError("NOT_FOUND", "The publication no longer exists");
+      if (producer.appData.participantId !== request.participantId)
+        throw new MediaEngineError("FORBIDDEN", "The publication belongs to another participant");
+      if (request.action === "pause") {
+        await producer.pause();
+        room.durationMeter?.stop(producer.id);
+      } else {
+        await producer.resume();
+        const transport = room.transports.get(String(producer.appData.transportId))?.transport;
+        if (
+          transport?.dtlsState === "connected" &&
+          (transport.iceState === "connected" || transport.iceState === "completed")
+        )
+          room.durationMeter?.start(
+            producer.id,
+            request.participantId,
+            String(producer.appData.trackType),
+          );
+      }
+    });
   }
 
   async subscribeTrack(request: SubscribeTrackRequest): Promise<TrackSubscription> {
@@ -822,7 +877,7 @@ export class MediasoupWorkerPool implements MediaEngine {
       throw new MediaEngineError("FORBIDDEN", "The subscription belongs to another participant");
     state.quality = request.quality;
     await this.#serializeQuality(room, request.participantId, () =>
-      this.#adaptSubscriber(room, request.participantId),
+      this.#adaptSubscriber(room, request.participantId, undefined, true),
     );
   }
 
@@ -833,7 +888,7 @@ export class MediasoupWorkerPool implements MediaEngine {
     for (const state of room.consumers.values())
       if (state.participantId === request.participantId) state.quality = quality;
     await this.#serializeQuality(room, request.participantId, () =>
-      this.#adaptSubscriber(room, request.participantId),
+      this.#adaptSubscriber(room, request.participantId, undefined, true),
     );
   }
 
@@ -1153,6 +1208,7 @@ export class MediasoupWorkerPool implements MediaEngine {
     room: RoomState,
     participantId: string,
     interval?: SubscriberNetworkStats,
+    preferenceChanged = false,
   ): Promise<void> {
     if (room.closing || room.closingParticipants.has(participantId)) return;
     const states = [...room.consumers.values()].filter(
@@ -1200,7 +1256,7 @@ export class MediasoupWorkerPool implements MediaEngine {
       const upgrading =
         qualityRank[selected] > qualityRank[state.selectedQuality ?? "audio-only"] ||
         (layer?.spatialLayer ?? -1) > (state.selectedLayer ?? -1);
-      if (upgrading && state.selectedQuality !== null && cumulative) {
+      if (upgrading && state.selectedQuality !== null && cumulative && !preferenceChanged) {
         const candidate = `${selected}:${String(layer?.spatialLayer)}`;
         if (state.upgradeCandidate !== candidate) {
           state.upgradeCandidate = candidate;

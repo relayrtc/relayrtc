@@ -24,6 +24,8 @@ const participantRoutes = new Set([
   "PATCH /internal/v1/rooms/:roomId/participants/:participantId/quality-mode",
   "PATCH /internal/v1/rooms/:roomId/participants/:participantId/tracks/:trackId/priority",
   "DELETE /internal/v1/rooms/:roomId/participants/:participantId/tracks/:trackId",
+  "PATCH /internal/v1/rooms/:roomId/participants/:participantId/tracks/:trackId/pause",
+  "PATCH /internal/v1/rooms/:roomId/participants/:participantId/tracks/:trackId/resume",
 ]);
 
 const record = (value: unknown): Record<string, unknown> | null =>
