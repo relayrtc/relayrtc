@@ -204,6 +204,10 @@ export class RoomSession extends RoomEventEmitter implements Room {
     return this.#refresh.refresh();
   }
 
+  getMediaConnectionStats(): ReturnType<Room["getMediaConnectionStats"]> {
+    return this.#rtc.getMediaConnectionStats();
+  }
+
   get quality(): Room["quality"] {
     return this.#quality.quality;
   }

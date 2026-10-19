@@ -4,7 +4,7 @@ import type { Track, VideoQualityPreference } from "@relayrtc/types";
 import type { RoomLocalTrackType } from "./room-media.js";
 import { simulcastEncodings, normalizeRtcStats, type RtcQualityStats } from "./quality.js";
 import { RoomError } from "./room-errors.js";
-import type { RelayClientOptions } from "./room.js";
+import type { MediaConnectionStats, MediaTransportStats, RelayClientOptions } from "./room.js";
 import type { SignalingClient } from "./signaling-client.js";
 
 export interface LocalPublication {
@@ -60,6 +60,51 @@ export class RoomRtc {
   readonly #deferredSubscriptions = new Set<string>();
   #receiveStats: RtcQualityStats | undefined;
   #sendStats: RtcQualityStats | undefined;
+
+  async getMediaConnectionStats(): Promise<MediaConnectionStats> {
+    this.#assertOpen();
+    const transports = await Promise.all(
+      this.#transports.map(async (transport): Promise<MediaTransportStats> => {
+        const report = await transport.getStats();
+        let selected: RTCIceCandidatePairStats | undefined;
+        report.forEach((entry) => {
+          if (entry.type === "transport" && entry.selectedCandidatePairId)
+            selected = report.get(entry.selectedCandidatePairId) as
+              RTCIceCandidatePairStats | undefined;
+        });
+        if (!selected)
+          report.forEach((entry) => {
+            if (
+              entry.type === "candidate-pair" &&
+              entry.state === "succeeded" &&
+              (entry.selected || entry.nominated)
+            )
+              selected = entry as RTCIceCandidatePairStats;
+          });
+        const local = selected ? report.get(selected.localCandidateId) : undefined;
+        const remote = selected ? report.get(selected.remoteCandidateId) : undefined;
+        const connected = transport.connectionState === "connected";
+        return {
+          direction: transport === this.#sendTransport ? "send" : "receive",
+          state: transport.connectionState,
+          route:
+            !connected || !local || !remote || !local.candidateType || !remote.candidateType
+              ? "unknown"
+              : local.candidateType === "relay" ||
+                  remote.candidateType === "relay" ||
+                  typeof local.relayProtocol === "string"
+                ? "relay"
+                : "direct",
+          protocol: typeof local?.protocol === "string" ? local.protocol : null,
+          relayProtocol: typeof local?.relayProtocol === "string" ? local.relayProtocol : null,
+          bytesSent: selected?.bytesSent ?? 0,
+          bytesReceived: selected?.bytesReceived ?? 0,
+        };
+      }),
+    );
+    this.#assertOpen();
+    return { observedAt: new Date().toISOString(), transports };
+  }
 
   async getQualityStats(): Promise<RtcQualityStats> {
     this.#assertOpen();
@@ -338,6 +383,15 @@ export class RoomRtc {
         });
         this.#assertOpen();
         if (!unused) await this.#waitForIce(transport);
+      } catch (error) {
+        if (error instanceof RoomError)
+          throw new RoomError(
+            error.code,
+            `The ${transport === this.#sendTransport ? "send" : "receive"} media connection could not recover (${error.serverCode ?? error.code}). Check TURN/SFU reachability; rejoin if the transport has expired.`,
+            error.retryable,
+            error.serverCode,
+          );
+        throw error;
       } finally {
         this.#renewingIce.delete(transport);
       }
