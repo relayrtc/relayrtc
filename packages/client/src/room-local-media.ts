@@ -90,21 +90,6 @@ abstract class MediaControl<Snapshot> {
     }
   }
 
-  protected control(operation: () => void): void {
-    try {
-      this.validate();
-      if (this.busy || this.cleanup)
-        throw new RoomError(
-          "MEDIA_OPERATION_PENDING",
-          "Wait for the current local media operation to finish",
-        );
-      operation();
-      this.emit();
-    } catch (error) {
-      throw this.report(error);
-    }
-  }
-
   protected remove(publications: readonly (LocalPublication | undefined)[]): Promise<void> {
     this.cleanup = Promise.allSettled(
       publications.map((publication) => publication?.close() ?? Promise.resolve()),
@@ -218,15 +203,11 @@ class RoomInput extends MediaControl<RoomInputSnapshot> implements RoomInputCont
     });
   }
 
-  mute(): void {
-    this.control(() => {
-      this.#requirePublication().mute();
-    });
+  mute(): Promise<void> {
+    return this.execute(() => this.#requirePublication().mute());
   }
-  unmute(): void {
-    this.control(() => {
-      this.#requirePublication().unmute();
-    });
+  unmute(): Promise<void> {
+    return this.execute(() => this.#requirePublication().unmute());
   }
 
   dispose(): void {
@@ -300,7 +281,14 @@ class RoomScreen extends MediaControl<RoomScreenSnapshot> implements RoomScreenC
         if (screen.audioTrack) {
           const audioTrack = screen.audioTrack;
           const ended = (): void => {
-            void this.stop().catch(() => undefined);
+            const publication = this.#audio;
+            this.#audio = undefined;
+            this.#detachAudio?.();
+            this.#detachAudio = undefined;
+            this.emit();
+            void publication?.close().catch((error: unknown) => {
+              this.report(error);
+            });
           };
           audioTrack.addEventListener("ended", ended, { once: true });
           this.#detachAudio = () => {
@@ -309,14 +297,15 @@ class RoomScreen extends MediaControl<RoomScreenSnapshot> implements RoomScreenC
         }
         video = await this.context.rtc.publish(screen.videoTrack, "screen_video");
         this.validate(revision);
-        if (screen.audioTrack) {
-          if (screen.audioTrack.readyState === "ended")
-            throw new RoomError("MEDIA_CAPTURE_ABORTED", "The selected screen audio has stopped");
+        if (screen.audioTrack?.readyState === "live") {
           audio = await this.context.rtc.publish(screen.audioTrack, "screen_audio");
           this.validate(revision);
         }
         assertLiveTrack(screen.videoTrack);
-        if (screen.audioTrack) assertLiveTrack(screen.audioTrack);
+        if (audio && screen.audioTrack?.readyState === "ended") {
+          await audio.close();
+          audio = undefined;
+        }
         this.#video = video;
         this.#audio = audio;
         this.emit();
@@ -344,16 +333,14 @@ class RoomScreen extends MediaControl<RoomScreenSnapshot> implements RoomScreenC
     return this.remove(publications);
   }
 
-  mute(): void {
-    this.control(() => {
-      this.#requireVideo().mute();
-      this.#audio?.mute();
+  mute(): Promise<void> {
+    return this.execute(async () => {
+      await Promise.all([this.#requireVideo().mute(), this.#audio?.mute()]);
     });
   }
-  unmute(): void {
-    this.control(() => {
-      this.#requireVideo().unmute();
-      this.#audio?.unmute();
+  unmute(): Promise<void> {
+    return this.execute(async () => {
+      await Promise.all([this.#requireVideo().unmute(), this.#audio?.unmute()]);
     });
   }
 
