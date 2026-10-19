@@ -1,5 +1,6 @@
 import { enforceCredentialPolicy, readInternalSecret } from "@relayrtc/protocol/credential-policy";
 import { z } from "zod";
+import { isIP } from "node:net";
 
 export type MediaEnvironmentSource = Readonly<Record<string, string | undefined>>;
 
@@ -26,6 +27,21 @@ const environmentSchema = z
     MEDIA_NODE_ID: z.string().trim().min(1).max(128).default("media-local"),
     MEDIA_PORT: z.coerce.number().int().min(1).max(65_535).default(8082),
     MEDIA_RTC_ANNOUNCED_ADDRESS: z.string().trim().min(1).default("127.0.0.1"),
+    MEDIA_RTC_ADDITIONAL_ANNOUNCED_ADDRESSES: z
+      .string()
+      .default("")
+      .refine((value) => {
+        const addresses = value
+          .split(",")
+          .map((address) => address.trim())
+          .filter(Boolean);
+        return (
+          addresses.length <= 8 &&
+          addresses.every(
+            (address) => isIP(address) !== 0 && address !== "0.0.0.0" && address !== "::",
+          )
+        );
+      }, "Provide at most eight concrete IPv4 or IPv6 addresses"),
     MEDIA_RTC_LISTEN_IP: z.string().trim().min(1).default("0.0.0.0"),
     MEDIA_RTC_MAX_PORT: z.coerce.number().int().min(1).max(65_535).default(40_003),
     MEDIA_RTC_PORT: z.coerce.number().int().min(1).max(65_535).default(40_000),
@@ -56,6 +72,7 @@ export interface MediaConfig {
   internalSecret: string;
   port: number;
   rtcAnnouncedAddress: string;
+  rtcAdditionalAnnouncedAddresses?: readonly string[];
   rtcListenIp: string;
   rtcMaxPort: number;
   rtcPort: number;
@@ -84,6 +101,7 @@ export const readMediaEnvironment = (source: MediaEnvironmentSource): MediaConfi
     MEDIA_NODE_ID: source.MEDIA_NODE_ID,
     MEDIA_PORT: source.MEDIA_PORT,
     MEDIA_RTC_ANNOUNCED_ADDRESS: source.MEDIA_RTC_ANNOUNCED_ADDRESS,
+    MEDIA_RTC_ADDITIONAL_ANNOUNCED_ADDRESSES: source.MEDIA_RTC_ADDITIONAL_ANNOUNCED_ADDRESSES,
     MEDIA_RTC_LISTEN_IP: source.MEDIA_RTC_LISTEN_IP,
     MEDIA_RTC_MAX_PORT: source.MEDIA_RTC_MAX_PORT,
     MEDIA_RTC_PORT: source.MEDIA_RTC_PORT,
@@ -126,6 +144,13 @@ export const readMediaEnvironment = (source: MediaEnvironmentSource): MediaConfi
     internalSecret: readInternalSecret(source),
     port: parsed.data.MEDIA_PORT,
     rtcAnnouncedAddress: parsed.data.MEDIA_RTC_ANNOUNCED_ADDRESS,
+    rtcAdditionalAnnouncedAddresses: [
+      ...new Set(
+        parsed.data.MEDIA_RTC_ADDITIONAL_ANNOUNCED_ADDRESSES.split(",")
+          .map((address) => address.trim())
+          .filter(Boolean),
+      ),
+    ],
     rtcListenIp: parsed.data.MEDIA_RTC_LISTEN_IP,
     rtcMaxPort: parsed.data.MEDIA_RTC_MAX_PORT,
     rtcPort: parsed.data.MEDIA_RTC_PORT,

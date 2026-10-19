@@ -11,6 +11,17 @@ if [ ! -e /etc/coturn/tls/tls.crt ] && [ ! -e /etc/coturn/tls/tls.key ]; then
       -out /etc/coturn/tls/tls.crt
   )
 fi
+relay_address=
+explicit_relay_address=false
+for option in "$@"; do
+  case "$option" in
+    --external-ip=*/*) relay_address=${option##*/} ;;
+    --relay-ip=*|--relay-ip|-E*) explicit_relay_address=true ;;
+  esac
+done
+if [ -n "$relay_address" ] && [ "$explicit_relay_address" = false ]; then
+  set -- "$@" "--relay-ip=$relay_address"
+fi
 source_id=$(cat /proc/sys/kernel/random/uuid)
 printf '%s.log\n' "$source_id" > /var/log/relayrtc-turn/current.next
 mv /var/log/relayrtc-turn/current.next /var/log/relayrtc-turn/current
