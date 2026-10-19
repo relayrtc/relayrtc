@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import type { StreamingConfig } from "./config.js";
 import { StreamingGateway, ingestPath, programPath } from "./gateway.js";
 import { StreamingStore } from "./store.js";
+import { ApiError } from "../../http/errors/api-error.js";
 import {
   audit,
   conflict,
@@ -29,22 +30,31 @@ export async function startSession(
     .where(sql`stream_id=${stream.id} AND state NOT IN ('ended','failed')`)
     .for("update");
   if (active) {
-    if (active.ingressId === ingress?.id && active.desiredState === "running") return active;
-    if (
-      ingress &&
-      active.state === "reconnecting" &&
-      active.desiredState === "running" &&
-      active.ingressId === null &&
-      active.ingressCredentialId === ingress.credentialId
-    ) {
-      const [updated] = await db
-        .update(schema.streamingSession)
-        .set({ ingressId: ingress.id, ingressType: ingress.type, updatedAt: new Date() })
-        .where(eq(schema.streamingSession.id, active.id))
-        .returning();
-      return required(updated);
+    if (active.desiredState === "stopped" && active.lastError === "INGEST_CREDENTIAL_ROTATED") {
+      await completeIngestHandover(db, stream, active, config);
+    } else {
+      if (
+        active.ingressId === ingress?.id &&
+        active.ingressCredentialId === ingress?.credentialId &&
+        active.desiredState === "running"
+      )
+        return active;
+      if (
+        ingress &&
+        active.state === "reconnecting" &&
+        active.desiredState === "running" &&
+        active.ingressId === null &&
+        active.ingressCredentialId === ingress.credentialId
+      ) {
+        const [updated] = await db
+          .update(schema.streamingSession)
+          .set({ ingressId: ingress.id, ingressType: ingress.type, updatedAt: new Date() })
+          .where(eq(schema.streamingSession.id, active.id))
+          .returning();
+        return required(updated);
+      }
+      throw conflict("PUBLISHER_CONFLICT", "A source session already owns this stream");
     }
-    throw conflict("PUBLISHER_CONFLICT", "A source session already owns this stream");
   }
   const [count] = await db.execute(
     sql`SELECT count(*)::int AS n FROM streaming_session WHERE state NOT IN ('ended','failed')`,
@@ -68,9 +78,60 @@ export async function startSession(
   await event(db, stream, "stream.starting", required(session).id);
   return required(session);
 }
-export async function stopSessions(db: Transaction, streamId: string) {
+export async function completeIngestHandover(
+  db: Transaction,
+  stream: StreamRow,
+  session: SessionRow,
+  config: StreamingConfig,
+) {
+  const gateway = new StreamingGateway(config);
+  await gateway.removePath(programPath(session.id, session.generation));
+  if (session.ingressId && session.ingressType) {
+    await gateway.kick(session.ingressType, session.ingressId);
+    const current = await gateway.path(ingestPath(stream.id));
+    const source = current?.source;
+    if (
+      current?.ready &&
+      source &&
+      typeof source === "object" &&
+      "id" in source &&
+      source.id === session.ingressId
+    )
+      throw new ApiError(
+        503,
+        "INGEST_HANDOVER_PENDING",
+        "The previous publisher is disconnecting. Retry the new credential shortly.",
+      );
+  }
+  await transition(db, session, "ended", "INGEST_CREDENTIAL_ROTATED");
+  await db.execute(
+    sql`UPDATE streaming_session SET generation=generation+1,ingress_id=NULL,ingress_type=NULL,whip_resource=NULL WHERE id=${session.id}`,
+  );
+}
+
+export async function finishIngestRotation(
+  database: RelayKitDatabase,
+  streamId: string,
+  credentialId: string,
+  config: StreamingConfig,
+) {
+  return database.transaction(async (db) => {
+    await db.execute(sql`SET LOCAL lock_timeout='2s'`);
+    const stream = await getStream(db, streamId, true);
+    await db.execute(sql`SELECT pg_advisory_xact_lock(810032)`);
+    const sessions = await db
+      .select()
+      .from(schema.streamingSession)
+      .where(
+        sql`stream_id=${streamId} AND ingress_credential_id=${credentialId} AND desired_state='stopped' AND last_error='INGEST_CREDENTIAL_ROTATED' AND state NOT IN ('ended','failed')`,
+      )
+      .for("update");
+    for (const session of sessions) await completeIngestHandover(db, stream, session, config);
+  });
+}
+export async function stopSessions(db: Transaction, streamId: string, credentialId?: string) {
   const rows = await db.execute<{ id: string }>(
-    sql`UPDATE streaming_session SET desired_state='stopped',state='stopping',updated_at=now() WHERE stream_id=${streamId} AND state NOT IN ('ended','failed') RETURNING id`,
+    sql`UPDATE streaming_session SET desired_state='stopped',state='stopping',updated_at=now() ${credentialId ? sql`,last_error='INGEST_CREDENTIAL_ROTATED'` : sql``} WHERE stream_id=${streamId} ${credentialId ? sql`AND ingress_credential_id=${credentialId}` : sql``} AND state NOT IN ('ended','failed') RETURNING id`,
   );
   return rows[0]?.id ?? null;
 }
@@ -141,57 +202,71 @@ export function registerStreamingMaintenance(
         .where(sql`state NOT IN ('ended','failed')`)
         .limit(config.maxSessions);
       for (const candidate of rows)
-        await database.transaction(async (db) => {
-          const [session] = await db
-            .select()
-            .from(schema.streamingSession)
-            .where(sql`id=${candidate.id} AND state NOT IN ('ended','failed')`)
-            .for("update", { skipLocked: true });
-          if (!session) return;
-          const stream = await getStream(db, session.streamId);
-          const expiredLease =
-            session.leasedUntil !== null && session.leasedUntil.getTime() < Date.now();
-          let reason: string | null = null;
-          if (Date.now() - session.createdAt.getTime() > stream.maxDurationSeconds * 1000)
-            reason = "SOURCE_DURATION_LIMIT";
-          if (session.ingressCredentialId) {
-            const [credential] = await db.execute(
-              sql`SELECT id FROM streaming_ingest_credential WHERE id=${session.ingressCredentialId} AND revoked_at IS NULL AND expires_at>now()`,
-            );
-            if (!credential) reason = "INGEST_CREDENTIAL_EXPIRED";
-          }
-          if (session.state === "reconnecting" && Date.now() - session.updatedAt.getTime() > 30000)
-            reason = "SOURCE_RECONNECT_TIMEOUT";
-          if (session.state === "starting" && Date.now() - session.createdAt.getTime() > 60000)
-            reason = "SOURCE_START_TIMEOUT";
-          if (expiredLease && session.attempts >= 3) reason = "WORKER_RETRY_EXHAUSTED";
-          if (session.desiredState === "stopped" && session.lastError === "INGRESS_BITRATE_LIMIT")
-            reason = session.lastError;
-          if (session.desiredState === "stopped" || stream.status !== "active" || reason) {
-            // Desired state fences admission immediately, even when gateway cleanup needs retry.
-            await db.execute(
-              sql`UPDATE streaming_session SET desired_state='stopped' WHERE id=${session.id}`,
-            );
-            await gateway.removePath(programPath(session.id, session.generation));
-            if (session.ingressId && session.ingressType)
-              await gateway.kick(session.ingressType, session.ingressId);
-            // Keep reusable ingest configuration after a stop; the retired stream's credentials
-            // are denied by admission, and its path can be removed permanently.
-            if (stream.status !== "active") await gateway.removePath(ingestPath(stream.id));
-            await transition(db, session, reason ? "failed" : "ended", reason);
-          } else if (expiredLease) {
-            await gateway.removePath(programPath(session.id, session.generation));
-            await transition(db, session, "reconnecting", "WORKER_LEASE_EXPIRED");
-          } else if (!session.mixerId && stream.source.kind !== "room" && session.ingressId) {
-            const current = await gateway.path(ingestPath(stream.id));
-            if (!current?.ready && Date.now() - session.createdAt.getTime() > 10000) {
-              await db.execute(
-                sql`UPDATE streaming_session SET ingress_id=NULL WHERE id=${session.id}`,
-              );
-              await transition(db, session, "reconnecting", "INGEST_DISCONNECTED");
+        await database
+          .transaction(async (db) => {
+            const stream = await getStream(db, candidate.streamId, true);
+            const [session] = await db
+              .select()
+              .from(schema.streamingSession)
+              .where(sql`id=${candidate.id} AND state NOT IN ('ended','failed')`)
+              .for("update", { skipLocked: true });
+            if (!session) return;
+            if (
+              session.desiredState === "stopped" &&
+              session.lastError === "INGEST_CREDENTIAL_ROTATED"
+            ) {
+              await completeIngestHandover(db, stream, session, config);
+              return;
             }
-          }
-        });
+            const expiredLease =
+              session.leasedUntil !== null && session.leasedUntil.getTime() < Date.now();
+            let reason: string | null = null;
+            if (Date.now() - session.createdAt.getTime() > stream.maxDurationSeconds * 1000)
+              reason = "SOURCE_DURATION_LIMIT";
+            if (session.ingressCredentialId) {
+              const [credential] = await db.execute(
+                sql`SELECT id FROM streaming_ingest_credential WHERE id=${session.ingressCredentialId} AND revoked_at IS NULL AND expires_at>now()`,
+              );
+              if (!credential) reason = "INGEST_CREDENTIAL_EXPIRED";
+            }
+            if (
+              session.state === "reconnecting" &&
+              Date.now() - session.updatedAt.getTime() > 30000
+            )
+              reason = "SOURCE_RECONNECT_TIMEOUT";
+            if (session.state === "starting" && Date.now() - session.createdAt.getTime() > 60000)
+              reason = "SOURCE_START_TIMEOUT";
+            if (expiredLease && session.attempts >= 3) reason = "WORKER_RETRY_EXHAUSTED";
+            if (session.desiredState === "stopped" && session.lastError === "INGRESS_BITRATE_LIMIT")
+              reason = session.lastError;
+            if (session.desiredState === "stopped" || stream.status !== "active" || reason) {
+              // Desired state fences admission immediately, even when gateway cleanup needs retry.
+              await db.execute(
+                sql`UPDATE streaming_session SET desired_state='stopped' WHERE id=${session.id}`,
+              );
+              await gateway.removePath(programPath(session.id, session.generation));
+              if (session.ingressId && session.ingressType)
+                await gateway.kick(session.ingressType, session.ingressId);
+              // Keep reusable ingest configuration after a stop; the retired stream's credentials
+              // are denied by admission, and its path can be removed permanently.
+              if (stream.status !== "active") await gateway.removePath(ingestPath(stream.id));
+              await transition(db, session, reason ? "failed" : "ended", reason);
+            } else if (expiredLease) {
+              await gateway.removePath(programPath(session.id, session.generation));
+              await transition(db, session, "reconnecting", "WORKER_LEASE_EXPIRED");
+            } else if (!session.mixerId && stream.source.kind !== "room" && session.ingressId) {
+              const current = await gateway.path(ingestPath(stream.id));
+              if (!current?.ready && Date.now() - session.createdAt.getTime() > 10000) {
+                await db.execute(
+                  sql`UPDATE streaming_session SET ingress_id=NULL WHERE id=${session.id}`,
+                );
+                await transition(db, session, "reconnecting", "INGEST_DISCONNECTED");
+              }
+            }
+          })
+          .catch(() => {
+            app.log.warn({ sessionId: candidate.id }, "Source maintenance will retry");
+          });
       // Parent deletion preserves historical stream and usage rows, but never its media objects.
       const objects =
         await db.execute(sql`SELECT o.session_id,o.name,o.object_key FROM streaming_object o JOIN streaming_session s ON s.id=o.session_id JOIN streaming_stream t ON t.id=s.stream_id
@@ -225,7 +300,10 @@ export function registerStreamingMaintenance(
         );
       }
       await db.execute(sql`UPDATE streaming_stream t SET status='deleted',updated_at=now() WHERE status='deleting'
-        AND id=ANY(ARRAY[${sql.join(retiring.map((row) => sql`${row.id}`), sql`, `)}]::text[])
+        AND id=ANY(ARRAY[${sql.join(
+          retiring.map((row) => sql`${row.id}`),
+          sql`, `,
+        )}]::text[])
         AND NOT EXISTS(SELECT 1 FROM streaming_session s WHERE s.stream_id=t.id AND s.state NOT IN ('ended','failed'))
         AND NOT EXISTS(SELECT 1 FROM restream_session r WHERE r.stream_id=t.id AND r.ended_at IS NULL)
         AND NOT EXISTS(SELECT 1 FROM streaming_object o JOIN streaming_session s ON s.id=o.session_id WHERE s.stream_id=t.id)`);

@@ -37,7 +37,12 @@ export async function boundedBody(response: Response, limit = MAX_MEDIA_OBJECT):
 // Only API processes hold bucket credentials. Workers request fenced archive operations.
 export class StreamingStore {
   constructor(private readonly config: StreamingConfig) {}
-  async request(method: "PUT" | "GET" | "DELETE", key: string, body?: Buffer) {
+  async request(
+    method: "PUT" | "GET" | "DELETE",
+    key: string,
+    body?: Buffer,
+    signal?: AbortSignal,
+  ) {
     if (!/^streaming\/[A-Za-z0-9_/-]+\.[A-Za-z0-9]+$/u.test(key))
       throw new Error("INVALID_OBJECT_KEY");
     const cfg = this.config;
@@ -72,7 +77,9 @@ export class StreamingStore {
       method,
       headers,
       ...(body ? { body: new Uint8Array(body) } : {}),
-      signal: AbortSignal.timeout(15000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+        : AbortSignal.timeout(15000),
       redirect: "error",
     });
     if (!response.ok && !(method === "DELETE" && response.status === 404)) {
@@ -81,12 +88,12 @@ export class StreamingStore {
     }
     return response;
   }
-  async put(key: string, body: Buffer) {
-    const response = await this.request("PUT", key, body);
+  async put(key: string, body: Buffer, signal?: AbortSignal) {
+    const response = await this.request("PUT", key, body, signal);
     await response.body?.cancel();
   }
-  async get(key: string) {
-    return boundedBody(await this.request("GET", key));
+  async get(key: string, signal?: AbortSignal) {
+    return boundedBody(await this.request("GET", key, undefined, signal));
   }
   async remove(key: string) {
     const response = await this.request("DELETE", key);

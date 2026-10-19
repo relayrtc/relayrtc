@@ -14,6 +14,7 @@ import type { BroadcastPlaybackState } from "@relayrtc/client";
 import { createStreamPlaybackGrantAction, getStreamPlaybackAction } from "@/actions/streaming";
 import { dvrPlaybackAction, dvrGrantAction } from "@/actions/dvr";
 import { Button } from "@/components/ui/button";
+import type { StreamPlaybackReadiness } from "@relayrtc/types";
 
 export function StreamPreview({
   projectId,
@@ -21,17 +22,21 @@ export function StreamPreview({
   streamId,
   dvr = false,
   broadcastId,
+  onReadiness,
 }: {
   projectId: string;
   environmentId: string;
   streamId: string;
   dvr?: boolean;
   broadcastId?: string;
+  onReadiness?: (readiness: StreamPlaybackReadiness | null) => void;
 }) {
   const media = useRef<HTMLVideoElement>(null);
   const controls = useRef<DvrPlaybackController | null>(null);
   const [dvrState, setDvrState] = useState(initialDvrPlaybackState);
   const [state, setState] = useState<BroadcastPlaybackState>("loading");
+  const [readiness, setReadiness] = useState<StreamPlaybackReadiness | null>(null);
+  const retry = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!media.current) return;
     const scope = { projectId, environmentId, streamId };
@@ -41,7 +46,14 @@ export function StreamPreview({
       getPlayback: async (signal) => {
         const result = await (dvr ? dvrPlaybackAction(dvrScope) : getStreamPlaybackAction(scope));
         signal.throwIfAborted();
-        if (result.error) throw new Error("Playback unavailable");
+        if (result.error) {
+          setReadiness(null);
+          onReadiness?.(null);
+          throw new Error("Playback unavailable");
+        }
+        const next = "readiness" in result.data ? (result.data.readiness ?? null) : null;
+        setReadiness(next);
+        onReadiness?.(next);
         return result.data;
       },
       getGrant: async (signal) => {
@@ -64,7 +76,7 @@ export function StreamPreview({
           liveMaxLatencyDuration: Infinity,
         });
         hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) onError();
+          if (data.fatal || data.response?.code === 401 || data.response?.code === 410) onError();
         });
         hls.on(Hls.Events.MANIFEST_PARSED, onReady);
         hls.attachMedia(video);
@@ -73,6 +85,10 @@ export function StreamPreview({
       },
     });
     const controller = dvr ? new DvrPlaybackController(media.current) : null;
+    retry.current = () => {
+      setState("loading");
+      void client.refresh(true);
+    };
     controls.current = controller;
     const unsubscribe = controller?.subscribe(() => setDvrState(controller.getSnapshot()));
     controller?.start();
@@ -83,8 +99,9 @@ export function StreamPreview({
       controls.current = null;
       detach();
       client.dispose();
+      retry.current = null;
     };
-  }, [projectId, environmentId, streamId, dvr, broadcastId]);
+  }, [projectId, environmentId, streamId, dvr, broadcastId, onReadiness]);
   return (
     <div className="space-y-2">
       <div className="relative overflow-hidden rounded-lg bg-slate-950">
@@ -112,14 +129,28 @@ export function StreamPreview({
                   ? "Preview unavailable"
                   : state === "error"
                     ? "Reconnecting to preview"
-                    : "Waiting for your source"}
+                    : readiness?.status === "failed"
+                      ? "Source failed"
+                      : readiness?.status === "ended"
+                        ? "Broadcast ended"
+                        : readiness?.status === "degraded"
+                          ? "Preparing playback"
+                          : readiness?.status === "reconnecting"
+                            ? "Source reconnecting"
+                            : "Waiting for your source"}
             </p>
             <p className="max-w-xs text-[11px] leading-relaxed text-slate-400">
               {state === "unsupported"
                 ? "Try a browser with HLS playback support."
                 : state === "error"
                   ? "Playback will resume when the connection recovers."
-                  : "Your video will appear here when media is available."}
+                  : readiness?.status === "failed"
+                    ? "Check your encoder connection and start the source again."
+                    : readiness?.status === "ended"
+                      ? "Start a new broadcast to resume live playback."
+                      : readiness?.sourceProducing && !readiness.viewerReady
+                        ? "The source is sending media. Waiting for playable audio and video."
+                        : "Your video will appear here when media is available."}
             </p>
           </div>
         )}
@@ -193,6 +224,24 @@ export function StreamPreview({
                     ? "Preview paused"
                     : "Select play to watch the preview."}
       </p>
+      {!dvr && readiness && (
+        <p role="status" className="text-[11px] text-muted-foreground">
+          {readiness.viewerReady
+            ? "Playback media is ready."
+            : readiness.sourceProducing
+              ? "Source connected; playback is still preparing. Retrying automatically."
+              : readiness.status === "failed"
+                ? "The source failed. Check the publisher connection."
+                : readiness.status === "ended"
+                  ? "The source has ended."
+                  : "Waiting for the source to produce media."}
+        </p>
+      )}
+      {state === "error" && (
+        <Button type="button" variant="outline" onClick={() => retry.current?.()}>
+          Retry preview access
+        </Button>
+      )}
       {state === "blocked" && (
         <Button
           onClick={() => {

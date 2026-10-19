@@ -40,11 +40,16 @@ export class StreamingGateway {
   }
   async ensurePath(path: string) {
     const exists = await this.control(`/v3/config/paths/get/${path}`);
-    if (!exists)
-      await this.control(`/v3/config/paths/add/${path}`, "POST", {
-        source: "publisher",
-        overridePublisher: false,
-      });
+    if (!exists) {
+      try {
+        await this.control(`/v3/config/paths/add/${path}`, "POST", {
+          source: "publisher",
+          overridePublisher: false,
+        });
+      } catch (error) {
+        if (!(await this.control(`/v3/config/paths/get/${path}`))) throw error;
+      }
+    }
   }
   async removePath(path: string) {
     await this.control(`/v3/config/paths/delete/${path}`, "DELETE");

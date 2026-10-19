@@ -69,9 +69,22 @@ export const ingestCredentialSchema = z
   .object({ ttlSeconds: z.number().int().min(60).max(86400).default(3600) })
   .strict();
 export const playbackGrantSchema = z
-  .object({ ttlSeconds: z.number().int().min(30).max(3600).default(300), mode: z.enum(["live", "dvr"]).default("live"), broadcastId: streamingIdSchema.optional() })
+  .object({
+    ttlSeconds: z.number().int().min(30).max(3600).default(300),
+    mode: z.enum(["live", "dvr"]).default("live"),
+    broadcastId: streamingIdSchema.optional(),
+  })
   .strict();
 export const streamingObjectNameSchema = z
   .string()
   .max(180)
   .regex(/^[A-Za-z0-9_-]+\.(?:m3u8|mp4|m4s|ts)$/u);
+export const streamPlaybackReadinessSchema = z.object({
+  status: z.enum(["waiting", "starting", "ready", "reconnecting", "degraded", "failed", "ended"]),
+  publisherConnected: z.boolean(),
+  sourceProducing: z.boolean(),
+  outputStarting: z.boolean(),
+  viewerReady: z.boolean(),
+  code: z.string().nullable(),
+  checkedAt: z.iso.datetime(),
+});
