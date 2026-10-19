@@ -110,7 +110,10 @@ export const broadcastRuntimeRoutes: FastifyPluginAsync<{
       .select({ id: schema.broadcastJob.id, broadcastId: schema.broadcastJob.broadcastId })
       .from(schema.broadcastJob)
       .where(
-        sql`kind=ANY(ARRAY[${sql.join(input.kinds.map((kind) => sql`${kind}`), sql`, `)}]::text[]) AND state IN ('queued','retry') AND desired_state='running' AND available_at<=now() AND attempts<3 AND EXISTS (
+        sql`kind=ANY(ARRAY[${sql.join(
+          input.kinds.map((kind) => sql`${kind}`),
+          sql`, `,
+        )}]::text[]) AND state IN ('queued','retry') AND desired_state='running' AND available_at<=now() AND attempts<3 AND EXISTS (
         SELECT 1 FROM broadcast_run b JOIN streaming_session s ON s.id=b.source_session_id
         WHERE b.id=broadcast_job.broadcast_id AND b.desired_state='running' AND s.state='live' AND s.desired_state='running'
         AND s.generation=b.source_generation AND s.leased_until>now()
@@ -413,34 +416,10 @@ export const broadcastRuntimeRoutes: FastifyPluginAsync<{
         throw conflict("SOURCE_UNAVAILABLE", "The canonical source is unavailable");
       return { stream, source };
     });
-    // Each adapter has its own bounded read. A stalled output never blocks source encoding.
-    let name = "index.m3u8",
-      bytes = 0;
-    for (let depth = 0; depth < 3; depth++) {
-      const body = await origin.media(
-        attachment.stream,
-        attachment.source,
-        name,
-        attachment.source.generation,
-      );
-      bytes += body.length;
-      if (!name.endsWith("m3u8")) break;
-      const playlist = body.toString();
-      if (!playlist.startsWith("#EXTM3U"))
-        throw conflict("OUTPUT_UNAVAILABLE", "The HLS program is not ready");
-      const references = playlist
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith("#"));
-      const child = references.find((line) => line.endsWith("m3u8")) ?? references.at(-1);
-      if (!child) throw conflict("OUTPUT_UNAVAILABLE", "The HLS program has no complete media");
-      name = streamingObjectNameSchema.parse(child);
-      if (depth === 2)
-        throw conflict(
-          "OUTPUT_UNAVAILABLE",
-          "The HLS program exceeded the supported playlist depth",
-        );
-    }
+    const readiness = await origin.check(attachment.stream, attachment.source);
+    if (!readiness.ready)
+      throw conflict("OUTPUT_UNAVAILABLE", "Waiting for complete audio and video media");
+    const bytes = readiness.bytesObserved;
     await database.transaction(async (db) => {
       const { run, job } = await leasedJob(db, request, config);
       const [currentSource] = await db

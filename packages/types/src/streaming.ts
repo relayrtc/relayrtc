@@ -18,6 +18,15 @@ export const streamEventTypes = [
 export type StreamSource =
   | { kind: "room"; roomId: string; videoTrackIds: string[]; audioTrackIds: string[] }
   | { kind: "whip" | "rtmp" };
+export interface StreamPlaybackReadiness {
+  status: "waiting" | "starting" | "ready" | "reconnecting" | "degraded" | "failed" | "ended";
+  publisherConnected: boolean;
+  sourceProducing: boolean;
+  outputStarting: boolean;
+  viewerReady: boolean;
+  code: string | null;
+  checkedAt: string;
+}
 export interface StreamProfile {
   audioOnly: boolean;
   width: number;
