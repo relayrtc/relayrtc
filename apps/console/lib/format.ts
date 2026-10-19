@@ -12,11 +12,17 @@ export function formatDuration(totalSeconds: number) {
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
 
 export function formatBytes(bytes: number, fractionDigits = 0) {
-  if (bytes <= 0) return '0B'
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1)
-  const value = bytes / 1024 ** exponent
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const exponent = Math.min(Math.max(0, Math.floor(Math.log(bytes) / Math.log(1000))), BYTE_UNITS.length - 1)
+  const value = bytes / 1000 ** exponent
   const digits = exponent === 0 ? 0 : fractionDigits
-  return `${Number(value.toFixed(digits))}${BYTE_UNITS[exponent]}`
+  return `${Number(value.toFixed(digits))} ${BYTE_UNITS[exponent]}`
+}
+
+export function formatMinutes(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '0 min'
+  if (totalSeconds < 60) return '<1 min'
+  return `${Math.round(totalSeconds / 60).toLocaleString('en-US')} min`
 }
 
 export function formatNumber(value: number) {

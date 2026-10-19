@@ -7,6 +7,7 @@ export interface TurnCredentialScope {
   readonly projectId: string;
   readonly roomId?: string;
   readonly sessionId?: string;
+  readonly participantId?: string;
 }
 
 export interface TurnCredentialIssuer {

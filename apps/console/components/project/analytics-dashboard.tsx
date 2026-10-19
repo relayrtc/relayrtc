@@ -8,7 +8,7 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import { useEffect, useId, useTransition } from "react";
+import { useId, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Area,
@@ -34,7 +34,8 @@ import {
 } from "@/components/ui/chart";
 import type { AnalyticsRange, ProjectAnalyticsData } from "@/lib/reporting/analytics-view";
 import type { ConsoleEnvironment } from "@/lib/console-types";
-import { formatDuration, formatNumber } from "@/lib/format";
+import { formatBytes, formatDuration, formatMinutes, formatNumber } from "@/lib/format";
+import { ReportingRefresh } from "./reporting-refresh";
 import { cn } from "@/lib/utils";
 
 const ranges: {
@@ -117,24 +118,6 @@ const regionConfig = {
   },
 } satisfies ChartConfig;
 
-function formatGb(bytes: number) {
-  const gb = bytes / 1024 ** 3;
-
-  if (gb === 0) {
-    return "0 GB";
-  }
-
-  if (gb < 0.01) {
-    return `${gb.toFixed(3)} GB`;
-  }
-
-  if (gb < 10) {
-    return `${gb.toFixed(2)} GB`;
-  }
-
-  return `${gb.toFixed(1)} GB`;
-}
-
 function AnalyticsEmptyState({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid h-52 place-items-center text-sm text-muted-foreground">{children}</div>
@@ -157,20 +140,6 @@ export function AnalyticsDashboard({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const environmentId = useId();
-
-  useEffect(() => {
-    if (range !== "live" || pending) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      if (!document.hidden) startTransition(() => router.refresh());
-    }, 1000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [range, router, startTransition, pending]);
 
   const environmentOptions = [
     {
@@ -216,6 +185,7 @@ export function AnalyticsDashboard({
 
   return (
     <div className="flex flex-col gap-6" aria-busy={pending}>
+      <ReportingRefresh startedAt={data.window.startedAt} endedAt={data.window.endedAt} intervalMs={range === "live" ? 1000 : 5000} />
       {pending && (
         <span role="status" className="text-sm text-muted-foreground">
           Refreshing analytics...
@@ -301,7 +271,7 @@ export function AnalyticsDashboard({
 
         <StatCard
           label="Participant minutes"
-          value={formatNumber(data.summary.participantSeconds / 60)}
+          value={<span title={formatDuration(data.summary.participantSeconds)}>{formatMinutes(data.summary.participantSeconds)}</span>}
         />
 
         <StatCard
@@ -384,21 +354,21 @@ export function AnalyticsDashboard({
           </h2>
 
           <p className="text-sm text-muted-foreground">
-            {formatGb(totalNetwork)} observed across service interfaces
+            {formatBytes(totalNetwork, 2)} observed across service interfaces
           </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="SFU ingress" value={formatGb(data.network.sfuIngress)} />
+          <StatCard label="SFU ingress" value={formatBytes(data.network.sfuIngress, 2)} />
 
-          <StatCard label="SFU egress" value={formatGb(data.network.sfuEgress)} />
+          <StatCard label="SFU egress" value={formatBytes(data.network.sfuEgress, 2)} />
 
           <StatCard
             label="TURN ingress"
             value={
               data.dataQuality.turnTraffic === "unavailable"
                 ? "Unavailable"
-                : formatGb(data.network.turnIngress)
+                : formatBytes(data.network.turnIngress, 2)
             }
             hint={
               data.dataQuality.turnTraffic === "partial"
@@ -414,7 +384,7 @@ export function AnalyticsDashboard({
             value={
               data.dataQuality.turnTraffic === "unavailable"
                 ? "Unavailable"
-                : formatGb(data.network.turnEgress)
+                : formatBytes(data.network.turnEgress, 2)
             }
             hint={
               data.dataQuality.turnTraffic === "partial"
@@ -780,7 +750,7 @@ export function AnalyticsDashboard({
                     </TableCell>
 
                     <TableCell className="py-3 text-right tabular-nums">
-                      {formatNumber(room.minutes)}
+                      <span title={formatDuration(room.minutes * 60)}>{formatMinutes(room.minutes * 60)}</span>
                     </TableCell>
                   </TableRow>
                 ))

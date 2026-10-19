@@ -1,6 +1,6 @@
 import type { FastifyPluginCallback, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { roomIdSchema, sessionIdSchema } from "@relayrtc/validation";
+import { participantIdSchema, roomIdSchema, sessionIdSchema } from "@relayrtc/validation";
 
 import { requireApiKeyScope } from "../../authentication/authentication-plugin.js";
 import { ApiError } from "../../http/errors/api-error.js";
@@ -60,10 +60,16 @@ export const turnCredentialRoutes: FastifyPluginCallback<TurnCredentialRoutesOpt
     },
     async (request, reply) => {
       const parsed = z
-        .object({ roomId: roomIdSchema.optional(), sessionId: sessionIdSchema.optional() })
+        .object({
+          roomId: roomIdSchema.optional(),
+          sessionId: sessionIdSchema.optional(),
+          participantId: participantIdSchema.optional(),
+        })
         .strict()
         .refine(
-          (value) => (value.roomId === undefined) === (value.sessionId === undefined),
+          (value) =>
+            (value.roomId === undefined) === (value.sessionId === undefined) &&
+            (!value.participantId || !!value.sessionId),
           "Provide roomId and sessionId together",
         )
         .safeParse(request.body ?? {});
@@ -77,7 +83,11 @@ export const turnCredentialRoutes: FastifyPluginCallback<TurnCredentialRoutesOpt
       const credentials = await options.issuer.issue({
         ...requestScope(request),
         ...(body.roomId && body.sessionId
-          ? { roomId: body.roomId, sessionId: body.sessionId }
+          ? {
+              roomId: body.roomId,
+              sessionId: body.sessionId,
+              ...(body.participantId ? { participantId: body.participantId } : {}),
+            }
           : {}),
       });
       return reply.status(201).send(credentials);

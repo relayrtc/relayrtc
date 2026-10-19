@@ -29,6 +29,7 @@ export function createRetainedTurnCredentialIssuer(
             select p.id from participant_session s join participant p on p.id = s.participant_id
             join room r on r.id = p.room_id
             where s.id = ${scope.sessionId} and r.id = ${scope.roomId}
+              ${scope.participantId ? sql`and p.id = ${scope.participantId}` : sql``}
               and r.project_id = ${scope.projectId} and r.environment_id = ${scope.environmentId}
               and r.status = 'active' and p.left_at is null and p.removed_at is null
               and r.ended_at is null and s.connection_state in ('connected', 'reconnecting')

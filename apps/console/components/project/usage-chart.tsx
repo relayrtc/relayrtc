@@ -3,9 +3,9 @@
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { Panel } from '@/components/page/panel'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
-import { formatNumber } from '@/lib/format'
+import { formatDuration, formatMinutes, formatNumber } from '@/lib/format'
 
-export function UsageChart({ title, total, period, points, compact = false, horizontal = false, description }: {
+export function UsageChart({ title, total, period, points, compact = false, horizontal = false, description, unit }: {
   title: string
   total: number
   period: string
@@ -13,13 +13,14 @@ export function UsageChart({ title, total, period, points, compact = false, hori
   compact?: boolean
   horizontal?: boolean
   description?: string
+  unit?: 'minutes'
 }) {
   return (
     <Panel className="flex flex-col">
       <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
         <span>{title}</span><span>{period}</span>
       </div>
-      <p className="text-2xl tracking-tight tabular-nums sm:text-[1.75rem]">{formatNumber(total)}</p>
+      <p title={unit === 'minutes' ? formatDuration(total * 60) : undefined} className="text-2xl tracking-tight tabular-nums sm:text-[1.75rem]">{unit === 'minutes' ? formatMinutes(total * 60) : formatNumber(total)}</p>
       {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
       <ChartContainer config={{ value: { label: title, color: 'var(--chart-1)' } }} className={compact ? 'mt-3 h-24 w-full' : 'mt-4 h-64 w-full sm:h-72'}>
         <BarChart accessibilityLayer data={points} layout={horizontal ? 'vertical' : 'horizontal'} margin={{ left: 0, right: 0, top: 4 }}>

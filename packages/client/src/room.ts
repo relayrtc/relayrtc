@@ -21,6 +21,21 @@ export interface RoomReconnectOptions {
   readonly maxDelayMs?: number;
 }
 
+export interface MediaTransportStats {
+  readonly direction: "send" | "receive";
+  readonly state: RTCPeerConnectionState;
+  readonly route: "direct" | "relay" | "unknown";
+  readonly protocol: string | null;
+  readonly relayProtocol: string | null;
+  readonly bytesSent: number;
+  readonly bytesReceived: number;
+}
+
+export interface MediaConnectionStats {
+  readonly observedAt: string;
+  readonly transports: readonly MediaTransportStats[];
+}
+
 export interface RoomEvents {
   readonly connectionQualityChanged: ConnectionQualityEvent;
   readonly connectionDegraded: ConnectionQualityEvent;
@@ -71,6 +86,7 @@ export interface Room extends RoomLocalMedia {
   readonly events: RoomCustomEvents;
   readonly presence: RoomPresenceSnapshot;
   refreshCredentials(): Promise<void>;
+  getMediaConnectionStats(): Promise<MediaConnectionStats>;
   on<Event extends keyof RoomEvents>(
     event: Event,
     listener: (value: RoomEvents[Event]) => void,

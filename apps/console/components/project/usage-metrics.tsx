@@ -12,7 +12,7 @@ import { useId, useState } from "react";
 import type { ProjectUsageResponse } from "@relayrtc/validation";
 import { Panel } from "@/components/page/panel";
 import { StatCard } from "@/components/page/stat-card";
-import { formatBytes, formatNumber } from "@/lib/format";
+import { formatBytes, formatDuration, formatMinutes, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const tabs = ["Audio", "Video", "Screen share", "Signaling"] as const;
@@ -24,17 +24,18 @@ export function UsageMetrics({
 }: Pick<ProjectUsageResponse, "summary" | "dataQuality"> & { period: string }) {
   const [tab, setTab] = useState<(typeof tabs)[number]>("Audio");
   const id = useId();
-  const rows: Record<(typeof tabs)[number], [[string, string], ...[string, string][]]> = {
-    Audio: [["Participant minutes", formatNumber(summary.audioParticipantSeconds / 60)]],
-    Video: [["Participant minutes", formatNumber(summary.videoParticipantSeconds / 60)]],
+  const minutes = (seconds: number) => <span title={formatDuration(seconds)}>{formatMinutes(seconds)}</span>;
+  const rows: Record<(typeof tabs)[number], [[string, React.ReactNode], ...[string, React.ReactNode][]]> = {
+    Audio: [["Participant minutes", minutes(summary.audioParticipantSeconds)]],
+    Video: [["Participant minutes", minutes(summary.videoParticipantSeconds)]],
     "Screen share": [
-      ["Minutes", formatNumber(summary.screenShareSeconds / 60)],
+      ["Minutes", minutes(summary.screenShareSeconds)],
       ["Ingress", formatBytes(summary.screenShareIngressBytes, 2)],
       ["Egress", formatBytes(summary.screenShareEgressBytes, 2)],
     ],
     Signaling: [
       ["Connections", formatNumber(summary.signalingConnections)],
-      ["Connection minutes", formatNumber(summary.signalingConnectionSeconds / 60)],
+      ["Connection minutes", minutes(summary.signalingConnectionSeconds)],
       ["Messages in", formatNumber(summary.messagesIn)],
       ["Messages out", formatNumber(summary.messagesOut)],
     ],

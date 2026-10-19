@@ -125,10 +125,12 @@ services:
     depends_on:
       api:
         condition: service_healthy
+        restart: true
       streaming-gateway:
         condition: service_started
       media:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -153,6 +155,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -176,6 +179,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -206,6 +210,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+        restart: true
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
