@@ -30,7 +30,7 @@ export interface DvrPlayback {
       | "deleted";
     lastError: string | null;
     retrying: boolean;
-  };
+  } | undefined;
   startSeconds: number | null;
   endSeconds: number | null;
   wallStart: string | null;
