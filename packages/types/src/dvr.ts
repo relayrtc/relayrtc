@@ -17,6 +17,20 @@ export interface DvrPlayback {
   sourceSessionId: string | null;
   generation: number | null;
   state: "starting" | "live" | "ended" | "unavailable";
+  capture?: {
+    state:
+      | "not_configured"
+      | "waiting"
+      | "queued"
+      | "recording"
+      | "finalizing"
+      | "ready"
+      | "failed"
+      | "deleting"
+      | "deleted";
+    lastError: string | null;
+    retrying: boolean;
+  };
   startSeconds: number | null;
   endSeconds: number | null;
   wallStart: string | null;

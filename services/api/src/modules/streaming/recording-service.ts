@@ -28,6 +28,7 @@ export const recordingRowSchema = z.object({
   leased_until: date.nullable(),
   heartbeat_at: date.nullable(),
   attempts: z.number(),
+  next_attempt_at: date.optional(),
   source_session_id: z.string().nullable(),
   source_generation: z.number().nullable(),
   source_sequence: z.coerce.number().nullable(),

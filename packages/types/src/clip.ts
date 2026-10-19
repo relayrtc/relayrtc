@@ -38,6 +38,15 @@ export interface ClipResource {
   storageByteSeconds: number;
   createdAt: string;
   expiresAt: string | null;
+  progress?: {
+    stage: "queued" | "preparing" | "rendering" | "ready" | "failed" | "deleting" | "deleted";
+    copiedObjects: number;
+    totalObjects: number;
+    attempts: number;
+    maxAttempts: number;
+    nextAttemptAt: string | null;
+    deadlineAt: string | null;
+  };
 }
 export interface RollingBufferPolicy {
   enabled: boolean;
