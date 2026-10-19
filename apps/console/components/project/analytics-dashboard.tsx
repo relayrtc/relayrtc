@@ -383,7 +383,9 @@ export function AnalyticsDashboard({
             Network traffic
           </h2>
 
-          <p className="text-sm text-muted-foreground">{formatGb(totalNetwork)} transferred</p>
+          <p className="text-sm text-muted-foreground">
+            {formatGb(totalNetwork)} observed across service interfaces
+          </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -391,9 +393,37 @@ export function AnalyticsDashboard({
 
           <StatCard label="SFU egress" value={formatGb(data.network.sfuEgress)} />
 
-          <StatCard label="TURN ingress" value={formatGb(data.network.turnIngress)} />
+          <StatCard
+            label="TURN ingress"
+            value={
+              data.dataQuality.turnTraffic === "unavailable"
+                ? "Unavailable"
+                : formatGb(data.network.turnIngress)
+            }
+            hint={
+              data.dataQuality.turnTraffic === "partial"
+                ? "Partial measurement"
+                : data.dataQuality.turnTraffic === "unavailable"
+                  ? "Measurement unavailable"
+                  : "Observed"
+            }
+          />
 
-          <StatCard label="TURN egress" value={formatGb(data.network.turnEgress)} />
+          <StatCard
+            label="TURN egress"
+            value={
+              data.dataQuality.turnTraffic === "unavailable"
+                ? "Unavailable"
+                : formatGb(data.network.turnEgress)
+            }
+            hint={
+              data.dataQuality.turnTraffic === "partial"
+                ? "Partial measurement"
+                : data.dataQuality.turnTraffic === "unavailable"
+                  ? "Measurement unavailable"
+                  : "Observed"
+            }
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -457,55 +487,68 @@ export function AnalyticsDashboard({
           <Panel>
             <PanelTitle title="TURN traffic" description={`Relayed data per ${bucketLabel}`} />
 
-            <ChartContainer config={turnConfig} className="mt-4 h-56 w-full">
-              <AreaChart
-                data={data.networkSeries}
-                margin={{
-                  left: 0,
-                  right: 0,
-                  top: 4,
-                }}
-              >
-                <CartesianGrid vertical={false} />
+            {data.dataQuality.turnTraffic === "unavailable" ? (
+              <AnalyticsEmptyState>
+                TURN usage could not be measured for this period.
+              </AnalyticsEmptyState>
+            ) : (
+              <>
+                {data.dataQuality.turnTraffic === "partial" && (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Only observed TURN activity is shown.
+                  </p>
+                )}
+                <ChartContainer config={turnConfig} className="mt-4 h-56 w-full">
+                  <AreaChart
+                    data={data.networkSeries}
+                    margin={{
+                      left: 0,
+                      right: 0,
+                      top: 4,
+                    }}
+                  >
+                    <CartesianGrid vertical={false} />
 
-                <XAxis
-                  dataKey="label"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  minTickGap={range === "live" ? 8 : 24}
-                />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      minTickGap={range === "live" ? 8 : 24}
+                    />
 
-                <YAxis
-                  width={44}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value}G`}
-                />
+                    <YAxis
+                      width={44}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => `${value}G`}
+                    />
 
-                <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
+                    <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
 
-                <ChartLegend content={<ChartLegendContent />} />
+                    <ChartLegend content={<ChartLegendContent />} />
 
-                <Area
-                  dataKey="turnEgress"
-                  type="monotone"
-                  stroke="var(--color-turnEgress)"
-                  fill="var(--color-turnEgress)"
-                  fillOpacity={0.15}
-                  strokeWidth={2}
-                />
+                    <Area
+                      dataKey="turnEgress"
+                      type="monotone"
+                      stroke="var(--color-turnEgress)"
+                      fill="var(--color-turnEgress)"
+                      fillOpacity={0.15}
+                      strokeWidth={2}
+                    />
 
-                <Area
-                  dataKey="turnIngress"
-                  type="monotone"
-                  stroke="var(--color-turnIngress)"
-                  fill="var(--color-turnIngress)"
-                  fillOpacity={0.15}
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ChartContainer>
+                    <Area
+                      dataKey="turnIngress"
+                      type="monotone"
+                      stroke="var(--color-turnIngress)"
+                      fill="var(--color-turnIngress)"
+                      fillOpacity={0.15}
+                      strokeWidth={2}
+                    />
+                  </AreaChart>
+                </ChartContainer>
+              </>
+            )}
           </Panel>
         </div>
       </section>

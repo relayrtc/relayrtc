@@ -13,11 +13,27 @@ export const turnCredential = pgTable(
     participantId: text("participant_id"),
     issuedAt: timestamp("issued_at", { withTimezone: true }).notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    realm: text("realm"),
+    authenticationKey: text("authentication_key"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (table) => [
     index("turn_credential_retention_idx").on(table.expiresAt),
+    index("turn_credential_project_scope_idx")
+      .on(table.projectId)
+      .where(sql`${table.revokedAt} is null`),
+    index("turn_credential_environment_scope_idx")
+      .on(table.environmentId)
+      .where(sql`${table.revokedAt} is null`),
+    index("turn_credential_session_scope_idx")
+      .on(table.sessionId)
+      .where(sql`${table.revokedAt} is null`),
     check("turn_credential_check", sql`${table.expiresAt} > ${table.issuedAt}`),
     check("turn_credential_check1", sql`(${table.roomId} is null) = (${table.sessionId} is null)`),
+    check(
+      "turn_credential_managed_key_check",
+      sql`(${table.realm} is null) = (${table.authenticationKey} is null) and (${table.authenticationKey} is null or ${table.authenticationKey} ~ '^[0-9a-f]{32}$')`,
+    ),
   ],
 );
 
@@ -44,6 +60,8 @@ export const turnAllocation = pgTable(
       .notNull()
       .references(() => turnLogCheckpoint.id),
     nativeId: text("native_id").notNull(),
+    generationOffset: bigint("generation_offset", { mode: "number" }).notNull().default(0),
+    retirementCheckedAt: timestamp("retirement_checked_at", { withTimezone: true }),
     username: text("username")
       .notNull()
       .references(() => turnCredential.username),
@@ -63,7 +81,11 @@ export const turnAllocation = pgTable(
     peerEgressBytes: bigint("peer_egress_bytes", { mode: "number" }).notNull().default(0),
   },
   (table) => [
-    unique("turn_allocation_source_id_native_id_key").on(table.sourceId, table.nativeId),
+    unique("turn_allocation_source_generation_key").on(
+      table.sourceId,
+      table.nativeId,
+      table.generationOffset,
+    ),
     index("turn_allocation_scope_time_idx").on(
       table.organizationId,
       table.projectId,

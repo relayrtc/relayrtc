@@ -45,6 +45,13 @@ export function UsageMetrics({
     ["TURN ingress", summary.turnIngressBytes],
     ["TURN egress", summary.turnEgressBytes],
   ] as const;
+  const turnCoverage = dataQuality.turnTraffic;
+  const turnHint =
+    turnCoverage === "authoritative"
+      ? period
+      : turnCoverage === "partial"
+        ? "Partial measurement"
+        : "Measurement unavailable";
   return (
     <>
       <section aria-labelledby={`${id}-network`} className="flex flex-col gap-4">
@@ -56,11 +63,25 @@ export function UsageMetrics({
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {network.map(([label, bytes]) => (
-            <StatCard key={label} label={label} value={formatBytes(bytes, 2)} hint={period} />
+            <StatCard
+              key={label}
+              label={label}
+              value={
+                label.startsWith("TURN") && turnCoverage === "unavailable"
+                  ? "Unavailable"
+                  : formatBytes(bytes, 2)
+              }
+              hint={label.startsWith("TURN") ? turnHint : period}
+            />
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          TURN figures are estimates. Relayed traffic can appear in both SFU and TURN totals.
+          {turnCoverage === "unavailable"
+            ? "TURN usage could not be measured for this period. "
+            : turnCoverage === "partial"
+              ? "TURN totals include only the observed activity. "
+              : "TURN totals come from server allocation observations. "}
+          Relayed traffic can appear in both SFU and TURN totals.
         </p>
       </section>
       <section aria-labelledby={`${id}-breakdown`} className="flex flex-col gap-4">

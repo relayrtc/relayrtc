@@ -302,6 +302,13 @@
       "when": 1792972800000,
       "tag": "0042_stream_workspace_indexes",
       "breakpoints": false
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1793059200000,
+      "tag": "0043_turn_lifecycle",
+      "breakpoints": false
     }
   ]
 }

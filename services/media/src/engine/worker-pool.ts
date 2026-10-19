@@ -138,6 +138,7 @@ interface ConsumerState {
 }
 
 interface TransportState {
+  connectionTimer?: ReturnType<typeof setTimeout>;
   direction: "receive" | "send";
   participantId: string;
   transport: WebRtcTransport;
@@ -462,13 +463,31 @@ export class MediasoupWorkerPool implements MediaEngine {
       participantId: request.participantId,
       transport,
     });
-    transport.observer.once("close", () => room.transports.delete(transport.id));
+    transport.observer.once("close", () => {
+      clearTimeout(room.transports.get(transport.id)?.connectionTimer);
+      room.transports.delete(transport.id);
+    });
+    const iceCandidates = [...transport.iceCandidates];
+    for (const address of this.#config.rtcAdditionalAnnouncedAddresses ?? []) {
+      for (const candidate of transport.iceCandidates) {
+        if (
+          iceCandidates.some(
+            (existing) => existing.address === address && existing.protocol === candidate.protocol,
+          )
+        )
+          continue;
+        iceCandidates.push({
+          ...candidate,
+          address,
+          ip: address,
+          foundation: `${candidate.foundation}-${iceCandidates.length}`,
+        });
+      }
+    }
     return {
       direction: request.direction,
       dtlsParameters: transport.dtlsParameters as unknown as Readonly<Record<string, unknown>>,
-      iceCandidates: transport.iceCandidates as unknown as readonly Readonly<
-        Record<string, unknown>
-      >[],
+      iceCandidates: iceCandidates as unknown as readonly Readonly<Record<string, unknown>>[],
       iceParameters: transport.iceParameters as unknown as Readonly<Record<string, unknown>>,
       id: transport.id,
     };
@@ -478,6 +497,22 @@ export class MediasoupWorkerPool implements MediaEngine {
     const room = this.#getRoom(request.roomId);
     const transport = this.#getOwnedTransport(room, request.transportId, request.participantId);
     await transport.connect({ dtlsParameters: request.dtlsParameters as never });
+    const state = room.transports.get(transport.id);
+    if (!state || transport.closed)
+      throw new MediaEngineError("NOT_READY", "The transport closed during connection setup");
+    if (transport.dtlsState !== "connected" && !state.connectionTimer) {
+      state.connectionTimer = setTimeout(() => {
+        if (transport.dtlsState !== "connected") transport.close();
+      }, 30_000);
+      state.connectionTimer.unref();
+      transport.on("dtlsstatechange", (dtlsState) => {
+        if (dtlsState === "connected" || dtlsState === "closed" || dtlsState === "failed") {
+          clearTimeout(state.connectionTimer);
+          delete state.connectionTimer;
+        }
+        if (dtlsState === "failed") transport.close();
+      });
+    }
   }
 
   async restartParticipantTransport(
