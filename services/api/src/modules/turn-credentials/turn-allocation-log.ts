@@ -1,6 +1,7 @@
 export interface TurnAllocationObservation {
   readonly nativeId: string;
   readonly username: string;
+  readonly realm: string;
   readonly occurredAt: Date;
   readonly kind: "new" | "refreshed" | "deleted" | "client" | "peer";
   readonly lifetime: number;
@@ -27,6 +28,7 @@ export function parseTurnAllocationLog(line: string): TurnAllocationObservation 
     return null;
   }
   const timestamp = record?.[1];
+  const realm = /realm=<([^>]*)>/u.exec(body)?.[1] ?? "";
   const occurredAt = new Date(timestamp ?? "");
   if (!Number.isFinite(occurredAt.getTime()))
     throw new Error("Coturn observations require UTC timestamps");
@@ -43,6 +45,7 @@ export function parseTurnAllocationLog(line: string): TurnAllocationObservation 
     return {
       nativeId: lifecycle[4] ?? "",
       username: lifecycle[2] ?? "",
+      realm,
       occurredAt,
       kind: lifecycle[1] === "new" ? "new" : "refreshed",
       lifetime,
@@ -54,6 +57,7 @@ export function parseTurnAllocationLog(line: string): TurnAllocationObservation 
     return {
       nativeId: deleted[2] ?? "",
       username: deleted[1] ?? "",
+      realm,
       occurredAt,
       kind: "deleted",
       lifetime: 0,
@@ -61,9 +65,12 @@ export function parseTurnAllocationLog(line: string): TurnAllocationObservation 
       egressBytes: 0,
     };
   if (traffic)
+    if (!traffic[2] && integer(traffic[3]) === 0 && integer(traffic[4]) === 0) return null;
+  if (traffic)
     return {
       nativeId: traffic[5] ?? "",
       username: traffic[2] ?? "",
+      realm,
       occurredAt,
       kind: traffic[1] ? "peer" : "client",
       lifetime: 0,

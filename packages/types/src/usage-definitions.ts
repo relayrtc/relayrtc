@@ -97,7 +97,7 @@ export const usageMetricDefinitions = {
     definition:
       "Bytes entering TURN, summed across client-facing received and peer-facing received allocation counters; keep interfaces distinct before adding.",
     source:
-      "Project-attributed coturn allocation counter observations; browser-derived byte deltas are estimated substitutes only.",
+      "Project-attributed native coturn log deltas, deduplicated by process source and log offset. Browser estimates are excluded.",
   },
   turnEgressBytes: {
     unit: "bytes",
@@ -106,7 +106,7 @@ export const usageMetricDefinitions = {
     definition:
       "Bytes leaving TURN, summed across client-facing sent and peer-facing sent allocation counters; never infer authoritative relay traffic from SFU bytes.",
     source:
-      "Project-attributed coturn allocation counter observations; browser-derived byte deltas are estimated substitutes only.",
+      "Project-attributed native coturn log deltas, deduplicated by process source and log offset. Browser estimates are excluded.",
   },
   turnRelaySeconds: {
     unit: "seconds",

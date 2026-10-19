@@ -74,8 +74,9 @@ const usageSummary = (projectId: SQL | null, bucket?: { starts: SQL; ends: SQL }
     'signalingConnectionSeconds', ${duration("connections")},
     'turnSessions', (select count(*) from scoped_turn_allocations t cross join bounds b
       where t.started_at >= ${starts} and t.started_at < ${ends} and ${projectFilter("t", projectId)}),
-    'turnRelaySeconds', coalesce((select sum(extract(epoch from least(t.last_observed_at, ${ends}) - greatest(t.started_at, ${starts})))
-      from scoped_turn_allocations t cross join bounds b where t.started_at < ${ends} and t.last_observed_at > ${starts}
+    'turnRelaySeconds', coalesce((select sum(extract(epoch from least(t.last_observed_at, t.ended_at, t.expires_at, ${ends}) - greatest(t.started_at, ${starts})))
+      from scoped_turn_allocations t cross join bounds b where t.started_at < ${ends}
+        and least(t.last_observed_at, t.ended_at, t.expires_at) > greatest(t.started_at, ${starts})
         and ${projectFilter("t", projectId)}), 0),
     ${sql.join(pairs, sql`, `)}
   )`;
@@ -196,15 +197,25 @@ export function createUsageReportQuery(
       select t.* from turn_allocation t join scoped_projects pr on pr.id = t.project_id
       where t.organization_id = ${scope.organizationId}
         ${scope.environmentId === null ? sql`` : sql`and t.environment_id = ${scope.environmentId}`}
+    ), turn_collection_ordered as (
+      select id, started_at as starts, collected_through_at as ends,
+        max(collected_through_at) over (order by started_at, id rows between unbounded preceding and 1 preceding) as preceding_end
+      from turn_log_checkpoint where started_at is not null and collected_through_at is not null
+    ), turn_collection_groups as (
+      select *, sum(case when preceding_end is null or starts > preceding_end then 1 else 0 end)
+        over (order by starts, id rows unbounded preceding) as group_id from turn_collection_ordered
+    ), turn_collection_intervals as (
+      select min(starts) as starts, max(ends) as ends from turn_collection_groups group by group_id
     ), turn_quality as (
-      select case when not exists (select 1 from turn_log_checkpoint where started_at is not null) then 'unavailable'
-        when (select min(started_at) from turn_log_checkpoint) > (select starts from bounds)
-          or coalesce((select max(collected_through_at) from turn_log_checkpoint) < (select ends from bounds), true)
+      select case when not exists (select 1 from turn_collection_intervals i cross join bounds b
+        where i.starts < b.ends and i.ends > b.starts) then 'unavailable'
+        when not exists (select 1 from turn_collection_intervals i cross join bounds b
+          where i.starts <= b.starts and i.ends >= b.ends)
           or exists (select 1 from turn_log_checkpoint where reconciliation->>'status' = 'different')
           then 'partial'
         when exists (select 1 from scoped_turn_allocations t cross join bounds b
           where t.started_at < b.ends and greatest(t.last_observed_at, t.expires_at) > b.starts and t.coverage = 'partial')
-          or exists (select 1 from turn_observation o cross join bounds b where o.allocation_id is null and o.kind in ('new', 'refreshed', 'deleted') and o.occurred_at >= b.starts and o.occurred_at < b.ends)
+          or exists (select 1 from turn_observation o cross join bounds b where o.allocation_id is null and o.occurred_at >= b.starts and o.occurred_at < b.ends)
           then 'partial' else 'authoritative' end as coverage
     ), event_totals as (
       select project_id, metric, sum(value) as value from scoped_usage_events group by project_id, metric
