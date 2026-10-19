@@ -1,8 +1,10 @@
-import type { z } from "zod";
-
 import { ApiError } from "../errors/api-error.js";
 
-export const validate = <Output>(schema: z.ZodType<Output>, value: unknown): Output => {
+interface RequestSchema<Output> {
+  safeParse(value: unknown): { success: true; data: Output } | { success: false; error: unknown };
+}
+
+export const validate = <Output>(schema: RequestSchema<Output>, value: unknown): Output => {
   const result = schema.safeParse(value);
 
   if (!result.success) {
