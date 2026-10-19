@@ -1,5 +1,6 @@
 "use client";
 import { StreamTable } from "./stream-table";
+import { clipFeedback, clipStage } from "@/lib/streaming/media-job-feedback";
 import { StreamingTaskPage, useStreamingTask } from "./streaming-task-page";
 import { StreamSectionCard } from "./stream-section-card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -75,6 +76,7 @@ export function ClipsManager({
     [windows, setWindows] = useState<ConsoleClipWindow[]>([]),
     [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null),
+    [statusError, setStatusError] = useState<string | null>(null),
     [pending, setPending] = useState(false),
     [selected, setSelected] = useState<ConsoleClip | null>(null),
     [remove, setRemove] = useState<ConsoleClip | null>(null),
@@ -118,21 +120,26 @@ export function ClipsManager({
           : Promise.resolve(null),
       ]);
       if (rev !== revision.current) return;
-      if (clips.error) setError(clips.error.description);
-      else {
+      setStatusError(
+        clips.error?.description ??
+          window.error?.description ??
+          policy.error?.description ??
+          detail?.error?.description ??
+          null,
+      );
+      if (clips.data) {
+        const data = clips.data;
         setRows((previous) =>
-          [
-            ...clips.data.data,
-            ...previous.filter((p) => !clips.data.data.some((c) => c.id === p.id)),
-          ].sort((a, b) => a.id.localeCompare(b.id)),
+          [...data.data, ...previous.filter((p) => !data.data.some((c) => c.id === p.id))].sort(
+            (a, b) => a.id.localeCompare(b.id),
+          ),
         );
-        setCursor(clips.data.nextCursor);
+        setCursor(data.nextCursor);
         setSelected((previous) =>
-          previous ? (clips.data.data.find((c) => c.id === previous.id) ?? previous) : null,
+          previous ? (data.data.find((c) => c.id === previous.id) ?? previous) : null,
         );
       }
       if (detail?.data && detail.data.id === selectedId.current) setSelected(detail.data);
-      if (window.error) setError(window.error.description);
       if (window.data) {
         setWindows(window.data.data);
         setRecordingId((current) => current || window.data.data[0]?.recordingId || "");
@@ -142,7 +149,8 @@ export function ClipsManager({
         if (policy.data.policy) setBuffer(policy.data.policy);
       }
     } catch {
-      if (rev === revision.current) setError("Clip status is unavailable. Try again.");
+      if (rev === revision.current)
+        setStatusError("Clip status is unavailable. Retrying automatically.");
     }
   }, [projectId, environmentId, streamId]);
   const invalidate = useCallback(() => {
@@ -251,9 +259,9 @@ export function ClipsManager({
         backHref={task.backHref}
         guidance="Fast cuts include the surrounding segment boundaries. Precise cuts re-encode your selected interval. Clips have their own retention; publishing allows your application to request viewer access."
       >
-        {error && (
+        {(error || statusError) && (
           <p role="alert" className="text-sm text-destructive">
-            {error}
+            {error || statusError}
           </p>
         )}
         {!windows.length && (
@@ -424,9 +432,9 @@ export function ClipsManager({
           Refresh
         </Button>
       </StreamToolbar>
-      {error && (
+      {(error || statusError) && (
         <p role="alert" className="text-sm text-destructive">
-          {error}
+          {error || statusError}
         </p>
       )}
       <StreamTable>
@@ -457,8 +465,16 @@ export function ClipsManager({
                   </Button>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary">{c.state}</Badge>
-                  {c.lastError && <p className="text-destructive">{c.lastError}</p>}
+                  <Badge variant="secondary">{clipStage(c)}</Badge>
+                  {clipFeedback(c) && (
+                    <p
+                      className={
+                        c.state === "failed" ? "text-destructive" : "text-muted-foreground"
+                      }
+                    >
+                      {clipFeedback(c)}
+                    </p>
+                  )}
                 </TableCell>
                 <TableCell>{c.durationSeconds.toFixed(1)}s</TableCell>
                 <TableCell>{c.published ? "Published" : "Private preview"}</TableCell>
@@ -601,7 +617,19 @@ export function ClipsManager({
           </SheetHeader>
           {selected && (
             <div className="space-y-4 p-6">
-              <Badge>{selected.state}</Badge>
+              <Badge>{clipStage(selected)}</Badge>
+              {clipFeedback(selected) && (
+                <p
+                  role="status"
+                  className={
+                    selected.state === "failed"
+                      ? "text-sm text-destructive"
+                      : "text-sm text-muted-foreground"
+                  }
+                >
+                  {clipFeedback(selected)}
+                </p>
+              )}
               <p className="text-sm">
                 Requested {selected.requestedStartSeconds.toFixed(2)}–
                 {selected.requestedEndSeconds.toFixed(2)}s; segment boundaries{" "}

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StreamPreview } from "./stream-preview";
+import { dvrFeedback } from "@/lib/streaming/media-job-feedback";
 export function DvrManager({
   projectId,
   environmentId,
@@ -32,6 +33,7 @@ export function DvrManager({
     [enabled, setEnabled] = useState(false),
     [consent, setConsent] = useState(false);
   const [error, setError] = useState(""),
+    [playbackError, setPlaybackError] = useState(""),
     [pending, setPending] = useState(false),
     [broadcastId, setBroadcastId] = useState(workspace?.broadcastId ?? "");
   const revision = useRef(0);
@@ -76,11 +78,14 @@ export function DvrManager({
           ...(broadcastId ? { broadcastId } : {}),
         });
         if (!active || generation !== revision.current) return;
-        if (result.error) setError(result.error.description);
-        else setPlayback(result.data);
+        if (result.error) setPlaybackError(result.error.description);
+        else {
+          setPlayback(result.data);
+          setPlaybackError("");
+        }
       } catch {
         if (active && generation === revision.current)
-          setError("DVR playback is unavailable. Retrying automatically.");
+          setPlaybackError("DVR playback is unavailable. Retrying automatically.");
       } finally {
         busy = false;
       }
@@ -131,12 +136,12 @@ export function DvrManager({
         title="Viewer rewind"
         description="Let viewers pause and rewind your live broadcast."
       />
-      {error && (
+      {(error || playbackError) && (
         <p
           role="alert"
           className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive"
         >
-          {error}
+          {error || playbackError}
         </p>
       )}
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(16rem,1fr)]">
@@ -156,8 +161,16 @@ export function DvrManager({
               />
             ) : (
               <StreamEmptyState
-                title={playback ? "No rewind media available" : "Checking playback"}
-                description="Enable rewind before starting a broadcast. Retained media appears here as it arrives."
+                title={
+                  playback?.capture?.state === "failed"
+                    ? "Rewind capture failed"
+                    : playback?.capture?.retrying
+                      ? "Rewind is recovering"
+                      : playback
+                        ? "No rewind media available"
+                        : "Checking playback"
+                }
+                description={dvrFeedback(playback)}
                 icon={History}
               />
             )}
@@ -179,7 +192,9 @@ export function DvrManager({
             title="Retained media"
             actions={
               <span role="status" className="text-xs capitalize text-muted-foreground">
-                {playback?.state ?? "Loading..."}
+                {playback?.capture?.retrying
+                  ? "Retrying"
+                  : (playback?.capture?.state ?? playback?.state ?? "Loading...")}
               </span>
             }
           >
@@ -208,6 +223,11 @@ export function DvrManager({
                 </div>
               ))}
             </dl>
+            {playback?.capture?.lastError && (
+              <p role="status" className="text-sm text-muted-foreground">
+                {dvrFeedback(playback)}
+              </p>
+            )}
             {playback?.expiresAt && (
               <p className="text-xs text-muted-foreground">
                 Available until {new Date(playback.expiresAt).toLocaleString()}.
