@@ -269,12 +269,12 @@ describe("MediasoupWorkerPool", () => {
       participantId: "subscriber",
       roomId: "room-1",
       stats: {
-        availableIncomingBitrate: 3_000_000,
+        availableIncomingBitrate: 6_000_000,
         jitter: 0.01,
         packetsLost: 1,
         packetsReceived: 99,
         roundTripTime: 0.1,
-        timestamp: 1,
+        timestamp: Date.now(),
         turnBytesReceived: 100,
         turnBytesSent: 200,
       },
@@ -302,7 +302,7 @@ describe("MediasoupWorkerPool", () => {
     expect(qualityConsumer.resume).toHaveBeenCalledOnce();
     expect(qualityConsumer.setPreferredLayers).toHaveBeenCalledWith({
       spatialLayer: 2,
-      temporalLayer: 2,
+      temporalLayer: 0,
     });
     qualityConsumer.pause.mockClear();
     qualityConsumer.setPreferredLayers.mockClear();
@@ -315,17 +315,16 @@ describe("MediasoupWorkerPool", () => {
         packetsLost: 25,
         packetsReceived: 75,
         roundTripTime: 1,
-        timestamp: 2,
+        timestamp: Date.now() + 1,
         turnBytesReceived: 160,
         turnBytesSent: 350,
       },
     });
     expect(qualityConsumer.pause).toHaveBeenCalledOnce();
     expect(record).toHaveBeenCalledTimes(2);
-    expect(usageRecord).toHaveBeenCalledWith("room-1", "turnIngressBytes", 150);
-    expect(usageRecord).toHaveBeenCalledWith("room-1", "turnEgressBytes", 60);
+    expect(usageRecord).not.toHaveBeenCalled();
     expect(publish).toHaveBeenCalledWith(
-      "connection.degraded",
+      "connection.quality.changed",
       expect.objectContaining({
         participantId: "subscriber",
         previousQuality: "excellent",
@@ -337,11 +336,8 @@ describe("MediasoupWorkerPool", () => {
       participantId: "subscriber",
       roomId: "room-1",
     });
-    expect(qualityConsumer.resume).toHaveBeenCalledTimes(2);
-    expect(qualityConsumer.setPreferredLayers).toHaveBeenCalledWith({
-      spatialLayer: 1,
-      temporalLayer: 2,
-    });
+    expect(qualityConsumer.resume).toHaveBeenCalledTimes(1);
+    expect(qualityConsumer.setPreferredLayers).not.toHaveBeenCalled();
     await pool.close();
   });
 
@@ -437,7 +433,7 @@ describe("media usage sample persistence", () => {
   });
 });
 
-it("retains a failed TURN sample when newer subscriber counters arrive", async () => {
+it("does not treat browser TURN counters as authoritative usage", async () => {
   const { factory } = createMediasoupTestHarness();
   const persisted = new Map<string, number>();
   let fail = true;
@@ -464,14 +460,14 @@ it("retains a failed TURN sample when newer subscriber counters arrive", async (
         packetsLost: 0,
         packetsReceived: 100,
         roundTripTime: 0.1,
-        timestamp: bytes,
+        timestamp: Date.now() + bytes,
         turnBytesSent: bytes,
       },
     });
   await ingest(100);
-  await expect(ingest(200)).rejects.toThrow();
+  await ingest(200);
   await ingest(300);
-  expect(recordBatch.mock.calls[0]).toEqual(recordBatch.mock.calls[1]);
-  expect([...persisted.values()].reduce((sum, value) => sum + value, 0)).toBe(200);
+  expect(recordBatch).not.toHaveBeenCalled();
+  expect(persisted.size).toBe(0);
   await pool.close();
 });

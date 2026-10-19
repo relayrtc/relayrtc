@@ -484,6 +484,16 @@ export const mediaRoutes: FastifyPluginCallback<MediaRoutesOptions> = (app, opti
     },
   );
 
+  for (const action of ["pause", "resume"] as const) {
+    app.patch<{ Params: TrackParameters }>(
+      `/rooms/:roomId/participants/:participantId/tracks/:trackId/${action}`,
+      async (request, reply) => {
+        await options.engine.controlTrack({ ...request.params, action });
+        return reply.code(204).send();
+      },
+    );
+  }
+
   app.delete<{ Params: TrackParameters }>(
     "/rooms/:roomId/participants/:participantId/tracks/:trackId",
     {

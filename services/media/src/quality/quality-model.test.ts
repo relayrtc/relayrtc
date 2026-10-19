@@ -40,7 +40,7 @@ describe("connection quality model", () => {
   it("turns cumulative WebRTC packet counters into interval deltas", () => {
     expect(
       intervalNetworkStats(
-        stats({ packetsLost: 5, packetsReceived: 195 }),
+        stats({ timestamp: 2, packetsLost: 5, packetsReceived: 195 }),
         stats({ packetsLost: 2, packetsReceived: 98 }),
       ),
     ).toEqual(expect.objectContaining({ packetsLost: 3, packetsReceived: 97 }));
