@@ -1,12 +1,18 @@
 import type { RelayKitDatabase } from "@relayrtc/database";
 import type { FastifyInstance } from "fastify";
 import { collectTurnAllocationLogs, reconcileTurnAllocations } from "./turn-allocation.service.js";
+import {
+  cancelRetiredTurnAllocations,
+  retireTurnCredentials,
+  type TurnAllocationControl,
+} from "./turn-allocation-control.js";
 
 export function registerTurnAllocationCollector(
   app: FastifyInstance,
   database: RelayKitDatabase,
   directory: string,
   metricsUrl?: string,
+  control?: TurnAllocationControl,
 ) {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -14,8 +20,14 @@ export function registerTurnAllocationCollector(
   let lastReconciled = 0;
   const run = async () => {
     try {
+      await retireTurnCredentials(database);
+      if (control) await cancelRetiredTurnAllocations(database, directory, control);
+    } catch (error) {
+      app.log.error({ err: error }, "TURN credential retirement failed; retry scheduled");
+    }
+    try {
       const result = await collectTurnAllocationLogs(database, directory);
-      if (metricsUrl && Date.now() - lastReconciled >= 30000) {
+      if (result.caughtUp && metricsUrl && Date.now() - lastReconciled >= 30000) {
         const snapshot = await reconcileTurnAllocations(database, directory, metricsUrl);
         lastReconciled = Date.now();
         const log =

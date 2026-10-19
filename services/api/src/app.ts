@@ -110,11 +110,13 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   const turnCredentialIssuer = createRetainedTurnCredentialIssuer(
     options.database,
     createTurnCredentialService({
+      managed: Boolean(options.config.turnManagedRealm),
       secret: options.config.turnSharedSecret,
       stunUrls: options.config.turnStunUrls,
       ttlSeconds: options.config.turnCredentialTtlSeconds,
       turnUrls: options.config.turnUrls,
     }),
+    options.config.turnManagedRealm,
   );
   const runtimeConfig = {
     internalSecret: options.config.internalSecret,
@@ -161,6 +163,7 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
         options.database,
         options.config.turnAccountingLogDirectory,
         options.config.turnAccountingMetricsUrl,
+        options.config.turnAllocationControl,
       )
     : undefined;
   const stopWebhookDeliveries = options.config.webhookSigningEncryptionKey
@@ -176,7 +179,9 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   const stopBroadcasts = options.config.streaming
     ? registerBroadcastMaintenance(app, options.database, options.config.streaming)
     : undefined;
-  const stopGuests = options.config.streaming ? registerGuestMaintenance(app,options.database,options.config.streaming) : undefined;
+  const stopGuests = options.config.streaming
+    ? registerGuestMaintenance(app, options.database, options.config.streaming)
+    : undefined;
   const stopMixers = options.config.streaming
     ? registerMixerMaintenance(app, options.database, options.config.streaming)
     : undefined;
@@ -266,7 +271,12 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
     });
     void app.register(guestRoutes, {
       ...streamingOptions,
-      participantSigner:{audience:options.config.participantTokenAudience,issuer:options.config.participantTokenIssuer,keyId:options.config.participantTokenKeyId,secret:options.config.participantTokenSigningSecret},
+      participantSigner: {
+        audience: options.config.participantTokenAudience,
+        issuer: options.config.participantTokenIssuer,
+        keyId: options.config.participantTokenKeyId,
+        secret: options.config.participantTokenSigningSecret,
+      },
       prefix: "/v1",
       ...(options.config.consoleAuth
         ? {

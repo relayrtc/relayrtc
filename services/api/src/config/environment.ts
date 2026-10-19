@@ -61,6 +61,27 @@ const environmentSchema = z
     TURN_CREDENTIAL_TTL_SECONDS: z.coerce.number().int().min(60).max(3_600).default(600),
     TURN_ACCOUNTING_LOG_DIRECTORY: z.string().trim().min(1).optional(),
     TURN_ACCOUNTING_METRICS_URL: z.url().optional(),
+    TURN_AUTH_MODE: z.enum(["rest", "managed"]).default("rest"),
+    TURN_REALM: z
+      .string()
+      .trim()
+      .min(1)
+      .max(127)
+      .regex(/^[A-Za-z0-9_.-]+$/u)
+      .optional(),
+    TURN_ADMIN_HOST: z
+      .string()
+      .trim()
+      .min(1)
+      .regex(/^[A-Za-z0-9_.:\[\]-]+$/u)
+      .optional(),
+    TURN_ADMIN_PORT: z.coerce.number().int().min(1).max(65535).default(5766),
+    TURN_ADMIN_PASSWORD: z
+      .string()
+      .min(32)
+      .max(256)
+      .regex(/^[\x21-\x7e]+$/u)
+      .optional(),
     TURN_SHARED_SECRET: z.string().min(32),
     TURN_STUN_URLS: iceUrls(["stun", "stuns"]).default(["stun:localhost:3478"]),
     TURN_URLS: iceUrls(["turn", "turns"]).default([
@@ -99,6 +120,8 @@ export interface ApiConfig {
   turnCredentialTtlSeconds: number;
   turnAccountingLogDirectory?: string;
   turnAccountingMetricsUrl?: string;
+  turnManagedRealm?: string;
+  turnAllocationControl?: { host: string; port: number; password: string };
   turnSharedSecret: string;
   turnStunUrls: readonly string[];
   turnUrls: readonly string[];
@@ -135,6 +158,11 @@ export const readApiEnvironment = (source: ApiEnvironmentSource): ApiConfig => {
     TURN_CREDENTIAL_TTL_SECONDS: source.TURN_CREDENTIAL_TTL_SECONDS,
     TURN_ACCOUNTING_LOG_DIRECTORY: source.TURN_ACCOUNTING_LOG_DIRECTORY,
     TURN_ACCOUNTING_METRICS_URL: source.TURN_ACCOUNTING_METRICS_URL,
+    TURN_AUTH_MODE: source.TURN_AUTH_MODE,
+    TURN_REALM: source.TURN_REALM,
+    TURN_ADMIN_HOST: source.TURN_ADMIN_HOST,
+    TURN_ADMIN_PORT: source.TURN_ADMIN_PORT,
+    TURN_ADMIN_PASSWORD: source.TURN_ADMIN_PASSWORD,
     TURN_SHARED_SECRET: source.TURN_SHARED_SECRET,
     TURN_STUN_URLS: source.TURN_STUN_URLS,
     TURN_URLS: source.TURN_URLS,
@@ -149,6 +177,16 @@ export const readApiEnvironment = (source: ApiEnvironmentSource): ApiConfig => {
   }
 
   const authSecret = parsed.data.BETTER_AUTH_SECRET;
+  if (
+    parsed.data.TURN_AUTH_MODE === "managed" &&
+    (!parsed.data.TURN_REALM ||
+      !parsed.data.TURN_ADMIN_HOST ||
+      !parsed.data.TURN_ADMIN_PASSWORD ||
+      !parsed.data.TURN_ACCOUNTING_LOG_DIRECTORY)
+  )
+    throw new Error(
+      "Managed TURN requires TURN_REALM, TURN_ADMIN_HOST, TURN_ADMIN_PASSWORD and TURN_ACCOUNTING_LOG_DIRECTORY",
+    );
   const authUrl = parsed.data.BETTER_AUTH_URL;
   if ((authSecret === undefined) !== (authUrl === undefined)) {
     throw new Error("BETTER_AUTH_SECRET and BETTER_AUTH_URL must be configured together");
@@ -221,6 +259,19 @@ export const readApiEnvironment = (source: ApiEnvironmentSource): ApiConfig => {
     signalingInternalUrl: parsed.data.RELAYRTC_SIGNALING_INTERNAL_URL,
     trustProxy: parsed.data.API_TRUST_PROXY ? trustedProxyCIDRs : false,
     turnCredentialTtlSeconds: parsed.data.TURN_CREDENTIAL_TTL_SECONDS,
+    ...(parsed.data.TURN_AUTH_MODE === "managed" &&
+    parsed.data.TURN_REALM &&
+    parsed.data.TURN_ADMIN_HOST &&
+    parsed.data.TURN_ADMIN_PASSWORD
+      ? {
+          turnManagedRealm: parsed.data.TURN_REALM,
+          turnAllocationControl: {
+            host: parsed.data.TURN_ADMIN_HOST,
+            port: parsed.data.TURN_ADMIN_PORT,
+            password: parsed.data.TURN_ADMIN_PASSWORD,
+          },
+        }
+      : {}),
     ...(parsed.data.TURN_ACCOUNTING_LOG_DIRECTORY
       ? { turnAccountingLogDirectory: parsed.data.TURN_ACCOUNTING_LOG_DIRECTORY }
       : {}),
