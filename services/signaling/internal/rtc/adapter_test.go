@@ -185,6 +185,8 @@ func (media *testMedia) serve(t *testing.T, response http.ResponseWriter, reques
 		return
 	}
 	switch {
+	case request.Method == "GET" && request.URL.Path == base+"/tracks":
+		_ = json.NewEncoder(response).Encode(map[string]any{"roomId": "room_a", "tracks": []any{map[string]any{"id": "media_track", "participantId": "session_a"}}})
 	case strings.HasSuffix(request.URL.Path, "/restart-ice"):
 		_ = json.NewEncoder(response).Encode(map[string]any{"iceParameters": transportResult()["iceParameters"]})
 	case request.URL.Path == base+"/transports":
@@ -289,6 +291,13 @@ func TestAdapterNegotiatesAndProtectsSessionResources(t *testing.T) {
 	receive := call("receive", "rtc.transport.create", "session_b", "participant_b", map[string]any{"direction": "receive"}).Payload["transportId"]
 	subscription := call("subscribe", "rtc.track.subscribe", "session_b", "participant_b", map[string]any{"transportId": receive, "trackId": track["id"], "rtpCapabilities": map[string]any{}}).Payload["subscriptionId"]
 	call("resume", "rtc.subscription.resume", "session_b", "participant_b", map[string]any{"subscriptionId": subscription})
+	for _, action := range []string{"pause", "resume"} {
+		controlled := call("control_"+action, "rtc.track.control", "session_a", "participant_a", map[string]any{"trackId": track["id"], "action": action}).Payload["track"].(map[string]any)
+		tracks, _, err := adapter.Discover(ctx, adapterClaims("participant_b"), "session_b")
+		if err != nil || len(tracks) != 1 || tracks[0].(map[string]any)["state"] != controlled["state"] {
+			t.Fatalf("controlled publication missing from snapshot: tracks=%v err=%v", tracks, err)
+		}
+	}
 	if _, err := adapter.Handle(ctx, adapterClaims("participant_b"), "session_b", adapterRequest("remove_other", "rtc.track.control", "session_b", map[string]any{"trackId": track["id"], "action": "unpublish"})); !errors.Is(err, ErrForbidden) {
 		t.Fatal("cross-session unpublish accepted")
 	}

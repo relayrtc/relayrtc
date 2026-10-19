@@ -208,6 +208,12 @@ func (adapter *Adapter) Handle(ctx context.Context, claims auth.Claims, sessionI
 		switch command.Request.Operation {
 		case "track.publish":
 			appendEvent(state, "", request.RequestID, "track.published", map[string]any{"track": response.Payload["track"]})
+		case "track.pause", "track.resume":
+			kind := "track.paused"
+			if command.Request.Operation == "track.resume" {
+				kind = "track.resumed"
+			}
+			appendEvent(state, "", request.RequestID, kind, map[string]any{"track": response.Payload["track"]})
 		case "track.remove":
 			retireTrack(state, *resources.Track, request.RequestID, "track_unpublished")
 		case "subscription.remove":

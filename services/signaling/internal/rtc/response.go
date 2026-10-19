@@ -136,6 +136,14 @@ func TranslateResponse(command Command, result map[string]any, state *SessionSta
 		binding := TrackBinding{ID: "track_" + newID(), MediaID: id, RoomID: scope.RoomID, SessionID: scope.SessionID, MediaNodeID: scope.MediaNodeID, Generation: scope.Generation, ParticipantID: scope.ParticipantID, Type: valueString(track, "trackType"), State: "published", Priority: priority, Metadata: command.Metadata, PublishedAt: time.Now().UTC()}
 		state.Tracks[binding.ID] = binding
 		payload["track"] = publicTrack(binding)
+	case "track.pause", "track.resume":
+		track := *resources.Track
+		track.State = "paused"
+		if command.Request.Operation == "track.resume" {
+			track.State = "resumed"
+		}
+		state.Tracks[track.ID] = track
+		payload["track"] = publicTrack(track)
 	case "track.remove":
 		track := *resources.Track
 		now := time.Now().UTC()

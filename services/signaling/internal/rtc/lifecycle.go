@@ -122,7 +122,7 @@ func (adapter *Adapter) Discover(ctx context.Context, claims auth.Claims, sessio
 				continue
 			}
 			for _, binding := range session.Tracks {
-				if binding.State == "published" && binding.RoomID == claims.RoomID && binding.Generation == state.Generation {
+				if (binding.State == "published" || binding.State == "paused" || binding.State == "resumed") && binding.RoomID == claims.RoomID && binding.Generation == state.Generation {
 					bindings = append(bindings, binding)
 				}
 			}

@@ -120,8 +120,9 @@ func TestRejectsMalformedAndUnsupportedRequests(t *testing.T) {
 	for _, action := range []string{"pause", "resume"} {
 		f := fixtures(t)[5]
 		f.Request.Payload = json.RawMessage(`{"roomId":"room_rtc","sessionId":"session_rtc","trackId":"track_public","action":"` + action + `"}`)
-		if _, err := Plan(f.Request, claimsFor(f), f.Scope, f.Resources); !errors.Is(err, ErrUnsupported) {
-			t.Fatalf("got %v", err)
+		command, err := Plan(f.Request, claimsFor(f), f.Scope, f.Resources)
+		if err != nil || command.Method != "PATCH" || command.Request.Operation != "track."+action || command.ResponseType != "rtc.track.control.accepted" {
+			t.Fatalf("control %s: command=%+v error=%v", action, command, err)
 		}
 	}
 	f := fixtures(t)[7]
