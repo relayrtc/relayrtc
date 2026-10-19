@@ -16,6 +16,7 @@ export function analyticsView(data: ProjectAnalyticsResponse) {
     turnEgress: point.turnEgressBytes,
   });
   return {
+    window: data.window,
     summary: data.summary,
     dataQuality: data.dataQuality,
     network: network(data.network),
