@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 import {
   encoderArguments,
+  encoderProgress,
   externalInput,
   roomInput,
   startEncoder,
@@ -160,6 +161,7 @@ async function runJob(value: unknown, slot: number) {
             sequence: ++sequence,
             status: "running",
             sourceInfo,
+            processing: { encodedSeconds: encoderProgress(active).seconds, composedFrames: mixerEngine?.report().frames ?? 0 },
             ...(mixerEngine ? { mixer: mixerEngine.report() } : {}),
           },
           token,
@@ -302,6 +304,7 @@ async function runJob(value: unknown, slot: number) {
     await mixerEngine?.close();
     await stopEncoder(active);
     if (active) encoders.delete(active);
+    const finalProcessing = { encodedSeconds: encoderProgress(active).seconds, composedFrames: mixerEngine?.report().frames ?? 0 };
     active = undefined;
     const finalSignal = AbortSignal.timeout(5000);
     if (exportCreated)
@@ -311,6 +314,7 @@ async function runJob(value: unknown, slot: number) {
       {
         sequence: ++sequence,
         status: finished ? "stopped" : "failed",
+        processing: finalProcessing,
         error: shutdown.signal.aborted ? "WORKER_SHUTDOWN" : "ENCODER_EXITED",
       },
       token,

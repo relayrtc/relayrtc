@@ -277,15 +277,36 @@ export function encoderArguments(
   );
   return args;
 }
+const encodingProgress = new WeakMap<ChildProcess, { seconds: number; frames: number }>();
+export const encoderProgress = (child: ChildProcess | undefined) => child ? encodingProgress.get(child) ?? { seconds: 0, frames: 0 } : { seconds: 0, frames: 0 };
+export function trackEncoderProgress(child: ChildProcess, pipe: number) {
+  const value = { seconds: 0, frames: 0 };
+  encodingProgress.set(child, value);
+  let pending = "";
+  child.stdio[pipe]?.on("data", (chunk: Buffer) => {
+    pending += chunk.toString();
+    if (pending.length > 65536) pending = "";
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      const [key, text] = line.trim().split("=");
+      const n = Number(text);
+      if (!Number.isFinite(n) || n < 0) continue;
+      if (key === "out_time_us") value.seconds = Math.max(value.seconds, n / 1000000);
+      if (key === "frame") value.frames = Math.max(value.frames, n);
+    }
+  });
+}
 export function startEncoder(binary: string, args: string[], signal: AbortSignal): ChildProcess {
-  const child = spawn(binary, args, {
+  const child = spawn(binary, [...args.slice(0, -1), "-progress", "pipe:3", ...args.slice(-1)], {
     windowsHide: true,
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "ignore", "pipe", "pipe"],
     env: { PATH: process.env.PATH },
     signal,
   });
   let diagnostic = "";
-  child.stderr.on("data", (chunk: Buffer) => {
+  trackEncoderProgress(child, 3);
+  child.stderr?.on("data", (chunk: Buffer) => {
     diagnostic += chunk.toString().slice(0, Math.max(0, 8192 - diagnostic.length));
   });
   child.once("close", (code) => {

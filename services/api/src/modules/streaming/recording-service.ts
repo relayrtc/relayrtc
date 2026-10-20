@@ -1,3 +1,4 @@
+import { closeUsageObject, observeRecordingProcessing } from "./service-usage.js";
 import { clipEvent } from "./clip-service.js";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import type { RecordingPolicy, RecordingResource, MediaAsset } from "@relayrtc/types";
@@ -239,8 +240,9 @@ export function registerRecordingMaintenance(
         }
         if (r.leased_until && r.leased_until.getTime() > Date.now()) continue;
         if (r.lease_token) {
+          const processing = await observeRecordingProcessing(db, r);
           await db.execute(
-            sql`UPDATE recording SET lease_token=NULL,leased_until=NULL,worker_id=NULL,last_error='WORKER_INTERRUPTED',next_attempt_at=now()+make_interval(secs=>${Math.min(60, 5 * 2 ** Math.max(0, r.attempts - 1))}) WHERE id=${r.id}`,
+            sql`UPDATE recording SET processing_seconds=processing_seconds+${processing},heartbeat_at=now(),lease_token=NULL,leased_until=NULL,worker_id=NULL,last_error='WORKER_INTERRUPTED',next_attempt_at=now()+make_interval(secs=>${Math.min(60, 5 * 2 ** Math.max(0, r.attempts - 1))}) WHERE id=${r.id}`,
           );
           r = { ...r, last_error: "WORKER_INTERRUPTED" };
         }
@@ -291,9 +293,12 @@ export function registerRecordingMaintenance(
           await database.execute(
             sql`DELETE FROM recording_segment WHERE recording_id=${String(item.id)} AND (name=${String(object.name)} OR init_name=${String(object.name)} OR audio_name=${String(object.name)} OR audio_init_name=${String(object.name)})`,
           );
-          await database.execute(
-            sql`WITH gone AS (DELETE FROM recording_object WHERE recording_id=${String(item.id)} AND name=${String(object.name)} RETURNING size_bytes,committed_at) UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-storage_metered_at)),storage_metered_at=clock_timestamp(),stored_bytes=greatest(0,stored_bytes-coalesce((SELECT sum(size_bytes) FROM gone WHERE committed_at IS NOT NULL),0)) WHERE id=${String(item.id)}`,
-          );
+          await database.transaction(async (db) => {
+            await db.execute(
+              sql`WITH gone AS (DELETE FROM recording_object WHERE recording_id=${String(item.id)} AND name=${String(object.name)} RETURNING size_bytes,committed_at) UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-storage_metered_at)),storage_metered_at=clock_timestamp(),stored_bytes=greatest(0,stored_bytes-coalesce((SELECT sum(size_bytes) FROM gone WHERE committed_at IS NOT NULL),0)) WHERE id=${String(item.id)}`,
+            );
+            await closeUsageObject(db, String(item.id), String(object.name));
+          });
         }
         await database.transaction(async (db) => {
           const r = await getRecording(db, String(item.id), false, true);
@@ -320,6 +325,7 @@ export function registerRecordingMaintenance(
           const deleted = await db.execute(
             sql`DELETE FROM recording_object WHERE recording_id=${String(o.recording_id)} AND name=${String(o.name)} RETURNING size_bytes,committed_at`,
           );
+          if (deleted.length) await closeUsageObject(db, String(o.recording_id), String(o.name));
           if (deleted[0]?.committed_at)
             await db.execute(
               sql`UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-storage_metered_at)),storage_metered_at=clock_timestamp(),stored_bytes=greatest(0,stored_bytes-${Number(deleted[0].size_bytes)}) WHERE id=${String(o.recording_id)}`,

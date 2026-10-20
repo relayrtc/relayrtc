@@ -19,6 +19,7 @@ import { StreamingGateway, ingestPath, programPath } from "./gateway.js";
 import { recordObservationGap, transition } from "./lifecycle.js";
 import { getStream, secret, type Transaction, type SessionRow, conflict } from "./repository.js";
 import { boundedBody } from "./store.js";
+import { observeSourceWork } from "./source-usage.js";
 
 const tokenFor = (request: FastifyRequest) =>
   /^Bearer ([^\s]+)$/u.exec(request.headers.authorization ?? "")?.[1] ?? "";
@@ -34,6 +35,7 @@ const reportSchema = z
     status: z.enum(["running", "failed", "stopped"]),
     error: z.enum(["ENCODER_EXITED", "SOURCE_UNAVAILABLE", "WORKER_SHUTDOWN"]).optional(),
     sourceInfo: streamSourceInfoSchema.optional(),
+    processing: z.object({ encodedSeconds: z.number().min(0).max(172800).refine(Number.isFinite), composedFrames: z.number().int().min(0).max(5184000) }).strict().optional(),
     mixer: mixerReportSchema.optional(),
   })
   .strict();
@@ -201,6 +203,7 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
       }
       if (input.sequence <= session.sampleSequence) return { stop: false, token: grant(session) };
       if (input.status !== "running") {
+        await observeSourceWork(db, session, stream, input.sequence, input.processing, { sourceSeconds: 0, roomExportBytes: 0, externalIngressBytes: 0, programBytes: 0 }, session.lastHeartbeatAt ?? session.createdAt, new Date(), "partial");
         await gateway.removePath(programPath(session.id, session.generation));
         await db.execute(
           sql`UPDATE streaming_session SET leased_until=now(),available_at=now()+interval '2 seconds' WHERE id=${session.id}`,
@@ -259,6 +262,13 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
       const programDelta =
         program >= session.programBytes ? program - session.programBytes : program;
       const countersReset = ingress < session.ingressBytes || program < session.programBytes;
+      const coverage = observed && elapsed <= 10 && !countersReset && (stream.source.kind !== "room" || roomBytes !== null) ? "observed" : "partial";
+      await observeSourceWork(db, session, stream, input.sequence, input.processing, {
+        sourceSeconds: observed ? Math.min(elapsed, 10) : 0,
+        roomExportBytes: stream.source.kind === "room" ? ingressDelta : 0,
+        externalIngressBytes: stream.source.kind !== "room" ? ingressDelta : 0,
+        programBytes: programDelta,
+      }, start, now, coverage);
       if (elapsed > 0 && ingressDelta / elapsed > 2500000) {
         await db.execute(
           sql`UPDATE streaming_session SET desired_state='stopped',last_error='INGRESS_BITRATE_LIMIT' WHERE id=${session.id}`,

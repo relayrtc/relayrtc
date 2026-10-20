@@ -7,7 +7,7 @@ import { z } from "zod";
 import { mixerSceneSchema } from "@relayrtc/validation";
 import { decodeMixerPng } from "@relayrtc/protocol/mixer-png";
 import type { MixerScene, StreamProfile } from "@relayrtc/types";
-import { encoderArguments, encoderDiagnostic, stopEncoder, type EncoderInput } from "./encoder.js";
+import { encoderArguments, encoderDiagnostic, stopEncoder, trackEncoderProgress, type EncoderInput } from "./encoder.js";
 import {
   solid,
   blit,
@@ -76,6 +76,7 @@ export async function startMixerEngine(options: MixerEngineOptions) {
   let appliedVersion = 0,
     appliedSceneId: string | null = null,
     frames = 0,
+    inputSeconds = 0,
     duck = 1,
     overloadedUntil = 0,
     closed = false,
@@ -476,15 +477,16 @@ export async function startMixerEngine(options: MixerEngineOptions) {
   const output = track(
     spawn(
       binary,
-      encoderArguments(raw, options.profile, options.programUrl, options.maxDurationSeconds),
+      ["-progress", "pipe:5", ...encoderArguments(raw, options.profile, options.programUrl, options.maxDurationSeconds)],
       {
-        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe", "pipe"],
         windowsHide: true,
         signal: jobSignal,
         env: cleanEnv,
       },
     ),
   );
+  trackEncoderProgress(output, 5);
   let outputDiagnostic = "";
   output.stderr?.on("data", (data: Buffer) => {
     outputDiagnostic += data.toString().slice(0, Math.max(0, 8192 - outputDiagnostic.length));
@@ -624,6 +626,7 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       Date.now() < overloadedUntil ? Buffer.alloc(PCM_BYTES) : mixed.output,
     );
     frames++;
+    inputSeconds += [...decoders.values()].filter((d) => Date.now() - d.audioAt <= 2000 || (d.videoExpected && Date.now() - d.frameAt <= 2000)).length / MIXER_FPS;
     if (scene && Date.now() >= overloadedUntil && !preparationFailed && !lostFor(scene).length) {
       appliedVersion = scene.revision;
       appliedSceneId = scene.sceneId;
@@ -671,6 +674,7 @@ export async function startMixerEngine(options: MixerEngineOptions) {
         revision: appliedVersion,
         sceneId: appliedSceneId,
         frames,
+        inputSeconds,
         lostSources,
         overloaded: Date.now() < overloadedUntil,
         preparationFailed,

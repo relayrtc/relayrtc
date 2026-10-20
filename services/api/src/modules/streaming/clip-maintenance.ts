@@ -1,3 +1,4 @@
+import { openUsageObject, closeUsageObject } from "./service-usage.js";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import { streamingSecretHash } from "@relayrtc/protocol/streaming-control";
 import { recordingPolicySchema } from "@relayrtc/validation";
@@ -239,6 +240,7 @@ async function prepareClip(
         const committed = await db.execute(
           sql`UPDATE recording_object SET committed_at=clock_timestamp(),metered_at=clock_timestamp() WHERE recording_id=${recording.id} AND name=${name} AND committed_at IS NULL RETURNING size_bytes`,
         );
+        if (committed.length) await openUsageObject(db, recording.id, name);
         if (committed.length)
           await db.execute(
             sql`UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-storage_metered_at)),storage_metered_at=clock_timestamp(),stored_bytes=stored_bytes+${object.size} WHERE id=${recording.id}`,
@@ -342,6 +344,7 @@ async function evictBuffer(database: RelayKitDatabase, recordingId: string, stor
       const deleted = await db.execute(
         sql`DELETE FROM recording_object WHERE recording_id=${r.id} AND name=${String(object.name)} RETURNING size_bytes`,
       );
+      if (deleted.length) await closeUsageObject(db, r.id, String(object.name));
       if (deleted.length)
         await db.execute(
           sql`UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-storage_metered_at)),storage_metered_at=clock_timestamp(),stored_bytes=greatest(0,stored_bytes-${Number(deleted[0]?.size_bytes)}) WHERE id=${r.id}`,

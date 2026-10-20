@@ -1,3 +1,4 @@
+import { observeServiceUsage } from "./service-usage.js";
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
 import { eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -35,7 +36,7 @@ export async function startSession(
     } else {
       if (
         active.ingressId === ingress?.id &&
-        active.ingressCredentialId === ingress?.credentialId &&
+        active.ingressCredentialId === ingress.credentialId &&
         active.desiredState === "running"
       )
         return active;
@@ -142,8 +143,9 @@ export async function recordObservationGap(
   stream: StreamRow,
 ) {
   const start = session.lastHeartbeatAt ?? session.createdAt;
+  await observeServiceUsage(db, { ...stream, streamId: stream.id, resourceType: "stream", resourceId: stream.id, runId: `${session.id}:${String(session.generation)}` }, `source:${session.id}:${String(session.generation)}:${String(session.sampleSequence + 1)}`, { sourceSeconds: 0, programBytes: 0, roomExportBytes: 0, externalIngressBytes: 0 }, start, new Date(Math.max(Date.now(), start.getTime())), "partial");
   await db.execute(sql`INSERT INTO streaming_usage_sample(session_id,generation,sequence,stream_id,organization_id,project_id,environment_id,start_at,end_at,source_seconds,ingress_bytes,program_bytes,coverage)
-    VALUES(${session.id},${session.generation},${session.sampleSequence + 1},${stream.id},${stream.organizationId},${stream.projectId},${stream.environmentId},${start.toISOString()},greatest(now(),${start.toISOString()}::timestamptz),0,0,0,'partial') ON CONFLICT DO NOTHING`);
+    VALUES(${session.id},${String(session.generation)},${String(session.sampleSequence + 1)},${stream.id},${stream.organizationId},${stream.projectId},${stream.environmentId},${start.toISOString()},greatest(now(),${start.toISOString()}::timestamptz),0,0,0,'partial') ON CONFLICT DO NOTHING`);
 }
 export async function transition(
   db: Transaction,
