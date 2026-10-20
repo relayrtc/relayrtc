@@ -173,9 +173,44 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
   app.post("/internal/v1/recordings/fail", (request) =>
     database.transaction(async (db) => {
       const r = await leased(db, request, true);
-      await db.execute(
-        sql`UPDATE recording SET lease_token=NULL,leased_until=NULL,worker_id=NULL,partial=partial OR ${r.state !== "finalizing"},last_error='RECORDING_WORKER_FAILED',next_attempt_at=now()+interval '5 seconds' WHERE id=${r.id}`,
+      const { code } = validate(
+        z
+          .object({
+            code: z
+              .enum([
+                "RECORDING_WORKER_FAILED",
+                "RECORDING_CODEC_UNSUPPORTED",
+                "RECORDING_EXPORT_TOO_LARGE",
+                "RECORDING_EXPORT_TRUNCATED",
+                "CLIP_PACKAGE_TOO_LARGE",
+                "RECORDING_PROCESS_GUARD_REQUIRED",
+                "RECORDING_INVALID_MEDIA",
+                "RECORDING_UPLOAD_FAILED",
+                "RECORDING_MEDIA_UNAVAILABLE",
+                "RECORDING_MEDIA_TOO_LARGE",
+                "RECORDING_PROCESS_FAILED",
+              ])
+              .default("RECORDING_WORKER_FAILED"),
+          })
+          .strict(),
+        request.body ?? {},
       );
+      await db.execute(
+        sql`UPDATE recording SET lease_token=NULL,leased_until=NULL,worker_id=NULL,last_error=${code},next_attempt_at=now()+make_interval(secs=>${Math.min(60, 5 * 2 ** Math.max(0, r.attempts - 1))}) WHERE id=${r.id}`,
+      );
+      if (
+        [
+          "RECORDING_CODEC_UNSUPPORTED",
+          "RECORDING_EXPORT_TOO_LARGE",
+          "RECORDING_EXPORT_TRUNCATED",
+          "CLIP_PACKAGE_TOO_LARGE",
+          "RECORDING_PROCESS_GUARD_REQUIRED",
+          "RECORDING_INVALID_MEDIA",
+        ].includes(code)
+      ) {
+        await setRecordingState(db, r, "failed", code);
+        return { retry: false };
+      }
       return { retry: true };
     }),
   );
@@ -366,7 +401,7 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
         );
         if (!inserted.length) return;
         const [updated] = await db.execute(
-          sql`UPDATE recording SET source_session_id=${source.session.id},source_generation=${String(source.session.generation)},source_sequence=${String(segment.sequence)},segment_count=segment_count+1,last_error=CASE WHEN last_error='BUFFER_STORAGE_PRESSURE' THEN NULL ELSE last_error END,duration_seconds=duration_seconds+${segment.duration},partial=partial OR ${gap},started_at=coalesce(started_at,now()) WHERE id=${r.id} RETURNING *`,
+          sql`UPDATE recording SET source_session_id=${source.session.id},source_generation=${String(source.session.generation)},source_sequence=${String(segment.sequence)},segment_count=segment_count+1,last_error=NULL,duration_seconds=duration_seconds+${segment.duration},partial=partial OR ${gap},started_at=coalesce(started_at,now()) WHERE id=${r.id} RETURNING *`,
         );
         current = recordingRowSchema.parse(updated);
         current = await setRecordingState(db, current, "recording");
@@ -492,12 +527,40 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
         .object({
           parts: z.number().int().min(0).max(128),
           thumbnail: z.boolean(),
-          codecs: z.array(z.enum(["h264", "aac"])).max(2),
+          codecs: z
+            .array(z.enum(["h264", "aac"]))
+            .min(1)
+            .max(2),
           duration: z.number().positive().max(86460),
         })
         .strict(),
       request.body,
     );
+    const completed = await database.transaction(async (db) => {
+      const claims = verifyStreamingGrant(config.secret, bearer(request), "streaming-recording");
+      if (claims?.action !== "finalize") return false;
+      const previous = await getRecording(db, claims.sessionId);
+      if (previous.state !== "ready") return false;
+      if (
+        previous.stream_id !== claims.streamId ||
+        previous.export_fence !== claims.generation ||
+        previous.fence !== claims.generation ||
+        previous.mp4_parts !== input.parts ||
+        previous.has_thumbnail !== input.thumbnail ||
+        Math.abs(previous.duration_seconds - input.duration) >
+          (previous.kind === "clip"
+            ? Math.max(0.5, previous.duration_seconds * 0.01)
+            : Math.max(10, previous.duration_seconds * 0.05)) ||
+        JSON.stringify([...previous.codecs].sort()) !== JSON.stringify([...input.codecs].sort())
+      )
+        throw new ApiError(
+          409,
+          "FINALIZATION_CONFLICT",
+          "Completion does not match the committed asset.",
+        );
+      return true;
+    });
+    if (completed) return { ready: true };
     const r = await database.transaction((db) => leased(db, request));
     if (
       r.state !== "finalizing" ||
@@ -519,6 +582,21 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
       );
       if (!object) throw new Error("CLIP_PACKAGE_MISSING");
       body = await store.get(String(object.object_key));
+      const playlist = body.toString();
+      const lengths = [...playlist.matchAll(/^#EXTINF:([0-9.]+),/gmu)].map((match) =>
+        Number(match[1]),
+      );
+      if (
+        !lengths.length ||
+        lengths.some((length) => !Number.isFinite(length) || length <= 0) ||
+        Math.abs(lengths.reduce((total, length) => total + length, 0) - input.duration) >
+          Math.max(0.5, input.duration * 0.01)
+      )
+        throw new ApiError(
+          409,
+          "CLIP_PACKAGE_DURATION_MISMATCH",
+          "Rendered clip media does not match its declared duration.",
+        );
       const refs = [
         ...body.toString().matchAll(/export_\d+_render_(?:init\.mp4|seg_\d{5}\.m4s)/gu),
       ].map((m) => m[0]);
@@ -552,7 +630,7 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
       if (current.partial && !current.policy.allowPartial)
         throw new Error("RECORDING_PARTIAL_NOT_ALLOWED");
       const [row] = await db.execute(
-        sql`UPDATE recording SET export_fence=${String(r.fence)},mp4_parts=${input.parts},has_thumbnail=${input.thumbnail},codecs=${JSON.stringify(input.codecs)}::jsonb,expires_at=now()+make_interval(secs=>${r.policy.retentionSeconds}),ended_at=coalesce(ended_at,now()),lease_token=NULL,leased_until=NULL,worker_id=NULL WHERE id=${r.id} RETURNING *`,
+        sql`UPDATE recording SET export_fence=${String(r.fence)},mp4_parts=${input.parts},has_thumbnail=${input.thumbnail},codecs=${JSON.stringify(input.codecs)}::jsonb,duration_seconds=CASE WHEN kind='clip' THEN ${input.duration} ELSE duration_seconds END,processing_seconds=processing_seconds+greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-coalesce(heartbeat_at,clock_timestamp()))),expires_at=coalesce(expires_at,now()+make_interval(secs=>${r.policy.retentionSeconds})),ended_at=coalesce(ended_at,now()),lease_token=NULL,leased_until=NULL,worker_id=NULL WHERE id=${r.id} RETURNING *`,
       );
       if (r.kind === "clip")
         await db.execute(sql`DELETE FROM recording_segment WHERE recording_id=${r.id}`);
