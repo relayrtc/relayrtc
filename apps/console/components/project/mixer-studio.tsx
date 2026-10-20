@@ -1017,6 +1017,12 @@ export function MixerStudio({
                 Applied scene: {mixer.appliedSceneId ?? "Waiting for activation"}; revision{" "}
                 {mixer.appliedVersion}.
               </p>
+              {mixer.desiredVersion !== mixer.appliedVersion && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  Preparing revision {mixer.desiredVersion}. The current scene stays on air until
+                  the new scene and its inputs are ready.
+                </p>
+              )}
               <p className="text-sm text-muted-foreground">
                 {mixer.usage.renderSeconds.toFixed(1)} render seconds ·{" "}
                 {mixer.usage.programSeconds.toFixed(1)} program seconds ·{" "}
