@@ -18,7 +18,7 @@ export interface EncoderInput {
   audio: string[];
   sourceInfo: z.infer<typeof streamSourceInfoSchema>;
 }
-function encoderDiagnostic(text: string, urls: readonly string[]) {
+export function encoderDiagnostic(text: string, urls: readonly string[]) {
   let safe = text;
   for (const value of urls) {
     try {
@@ -90,6 +90,8 @@ export async function externalInput(
         "-show_streams",
         "-of",
         "json",
+        "-threads",
+        "1",
         url,
       ],
       {
@@ -172,7 +174,14 @@ export function encoderArguments(
   output: string,
   maxDuration: number,
 ) {
-  const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...input.args];
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-nostdin",
+    "-y",
+    ...input.args.flatMap((value) => (value === "-i" ? ["-threads", "1", value] : [value])),
+  ];
   const filters: string[] = [];
   const videos = profile.audioOnly ? [] : input.video.slice(0, profile.layout === "single" ? 1 : 4);
   // Fixed program clock and format across every accepted source codec.

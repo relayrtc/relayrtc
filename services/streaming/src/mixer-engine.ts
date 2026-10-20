@@ -7,7 +7,7 @@ import { z } from "zod";
 import { mixerSceneSchema } from "@relayrtc/validation";
 import { decodeMixerPng } from "@relayrtc/protocol/mixer-png";
 import type { MixerScene, StreamProfile } from "@relayrtc/types";
-import { encoderArguments, stopEncoder, type EncoderInput } from "./encoder.js";
+import { encoderArguments, encoderDiagnostic, stopEncoder, type EncoderInput } from "./encoder.js";
 import {
   solid,
   blit,
@@ -44,6 +44,13 @@ interface Decoder {
   videoExpected: boolean;
   retryAt: number;
 }
+interface PreparedScene {
+  revision: number;
+  sceneId: string;
+  scene: MixerScene;
+  background: Raster;
+  images: Map<string, Raster>;
+}
 export interface MixerEngineOptions {
   primary: EncoderInput;
   inputForSource?: (sourceId: string) => EncoderInput | undefined;
@@ -64,13 +71,8 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     decoders = new Map<string, Decoder>(),
     children = new Set<ChildProcess>();
   let current: z.infer<typeof configSchema>["mixer"] = null,
-    prepared: {
-      revision: number;
-      sceneId: string;
-      scene: MixerScene;
-      background: Raster;
-      images: Map<string, Raster>;
-    } | null = null;
+    prepared: PreparedScene | null = null,
+    displayed: PreparedScene | null = null;
   let appliedVersion = 0,
     appliedSceneId: string | null = null,
     frames = 0,
@@ -186,11 +188,12 @@ export async function startMixerEngine(options: MixerEngineOptions) {
         ),
       };
     }
-    if (custom)
-      input = {
-        ...input,
-        args: input.args.flatMap((value) => (value === "-i" ? ["-threads", "1", value] : [value])),
-      };
+    input = {
+      ...input,
+      args: input.args.flatMap((value) =>
+        value === "-i" ? ["-analyzeduration", "1000000", "-probesize", "65536", value] : [value],
+      ),
+    };
     const normalize = encoderArguments(
       input,
       { ...options.profile, audioOnly: false, width: 320, height: 180, fps: 15, layout: "grid" },
@@ -222,13 +225,17 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     ];
     const child = track(
       spawn(binary, args, {
-        stdio: ["ignore", "pipe", "ignore", "pipe"],
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
         windowsHide: true,
         signal: jobSignal,
         env: custom || source.id === "primary" ? cleanEnv : guardedEnv,
       }),
     );
     d.child = child;
+    let diagnostic = "";
+    child.stderr?.on("data", (data: Buffer) => {
+      diagnostic += data.toString().slice(0, Math.max(0, 8192 - diagnostic.length));
+    });
     d.partial = Buffer.alloc(0);
     d.audio = Buffer.alloc(0);
     const video = child.stdout,
@@ -256,7 +263,16 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       d.audioAt = Date.now();
       if (d.audio.length >= PCM_BYTES * 2) audio.pause();
     });
-    child.once("close", () => {
+    child.once("close", (code) => {
+      if (!jobSignal.aborted && code !== 0)
+        console.warn(
+          JSON.stringify({
+            event: "mixer.decoder.failed",
+            sourceId: source.id,
+            code,
+            diagnostic: encoderDiagnostic(diagnostic, input.args),
+          }),
+        );
       d.child = undefined;
       d.retryAt = Date.now() + 2000;
     });
@@ -398,55 +414,91 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       preparing = false;
     }
   }
-  const raw: EncoderInput = {
-    args: [
-      "-thread_queue_size",
-      "2",
-      "-f",
-      "rawvideo",
-      "-pixel_format",
-      "rgba",
-      "-video_size",
-      "640x360",
-      "-framerate",
-      "15",
-      "-probesize",
-      "32",
-      "-analyzeduration",
-      "0",
-      "-i",
-      "pipe:3",
-      "-thread_queue_size",
-      "4",
-      "-f",
-      "s16le",
-      "-ar",
-      "48000",
-      "-ac",
-      "2",
-      "-probesize",
-      "32",
-      "-analyzeduration",
-      "0",
-      "-i",
-      "pipe:4",
-    ],
-    video: ["0:v:0"],
-    audio: ["1:a:0"],
-    sourceInfo: options.primary.sourceInfo,
-  };
+  const raw: EncoderInput = options.profile.audioOnly
+    ? {
+        args: [
+          "-thread_queue_size",
+          "4",
+          "-f",
+          "s16le",
+          "-ar",
+          "48000",
+          "-ac",
+          "2",
+          "-probesize",
+          "32",
+          "-analyzeduration",
+          "0",
+          "-i",
+          "pipe:4",
+        ],
+        video: [],
+        audio: ["0:a:0"],
+        sourceInfo: options.primary.sourceInfo,
+      }
+    : {
+        args: [
+          "-thread_queue_size",
+          "2",
+          "-f",
+          "rawvideo",
+          "-pixel_format",
+          "rgba",
+          "-video_size",
+          "640x360",
+          "-framerate",
+          "15",
+          "-probesize",
+          "32",
+          "-analyzeduration",
+          "0",
+          "-i",
+          "pipe:3",
+          "-thread_queue_size",
+          "4",
+          "-f",
+          "s16le",
+          "-ar",
+          "48000",
+          "-ac",
+          "2",
+          "-probesize",
+          "32",
+          "-analyzeduration",
+          "0",
+          "-i",
+          "pipe:4",
+        ],
+        video: ["0:v:0"],
+        audio: ["1:a:0"],
+        sourceInfo: options.primary.sourceInfo,
+      };
   const output = track(
     spawn(
       binary,
       encoderArguments(raw, options.profile, options.programUrl, options.maxDurationSeconds),
       {
-        stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
+        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
         windowsHide: true,
         signal: jobSignal,
         env: cleanEnv,
       },
     ),
   );
+  let outputDiagnostic = "";
+  output.stderr?.on("data", (data: Buffer) => {
+    outputDiagnostic += data.toString().slice(0, Math.max(0, 8192 - outputDiagnostic.length));
+  });
+  output.once("close", (code) => {
+    if (code !== 0 && outputDiagnostic)
+      console.warn(
+        JSON.stringify({
+          event: "mixer.output.failed",
+          code,
+          diagnostic: encoderDiagnostic(outputDiagnostic, [options.programUrl]),
+        }),
+      );
+  });
   let killTimer: ReturnType<typeof setTimeout> | undefined;
   const forceCleanup = () => {
     killTimer = setTimeout(() => {
@@ -467,27 +519,71 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     audioBusy = false;
   });
   videoOut.on("error", () => {
+    console.warn(
+      JSON.stringify({
+        event: "mixer.output.pipe_failed",
+        pipe: "video",
+        diagnostic: encoderDiagnostic(outputDiagnostic, [options.programUrl]),
+      }),
+    );
     options.onFatal();
   });
   audioOut.on("error", () => {
+    console.warn(
+      JSON.stringify({
+        event: "mixer.output.pipe_failed",
+        pipe: "audio",
+        diagnostic: encoderDiagnostic(outputDiagnostic, [options.programUrl]),
+      }),
+    );
     options.onFatal();
   });
-  const black = solid("#000000"),
-    lost = () =>
-      [...decoders.values()]
-        .filter((d) => Date.now() - (d.videoExpected ? d.frameAt : d.audioAt) > 2000)
-        .map((d) => d.sourceId);
+  const black = solid("#000000");
+  const lostFor = (scene: PreparedScene | null) => {
+    if (!scene) return [];
+    const video = new Set(
+      scene.scene.layers.filter((layer) => layer.opacity > 0).map((layer) => layer.sourceId),
+    );
+    const audio = new Set(
+      scene.scene.audio.filter((source) => !source.muted).map((source) => source.sourceId),
+    );
+    return [...new Set([...video, ...audio])].filter((id) => {
+      const d = decoders.get(id);
+      return (
+        !d ||
+        (video.has(id) && d.videoExpected && Date.now() - d.frameAt > 2000) ||
+        (audio.has(id) && Date.now() - d.audioAt > 2000)
+      );
+    });
+  };
+  const lost = () => [...new Set([...lostFor(prepared), ...lostFor(displayed)])];
   const tick = () => {
     if (closed || jobSignal.aborted) return;
     const begun = Date.now();
     if (videoBusy || audioBusy) {
       overloadedUntil = begun + 5000;
       if (!blockedAt) blockedAt = begun;
-      if (begun - blockedAt > 3000) options.onFatal();
+      if (begun - blockedAt > 3000) {
+        console.warn(
+          JSON.stringify({
+            event: "mixer.output.stalled",
+            frames,
+            diagnostic: encoderDiagnostic(outputDiagnostic, [options.programUrl]),
+          }),
+        );
+        options.onFatal();
+      }
       return;
     }
     blockedAt = 0;
-    const scene = prepared,
+    if (
+      prepared &&
+      !preparationFailed &&
+      Date.now() >= overloadedUntil &&
+      !lostFor(prepared).length
+    )
+      displayed = prepared;
+    const scene = displayed,
       unavailable = new Set(lost()),
       blocks = new Map<string, Buffer>();
     for (const d of decoders.values()) {
@@ -523,12 +619,12 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       ? mixAudio(scene.scene, blocks, duck)
       : { output: Buffer.alloc(PCM_BYTES), duck: 1 };
     duck = mixed.duck;
-    videoBusy = !videoOut.write(canvas);
+    videoBusy = !options.profile.audioOnly && !videoOut.write(canvas);
     audioBusy = !audioOut.write(
       Date.now() < overloadedUntil ? Buffer.alloc(PCM_BYTES) : mixed.output,
     );
     frames++;
-    if (scene && Date.now() >= overloadedUntil) {
+    if (scene && Date.now() >= overloadedUntil && !preparationFailed && !lostFor(scene).length) {
       appliedVersion = scene.revision;
       appliedSceneId = scene.sceneId;
     }
@@ -549,16 +645,37 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     if (!closed && !signal.aborted) options.onFatal();
   });
   triggerPoll();
+  let previousLost = "";
   return {
     output,
-    report: () => ({
-      revision: appliedVersion,
-      sceneId: appliedSceneId,
-      frames,
-      lostSources: lost(),
-      overloaded: Date.now() < overloadedUntil,
-      preparationFailed,
-    }),
+    report: () => {
+      const lostSources = lost();
+      const key = JSON.stringify(lostSources);
+      if (key !== previousLost) {
+        previousLost = key;
+        console.info(
+          JSON.stringify({
+            event: "mixer.inputs.changed",
+            lostSources,
+            inputs: [...decoders.values()].map((d) => ({
+              id: d.sourceId,
+              videoAgeMs: d.frameAt ? Date.now() - d.frameAt : null,
+              audioAgeMs: d.audioAt ? Date.now() - d.audioAt : null,
+              videoExpected: d.videoExpected,
+              decoding: !!d.child,
+            })),
+          }),
+        );
+      }
+      return {
+        revision: appliedVersion,
+        sceneId: appliedSceneId,
+        frames,
+        lostSources,
+        overloaded: Date.now() < overloadedUntil,
+        preparationFailed,
+      };
+    },
     close: async () => {
       if (closed) return;
       closed = true;
