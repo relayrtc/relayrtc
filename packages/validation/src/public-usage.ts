@@ -1,3 +1,4 @@
+import { serviceUsageReportSchema } from "./service-usage.js";
 import { z } from "zod";
 
 import { environmentIdSchema, organizationIdSchema, projectIdSchema } from "./common.js";
@@ -56,7 +57,7 @@ export const publicUsageResponseSchema = z
         environmentId: environmentIdSchema,
       })
       .strict(),
-    category: z.enum(["all", "rooms", "participants", "sfu", "turn", "signaling", "screen-share"]),
+    category: z.enum(["all", "rooms", "participants", "sfu", "turn", "signaling", "screen-share", "streaming"]),
     window: z
       .object({
         range: z.union([usageRangeSchema, z.literal("custom")]),
@@ -102,6 +103,7 @@ export const publicUsageResponseSchema = z
       )
       .partial()
       .strict(),
+    serviceUsage: serviceUsageReportSchema.optional(),
     summary: publicUsageMetricsSchema,
     buckets: z
       .array(
