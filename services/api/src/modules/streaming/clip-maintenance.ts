@@ -169,11 +169,7 @@ async function prepareClip(
     const source = await boundedMaintenanceTransaction(database, (db) =>
       getRecording(db, clip.source_recording_id),
     );
-    if (
-      ["deleted", "deleting", "failed"].includes(source.state) ||
-      (source.expires_at && source.expires_at.getTime() <= Date.now())
-    )
-      throw new ClipPreparationError("CLIP_SOURCE_LOST");
+    if (source.state === "deleted") throw new ClipPreparationError("CLIP_SOURCE_LOST");
     const segments = await database.execute(
       sql`SELECT s.* FROM clip_segment_pin p JOIN recording_segment s ON s.recording_id=p.recording_id AND s.position=p.position WHERE p.clip_id=${clip.id} ORDER BY s.position`,
     );
@@ -230,7 +226,11 @@ async function prepareClip(
       });
       if (object === undefined) break;
       if (object === null) continue;
-      const body = await store.get(object.sourceKey);
+      const body = await store.get(object.sourceKey).catch((error: unknown) => {
+        if (error instanceof Error && error.message === "STORAGE_HTTP_404")
+          throw new ClipPreparationError("CLIP_SEGMENT_MISSING");
+        throw error;
+      });
       if (body.length !== object.size || streamingSecretHash(body) !== object.sha256)
         throw new ClipPreparationError("CLIP_SEGMENT_CONFLICT");
       await store.put(object.key, body);
@@ -344,7 +344,7 @@ async function evictBuffer(database: RelayKitDatabase, recordingId: string, stor
       );
       if (deleted.length)
         await db.execute(
-          sql`UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM now()-storage_metered_at)),storage_metered_at=now(),stored_bytes=greatest(0,stored_bytes-${Number(deleted[0]?.size_bytes)}) WHERE id=${r.id}`,
+          sql`UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-storage_metered_at)),storage_metered_at=clock_timestamp(),stored_bytes=greatest(0,stored_bytes-${Number(deleted[0]?.size_bytes)}) WHERE id=${r.id}`,
         );
     }
   });
@@ -423,10 +423,19 @@ export function registerClipMaintenance(
       });
     }, 3000);
     timer.unref();
-    return { stop: () => clearInterval(timer), pending: () => running };
+    return {
+      stop: () => {
+        clearInterval(timer);
+      },
+      pending: () => running,
+    };
   });
   return async () => {
     for (const task of tasks) task.stop();
-    await Promise.all(tasks.map((task) => task.pending()));
+    await Promise.all(
+      tasks
+        .map((task) => task.pending())
+        .filter((pending): pending is Promise<void> => pending !== undefined),
+    );
   };
 }
