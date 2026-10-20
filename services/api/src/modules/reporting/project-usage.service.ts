@@ -1,3 +1,4 @@
+import { getServiceUsage } from "./service-usage-report.js";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import { projectUsageResponseSchema, type ProjectUsageResponse } from "@relayrtc/validation";
 
@@ -20,6 +21,7 @@ export async function getProjectUsage(
   const row = result[0] as { summary: unknown; buckets: unknown; complete: boolean; turn_coverage?: unknown } | undefined;
   return projectUsageResponseSchema.parse({
     scope,
+    serviceUsage: await getServiceUsage(database, scope, { startedAt: window.startedAt, endedAt: window.endedAt }, endedAt),
     window,
     summary: row?.summary,
     buckets: row?.buckets,

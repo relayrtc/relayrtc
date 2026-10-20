@@ -1,3 +1,4 @@
+import { streamingUsageRoutes } from "./modules/streaming/usage-routes.js";
 import { guestRoutes } from "./modules/streaming/guest-routes.js";
 import { registerGuestMaintenance } from "./modules/streaming/guest-service.js";
 import { dvrRoutes } from "./modules/streaming/dvr-routes.js";
@@ -315,6 +316,19 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
         : {}),
     });
     void app.register(recordingRoutes, {
+      ...streamingOptions,
+      prefix: "/v1",
+      ...(options.config.consoleAuth
+        ? {
+            consoleOrigin: new URL(options.config.consoleAuth.baseUrl).origin,
+            verifyConsoleSession: createRelayKitSessionVerifier({
+              database: options.database,
+              ...options.config.consoleAuth,
+            }),
+          }
+        : {}),
+    });
+    void app.register(streamingUsageRoutes, {
       ...streamingOptions,
       prefix: "/v1",
       ...(options.config.consoleAuth

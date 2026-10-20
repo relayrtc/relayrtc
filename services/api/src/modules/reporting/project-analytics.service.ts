@@ -1,3 +1,4 @@
+import { getServiceUsage } from "./service-usage-report.js";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import {
   projectAnalyticsResponseSchema,
@@ -95,6 +96,7 @@ export async function getProjectAnalytics(
   return projectAnalyticsResponseSchema.parse({
     ...data,
     scope,
+    serviceUsage: await getServiceUsage(database, scope, { startedAt: window.startedAt, endedAt: window.endedAt }, endedAt),
     window,
     qualityGranularitySeconds: 60,
     dataQuality: usageDataQuality(complete === true, turnCoverage),

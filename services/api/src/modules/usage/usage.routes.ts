@@ -29,6 +29,7 @@ export const usageRoutes: FastifyPluginCallback<{
     "turn",
     "signaling",
     "screen-share",
+    "streaming",
   ];
   for (const category of categories) {
     app.get(
