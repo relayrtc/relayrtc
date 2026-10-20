@@ -2,6 +2,8 @@ import { schema, type RelayKitDatabase } from "@relayrtc/database";
 import { verifyStreamingGrant, streamingSecretHash } from "@relayrtc/protocol/streaming-control";
 import { streamingIdSchema, streamingObjectNameSchema } from "@relayrtc/validation";
 import { eq, sql } from "drizzle-orm";
+import { meterMediaResponse } from "./delivery-usage.js";
+import { mediaRange } from "./media-range.js";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../../http/errors/api-error.js";
@@ -433,25 +435,12 @@ export const playbackRoutes: FastifyPluginAsync<{
       throw new ApiError(401, "PLAYBACK_GRANT_EXPIRED", "Refresh your playback grant");
     reply.type(contentType(name));
     if (request.headers.range && !name.endsWith("m3u8")) {
-      const range = /^bytes=(\d+)-(\d*)$/u.exec(request.headers.range);
-      if (!range)
-        return reply
-          .code(416)
-          .header("content-range", `bytes */${String(body.length)}`)
-          .send();
-      const start = Number(range[1]),
-        end = range[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1;
-      if (start > end || start >= body.length)
-        return reply
-          .code(416)
-          .header("content-range", `bytes */${String(body.length)}`)
-          .send();
-      reply
-        .code(206)
-        .header("content-range", `bytes ${String(start)}-${String(end)}/${String(body.length)}`);
-      body = body.subarray(start, end + 1);
+      const range = mediaRange(request, reply, body.length);
+      if (!range) return reply.send();
+      body = body.subarray(range.start, range.end + 1);
     }
     await database.transaction(scheduledAccess);
+    await meterMediaResponse(database, request, reply, { ...data.stream, streamId: data.stream.id, resourceType: "stream", resourceId: data.stream.id, runId: data.session.id }, grant.sub, !name.endsWith("m3u8"));
     return reply.header("accept-ranges", "bytes").send(body);
   });
   return Promise.resolve();
