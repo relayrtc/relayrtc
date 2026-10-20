@@ -50,6 +50,7 @@ import {
 import type { ConsoleEnvironment } from "@/lib/console-types";
 import type { ConsoleClip, ConsoleClipWindow } from "@/lib/streaming/clip-contracts";
 import { RecordingPreview } from "./recording-preview";
+import { AssetAccessControls } from "./asset-access-controls";
 
 export function ClipsManager({
   projectId,
@@ -673,6 +674,15 @@ export function ClipsManager({
                       Prepare download
                     </Button>
                   </div>
+                  {canManage && (
+                    <AssetAccessControls
+                      key={selected.assetId}
+                      projectId={projectId}
+                      environmentId={environmentId}
+                      assetId={selected.assetId}
+                      onRevoked={() => setDownload(null)}
+                    />
+                  )}
                   {download && (
                     <a href={download} rel="noreferrer" className="underline">
                       Download MP4 (expires in five minutes)

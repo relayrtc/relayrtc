@@ -113,6 +113,22 @@ export async function createAssetGrantAction(input: unknown) {
     p.data.idempotencyKey,
   );
 }
+export async function revokeAssetGrantsAction(input: unknown) {
+  const p = scope
+    .extend({ assetId: streamingIdSchema, idempotencyKey: z.string().uuid() })
+    .safeParse(input);
+  if (!p.success) return invalid;
+  return requestStreaming(
+    p.data.projectId,
+    p.data.environmentId,
+    `assets/${p.data.assetId}/access-grants/revoke`,
+    z.object({ assetId: z.string(), revoked: z.boolean() }),
+    "POST",
+    {},
+    {},
+    p.data.idempotencyKey,
+  );
+}
 export async function getRecordingPolicyAction(input: unknown) {
   const p = scope.extend({ streamId: streamingIdSchema }).safeParse(input);
   if (!p.success) return invalid;
