@@ -35,6 +35,7 @@ import {
   createIngestCredentialAction,
   getStreamingOperationAction,
   getStreamUsageAction,
+  getStreamUsageReportAction,
 } from "@/actions/streaming";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +52,8 @@ import type { ConsoleIngestCredential, ConsoleStreamingOperation } from "@/lib/s
 import { useStreamWorkspace } from "./stream-workspace";
 import { StreamPreview } from "./stream-preview";
 import { BroadcastDetails } from "./broadcasts-manager";
+import { ServiceUsagePanel } from "./service-usage-panel";
+import type { ServiceUsageReport } from "@relayrtc/validation";
 import type { StreamPlaybackReadiness } from "@relayrtc/types";
 
 export function StreamOverview() {
@@ -71,6 +74,9 @@ export function StreamOverview() {
     programBytes: number;
     coverage: string;
   } | null>(null);
+  const [usageReport, setUsageReport] = useState<ServiceUsageReport>();
+  const [usageRange, setUsageRange] = useState<"24h" | "7d" | "30d">("24h");
+  const [usageError, setUsageError] = useState<string | null>(null);
   const keys = useRef(new Map<string, string>()),
     alive = useRef(true);
   useEffect(() => {
@@ -91,8 +97,15 @@ export function StreamOverview() {
       if (busy) return;
       busy = true;
       try {
-        const result = await getStreamUsageAction({ projectId, environmentId, streamId });
+        const [result, report] = await Promise.all([
+          getStreamUsageAction({ projectId, environmentId, streamId }),
+          getStreamUsageReportAction({ projectId, environmentId, streamId, range: usageRange }),
+        ]);
         if (active && result.data) setUsage(result.data);
+        if (active) {
+          setUsageError(report.error?.description ?? null);
+          if (report.data) setUsageReport(report.data);
+        }
       } finally {
         busy = false;
       }
@@ -103,7 +116,7 @@ export function StreamOverview() {
       active = false;
       clearInterval(timer);
     };
-  }, [projectId, environmentId, streamId]);
+  }, [projectId, environmentId, streamId, usageRange]);
   const operationId = operation?.id,
     operationStatus = operation?.status;
   useEffect(() => {
@@ -294,14 +307,14 @@ export function StreamOverview() {
     {
       label: "Source time",
       value: usage ? `${Math.round(usage.sourceSeconds / 60).toLocaleString()} min` : "--",
-      detail: "Total observed source time",
+      detail: "Lifetime observed source time",
       icon: Clock3,
       color: "text-violet-600 dark:text-violet-400",
     },
     {
       label: "Media received",
       value: usage ? `${(usage.ingressBytes / 1048576).toFixed(1)} MiB` : "--",
-      detail: usage?.coverage === "partial" ? "Partial usage coverage" : "Observed incoming media",
+      detail: usage?.coverage === "partial" ? "Lifetime; partial measurement" : "Lifetime incoming media",
       icon: AudioLines,
       color: "text-amber-600 dark:text-amber-400",
     },
@@ -680,6 +693,14 @@ export function StreamOverview() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <details className="rounded-xl border p-4">
+        <summary className="cursor-pointer text-sm font-medium">Usage by time window and resource</summary>
+        <div className="mt-4 flex flex-col gap-4">
+          <SimpleSelect value={usageRange} onValueChange={(v) => { setUsageReport(undefined); setUsageRange(v as "24h" | "7d" | "30d"); }} options={[{ value: "24h", label: "Last 24 hours" }, { value: "7d", label: "Last 7 days" }, { value: "30d", label: "Last 30 days" }]} />
+          {usageError && <p role="status" className="text-sm text-muted-foreground">{usageError}</p>}
+          <ServiceUsagePanel data={usageReport} />
+        </div>
+      </details>
     </div>
   );
 }

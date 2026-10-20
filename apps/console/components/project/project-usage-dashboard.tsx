@@ -9,6 +9,7 @@ import { downloadCsv } from '@/lib/csv'
 import { ReportingFilters } from './reporting-filters'
 import { UsageChart } from './usage-chart'
 import { UsageMetrics } from './usage-metrics'
+import { ServiceUsagePanel } from './service-usage-panel'
 import { ReportingRefresh } from './reporting-refresh'
 
 export function ProjectUsageDashboard({ data, quota, environments, environment }: {
@@ -39,6 +40,7 @@ export function ProjectUsageDashboard({ data, quota, environments, environment }
         </div>
       </div>
       <UsageMetrics summary={data.summary} dataQuality={data.dataQuality} period={data.window.range} />
+      <ServiceUsagePanel data={data.serviceUsage} />
       <p className="text-xs text-muted-foreground">{quota.status === 'unconfigured' ? 'Organization usage limits are not configured.' : 'Organization quota unavailable.'}</p>
     </div>
   )

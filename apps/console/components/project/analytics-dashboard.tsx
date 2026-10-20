@@ -35,6 +35,7 @@ import {
 import type { AnalyticsRange, ProjectAnalyticsData } from "@/lib/reporting/analytics-view";
 import type { ConsoleEnvironment } from "@/lib/console-types";
 import { formatBytes, formatDuration, formatMinutes, formatNumber } from "@/lib/format";
+import { ServiceUsagePanel } from "./service-usage-panel";
 import { ReportingRefresh } from "./reporting-refresh";
 import { cn } from "@/lib/utils";
 
@@ -44,7 +45,7 @@ const ranges: {
 }[] = [
   {
     value: "live",
-    label: "Live",
+    label: "Live (last 15 minutes)",
   },
   {
     value: "24h",
@@ -759,6 +760,7 @@ export function AnalyticsDashboard({
           </Table>
         </div>
       </Panel>
+      <ServiceUsagePanel data={data.serviceUsage} />
     </div>
   );
 }

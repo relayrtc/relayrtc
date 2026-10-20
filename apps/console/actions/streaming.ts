@@ -6,6 +6,7 @@ import {
   updateStreamSchema,
   streamingIdSchema,
   streamScopeSchema,
+  serviceUsageReportSchema,
 } from "@relayrtc/validation";
 import { requestStreaming } from "@/lib/streaming/client";
 import {
@@ -152,4 +153,10 @@ export async function getStreamUsageAction(input: unknown) {
     `streams/${parsed.data.streamId}/usage`,
     usageSchema,
   );
+}
+
+export async function getStreamUsageReportAction(input: unknown) {
+  const parsed = resource.extend({ range: z.enum(["24h", "7d", "30d"]) }).safeParse(input);
+  if (!parsed.success) return invalid;
+  return requestStreaming(parsed.data.projectId, parsed.data.environmentId, `streams/${parsed.data.streamId}/usage-report`, serviceUsageReportSchema, "GET", undefined, { range: parsed.data.range });
 }
