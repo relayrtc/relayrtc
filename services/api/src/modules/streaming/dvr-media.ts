@@ -119,9 +119,6 @@ export const dvrMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
           "DVR_RANGE_EXPIRED",
           "This seek range has expired. Return to the available window.",
         );
-      await db.execute(
-        sql`UPDATE dvr_segment_pin SET expires_at=greatest(expires_at,now()+interval '60 seconds') WHERE recording_id=${data.r.id} AND position=${Number(segment.position)}`,
-      );
       const [object] = await db.execute(
         sql`SELECT object_key FROM recording_object WHERE recording_id=${data.r.id} AND name=${name} AND committed_at IS NOT NULL`,
       );

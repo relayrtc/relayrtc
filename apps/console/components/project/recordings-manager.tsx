@@ -49,6 +49,7 @@ import {
 import type { ConsoleEnvironment } from "@/lib/console-types";
 import type { ConsoleRecording } from "@/lib/streaming/recording-contracts";
 import { RecordingPreview } from "./recording-preview";
+import { AssetAccessControls } from "./asset-access-controls";
 
 const defaultPolicy: RecordingPolicy = {
   mode: "manual",
@@ -640,6 +641,21 @@ export function RecordingsManager({
                 >
                   Prepare download
                 </Button>
+              )}
+              {selected.state === "ready" && canManage && (
+                <AssetAccessControls
+                  key={selected.assetId}
+                  projectId={projectId}
+                  environmentId={environmentId}
+                  assetId={selected.assetId}
+                  onRevoked={() => setDownload(null)}
+                />
+              )}
+              {selected.state === "deleting" && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  Playback is disabled. Stored media is being removed; storage usage stops as
+                  cleanup completes.
+                </p>
               )}
               {download && (
                 <a href={download} className="block text-sm underline" referrerPolicy="no-referrer">

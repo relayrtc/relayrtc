@@ -38,11 +38,7 @@ export class DynamicStreamingExports {
   ) {
     let state = this.states.get(request.exportId);
     if (!state) {
-      if (
-        this.states.size >= 32 ||
-        [...this.states.values()].some((s) => s.roomId === request.roomId)
-      )
-        throw new Error("STREAM_EXPORT_CAPACITY");
+      if (this.states.size >= 32) throw new Error("STREAM_EXPORT_CAPACITY");
       const close = () => {
         this.close(request.exportId);
       };
@@ -59,8 +55,12 @@ export class DynamicStreamingExports {
       this.states.set(request.exportId, state);
     }
     const current = state;
+    if (current.roomId !== request.roomId) throw new Error("STREAM_EXPORT_SCOPE_CONFLICT");
     const available = [...producers.values()]
-      .filter((p) => !p.closed && !p.paused)
+      .filter((p) => {
+        const selected = p.kind === "video" ? request.videoTrackIds : request.audioTrackIds;
+        return !p.closed && !p.paused && (!selected.length || selected.includes(p.id));
+      })
       .sort(
         (a, b) =>
           String(a.appData.participantId).localeCompare(String(b.appData.participantId)) ||
@@ -68,12 +68,15 @@ export class DynamicStreamingExports {
             Number(a.appData.trackType === "screen_video") ||
           a.id.localeCompare(b.id),
       );
+    let selectedVideos = 0;
     const owners = new Set<string>(),
       selected = available.filter((p) => {
         if (p.kind !== "video" || request.audioOnly) return false;
         const owner = String(p.appData.participantId);
-        if (owners.has(owner) || owners.size >= 4) return false;
+        if ((!request.videoTrackIds.length && owners.has(owner)) || selectedVideos >= 4)
+          return false;
         owners.add(owner);
+        selectedVideos++;
         return true;
       });
     selected.push(...available.filter((p) => p.kind === "audio").slice(0, 8));

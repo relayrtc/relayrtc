@@ -51,19 +51,48 @@ for (const signal of ["SIGTERM", "SIGINT"] as const)
     shutdown.abort();
   });
 async function call(path: string, token: string, body: unknown, signal: AbortSignal) {
-  const response = await fetch(new URL(`/internal/v1/recordings/${path}`, origin), {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
-    redirect: "error",
-    signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
-  });
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error("RECORDING_CONTROL_UNAVAILABLE");
+  return retry(async () => {
+    const response = await fetch(new URL(`/internal/v1/recordings/${path}`, origin), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new RecordingRequestError(
+        "RECORDING_CONTROL_UNAVAILABLE",
+        response.status >= 500 || response.status === 429,
+      );
+    }
+    lastControl = Date.now();
+    return response.json() as Promise<unknown>;
+  }, signal);
+}
+class RecordingRequestError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
   }
-  lastControl = Date.now();
-  return response.json() as Promise<unknown>;
+}
+async function retry<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    signal.throwIfAborted();
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        signal.aborted ||
+        attempt >= 2 ||
+        (error instanceof RecordingRequestError && !error.retryable)
+      )
+        throw error;
+      await delay(250 * 2 ** attempt, undefined, { signal });
+    }
+  }
 }
 async function bounded(response: Response, limit = 16777216) {
   if (!response.ok) {
@@ -276,18 +305,26 @@ async function run(value: unknown) {
       let parts = 0;
       let outputDuration = probe.format.duration;
       const upload = async (name: string, body: Buffer) => {
-        const response = await fetch(new URL(`/internal/v1/recordings/upload/${name}`, origin), {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/octet-stream" },
-          body: new Uint8Array(body),
-          redirect: "error",
-          signal: AbortSignal.any([signal, AbortSignal.timeout(20000)]),
-        });
-        if (!response.ok) {
+        await retry(async () => {
+          const response = await fetch(new URL(`/internal/v1/recordings/upload/${name}`, origin), {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${token}`,
+              "content-type": "application/octet-stream",
+            },
+            body: new Uint8Array(body),
+            redirect: "error",
+            signal: AbortSignal.any([signal, AbortSignal.timeout(20000)]),
+          });
+          if (!response.ok) {
+            await response.body?.cancel();
+            throw new RecordingRequestError(
+              "RECORDING_UPLOAD_FAILED",
+              response.status >= 500 || response.status === 429,
+            );
+          }
           await response.body?.cancel();
-          throw new Error("RECORDING_UPLOAD_FAILED");
-        }
-        await response.body?.cancel();
+        }, signal);
       };
       if (job.exportMp4) {
         await execute("ffmpeg", [
@@ -339,10 +376,36 @@ async function run(value: unknown) {
           Math.abs(
             verified.format.duration -
               (job.clip?.cut_mode === "precise" ? job.clip.duration : probe.format.duration),
-          ) > Math.max(5, probe.format.duration * 0.03)
+          ) >
+          (job.clip
+            ? Math.max(
+                0.5,
+                (job.clip.cut_mode === "precise" ? job.clip.duration : probe.format.duration) *
+                  0.01,
+              )
+            : Math.max(5, probe.format.duration * 0.03))
         )
           throw new Error("RECORDING_EXPORT_TRUNCATED");
         outputDuration = verified.format.duration;
+        await execute("ffmpeg", [
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-err_detect",
+          "explode",
+          "-threads",
+          "2",
+          "-i",
+          mp4,
+          "-map",
+          "0:v:0?",
+          "-map",
+          "0:a:0?",
+          "-f",
+          "null",
+          "-",
+        ]);
         const file = await open(mp4, "r");
         try {
           for (let offset = 0; offset < info.size; offset += 8388608) {
@@ -355,6 +418,23 @@ async function run(value: unknown) {
           await file.close();
         }
       }
+      if (!job.exportMp4)
+        await execute("ffmpeg", [
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-err_detect",
+          "explode",
+          ...input,
+          "-map",
+          "0:v:0?",
+          "-map",
+          "0:a:0?",
+          "-f",
+          "null",
+          "-",
+        ]);
       if (job.clip) {
         const manifest = join(directory, "render.m3u8");
         await execute("ffmpeg", [
@@ -428,9 +508,25 @@ async function run(value: unknown) {
         signal,
       );
     }
-  } catch {
+  } catch (error) {
     failures++;
-    if (!signal.aborted) await call("fail", token, {}, signal).catch(() => undefined);
+    const known = new Set([
+      "RECORDING_CODEC_UNSUPPORTED",
+      "RECORDING_EXPORT_TOO_LARGE",
+      "RECORDING_EXPORT_TRUNCATED",
+      "CLIP_PACKAGE_TOO_LARGE",
+      "RECORDING_PROCESS_GUARD_REQUIRED",
+      "RECORDING_INVALID_MEDIA",
+      "RECORDING_UPLOAD_FAILED",
+      "RECORDING_MEDIA_UNAVAILABLE",
+      "RECORDING_MEDIA_TOO_LARGE",
+      "RECORDING_PROCESS_FAILED",
+    ]);
+    const code =
+      error instanceof Error && known.has(error.message)
+        ? error.message
+        : "RECORDING_WORKER_FAILED";
+    if (!signal.aborted) await call("fail", token, { code }, signal).catch(() => undefined);
   } finally {
     clearInterval(timer);
     clearInterval(watchdog);

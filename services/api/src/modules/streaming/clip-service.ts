@@ -55,8 +55,14 @@ export async function getClip(db: Transaction, key: string): Promise<ClipResourc
     cutMode: c.cut_mode,
     requestedStartSeconds: c.requested_start_seconds,
     requestedEndSeconds: c.requested_end_seconds,
-    resolvedStartSeconds: c.resolved_start_seconds,
-    resolvedEndSeconds: c.resolved_end_seconds,
+    resolvedStartSeconds:
+      r.state === "ready" && c.cut_mode === "precise"
+        ? c.requested_start_seconds
+        : c.resolved_start_seconds,
+    resolvedEndSeconds:
+      r.state === "ready" && c.cut_mode === "precise"
+        ? c.requested_start_seconds + r.duration_seconds
+        : c.resolved_end_seconds,
     durationSeconds: r.duration_seconds,
     published: c.published,
     lastError: r.last_error,

@@ -195,10 +195,7 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
       const [stage] = await db.execute(
         sql`SELECT st.broadcast_id FROM stream_guest_stage st JOIN broadcast_run b ON b.id=st.broadcast_id WHERE st.stream_id=${stream.id} AND st.enabled AND ${config.guestsEnabled} AND b.desired_state='running' AND b.state NOT IN ('stopping','stopped','failed')`,
       );
-      if (
-        (desiredMixer ? String(desiredMixer.id) : null) !== session.mixerId ||
-        !!stage !== session.guestStage
-      ) {
+      if ((desiredMixer ? String(desiredMixer.id) : null) !== session.mixerId) {
         await db.execute(sql`UPDATE streaming_session SET attempts=0 WHERE id=${session.id}`);
         return { stop: true };
       }
@@ -276,6 +273,7 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
           leasedUntil: new Date(Date.now() + 15000),
           lastHeartbeatAt: now,
           sampleSequence: input.sequence,
+          guestStage: !!stage,
           ingressBytes: ingress,
           programBytes: program,
           ingressBitrate: elapsed > 0 ? Math.round((ingressDelta * 8) / elapsed) : 0,
@@ -306,15 +304,17 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
         stream.source.kind !== "room"
       )
         throw conflict("SOURCE_UNAVAILABLE", "This session has no active room source");
+      const [stage] = await db.execute(
+        sql`SELECT layout,version FROM stream_guest_stage WHERE stream_id=${stream.id} AND enabled AND ${config.guestsEnabled} AND EXISTS(SELECT 1 FROM broadcast_run b WHERE b.id=stream_guest_stage.broadcast_id AND b.desired_state='running' AND b.state NOT IN ('stopping','stopped','failed'))`,
+      );
       const body = {
         exportId: `${session.id}_${String(session.generation)}`,
         roomId: stream.source.roomId,
-        videoTrackIds:
-          session.guestStage || stream.profile.audioOnly ? [] : stream.source.videoTrackIds,
-        audioTrackIds: session.guestStage ? [] : stream.source.audioTrackIds,
+        videoTrackIds: stage || stream.profile.audioOnly ? [] : stream.source.videoTrackIds,
+        audioTrackIds: stage ? [] : stream.source.audioTrackIds,
         audioOnly: stream.profile.audioOnly,
-        layout: session.guestStage ? ("grid" as const) : stream.profile.layout,
-        dynamic: session.guestStage,
+        layout: stage ? ("grid" as const) : stream.profile.layout,
+        dynamic: true,
         receiverIp: config.workerRtpIp,
         ports: input.ports,
       };
@@ -360,20 +360,16 @@ export const runtimeRoutes: FastifyPluginAsync<RuntimeOptions> = (app, options) 
           ),
         })
         .parse(JSON.parse((await boundedBody(response, 131072)).toString()));
-      if (!session.guestStage) return result;
       const owners = await db.execute(
         sql`SELECT ps.id,coalesce(g.id,p.id) AS source_id,(g.id IS NOT NULL) AS is_guest FROM participant_session ps JOIN participant p ON p.id=ps.participant_id LEFT JOIN stream_guest g ON g.participant_id=p.id WHERE p.room_id=${stream.source.roomId} AND ps.id=ANY(ARRAY[${sql.join(
           result.tracks.map((t) => sql`${t.participantId ?? ""}`),
           sql`, `,
         )}]::text[]) AND guest_session_authorized(ps.id)`,
       );
-      const [stage] = await db.execute(
-        sql`SELECT layout,version FROM stream_guest_stage WHERE stream_id=${stream.id} AND enabled`,
-      );
       return {
         ...result,
-        layout: z.enum(["single", "grid", "pip"]).parse(stage?.layout ?? "grid"),
-        revision: Number(stage?.version ?? 1),
+        layout: z.enum(["single", "grid", "pip"]).parse(stage?.layout ?? stream.profile.layout),
+        revision: Number(stage?.version ?? 0),
         tracks: result.tracks
           .filter((t) => owners.some((o) => o.id === t.participantId))
           .sort(

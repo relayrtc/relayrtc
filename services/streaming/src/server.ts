@@ -217,20 +217,21 @@ async function runJob(value: unknown, slot: number) {
       input = await externalInput(job.sourceUrl, environment.STREAMING_FFPROBE, signal);
     }
     sourceInfo = input.sourceInfo;
-    if (job.mixerId || job.guestStage) {
-      const stageControl = job.guestStage
-        ? createGuestStageControl(
-            directory,
-            () =>
-              call(
-                "room-export",
-                { ports: Array.from({ length: 12 }, (_v, i) => portBase + i * 2) },
-                token,
-                signal,
-              ),
-            job.mixerId ? () => call("mixer", {}, token, signal) : undefined,
-          )
-        : undefined;
+    if (job.mixerId || job.source.kind === "room") {
+      const stageControl =
+        job.source.kind === "room"
+          ? createGuestStageControl(
+              directory,
+              () =>
+                call(
+                  "room-export",
+                  { ports: Array.from({ length: 12 }, (_v, i) => portBase + i * 2) },
+                  token,
+                  signal,
+                ),
+              job.mixerId ? () => call("mixer", {}, token, signal) : undefined,
+            )
+          : undefined;
       mixerEngine = await startMixerEngine({
         primary: input,
         profile: job.profile,
@@ -245,7 +246,10 @@ async function runJob(value: unknown, slot: number) {
         ...(stageControl
           ? {
               inputForSource: stageControl.inputForSource,
-              onSourcesReady: () => call("room-export/resume", {}, token, signal),
+              onSourcesReady: () => {
+                sourceInfo = stageControl.sourceInfo();
+                return call("room-export/resume", {}, token, signal);
+              },
             }
           : {}),
         onFatal: () => {

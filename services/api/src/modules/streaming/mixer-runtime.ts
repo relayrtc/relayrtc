@@ -49,6 +49,9 @@ export async function observeMixer(
   const applied =
     observed &&
     frames > 0 &&
+    !report.preparationFailed &&
+    !report.overloaded &&
+    report.lostSources.length === 0 &&
     Number(render.candidate_revision) === report.revision &&
     sequence > Number(render.candidate_sequence) &&
     report.revision === m.desired_version &&
@@ -58,7 +61,10 @@ export async function observeMixer(
     ? report.overloaded || report.lostSources.length
       ? "degraded"
       : "live"
-    : m.state;
+    : m.applied_version > 0 &&
+        (report.preparationFailed || report.overloaded || report.lostSources.length > 0)
+      ? "degraded"
+      : m.state;
   await db.execute(
     sql`UPDATE mixer SET render_seconds=render_seconds+${frames > 0 ? seconds : 0},program_seconds=program_seconds+${observed ? seconds : 0},input_seconds=input_seconds+${seconds * sources.length},frames=frames+${frames},state=${state},lost_sources=${JSON.stringify(report.lostSources)}::jsonb,applied_snapshot=CASE WHEN ${applied} THEN snapshot ELSE applied_snapshot END,applied_version=CASE WHEN ${applied} THEN ${report.revision} ELSE applied_version END,applied_scene_id=CASE WHEN ${applied} THEN ${report.sceneId} ELSE applied_scene_id END,last_error=${report.overloaded ? "MIXER_OVERLOADED" : report.preparationFailed ? "MIXER_PREPARATION_FAILED" : report.lostSources.length ? "MIXER_SOURCE_LOST" : null} WHERE id=${m.id}`,
   );

@@ -31,6 +31,9 @@ export function createGuestStageControl(
     signature = "";
   return {
     inputForSource: (sourceId: string) => inputs.get(sourceId),
+    sourceInfo: () => ({
+      tracks: [...inputs.values()].flatMap((input) => input.sourceInfo.tracks),
+    }),
     control: async () => {
       const value = responseSchema.parse(await load()),
         groups = new Map<string, ExportTrack[]>();

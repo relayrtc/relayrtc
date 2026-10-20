@@ -539,6 +539,13 @@ export const guestRoutes: FastifyPluginAsync<
             ["expired", "left", "removed", "cancelled", "declined", "rejected"].includes(g.state)
           )
             throw conflict("GUEST_DECISION_EXPIRED", "This stage action is no longer available.");
+          if (
+            action === "mute" &&
+            ["accepted", "approved", "joined"].includes(g.state) &&
+            (!("audio" in input) || input.audio === undefined || input.audio === g.muted_audio) &&
+            (!("video" in input) || input.video === undefined || input.video === g.muted_video)
+          )
+            return publicGuest(g, !c.audience);
           let state: GuestRow["state"], event: string;
           if (["accept", "decline", "cancel", "approve", "reject"].includes(action)) {
             if (g.state !== "pending" || (collection === "invites") !== (g.kind === "invite"))

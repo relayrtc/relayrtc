@@ -50,6 +50,7 @@ export function GuestsManager({
     version: number;
     name: string;
     audio?: boolean;
+    video?: boolean;
   } | null>(null);
   const [stage, setStage] = useState<GuestStage | null>(null),
     [error, setError] = useState(""),
@@ -217,8 +218,9 @@ export function GuestsManager({
         )}
       </div>
       <p className="text-sm text-muted-foreground">
-        A dedicated RTC room supports a host and up to three guests. Entering stage mode may briefly
-        reconnect the program; subsequent guest changes keep the encoder running.
+        A dedicated RTC room supports a host and up to three guests. Stage settings and guest
+        changes keep the program encoder running. Changing a guest permission closes their stage
+        connection; they must rejoin and choose their devices again.
       </p>
       <p role="status">
         {stage?.enabled ? "Stage enabled" : "Stage disabled"} · {stage?.occupied ?? 0}/
@@ -382,6 +384,22 @@ export function GuestsManager({
                   >
                     {g.mutedAudio ? "Allow microphone" : "Mute microphone"}
                   </Button>{" "}
+                  {(g.media.video || g.media.screen) && (
+                    <Button
+                      disabled={!!snapshot.pending}
+                      onClick={() =>
+                        setModerating({
+                          action: "mute",
+                          guestId: g.id,
+                          version: g.version,
+                          name: g.name,
+                          video: !g.mutedVideo,
+                        })
+                      }
+                    >
+                      {g.mutedVideo ? "Allow camera and screen" : "Block camera and screen"}
+                    </Button>
+                  )}
                   <Button
                     variant="destructive"
                     disabled={!!snapshot.pending}
@@ -419,12 +437,12 @@ export function GuestsManager({
             <AlertDialogTitle>
               {moderating?.action === "remove"
                 ? `Remove ${moderating.name}?`
-                : `Change ${moderating?.name}'s microphone permission?`}
+                : `Change ${moderating?.name}'s ${moderating?.video !== undefined ? "camera and screen" : "microphone"} permission?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {moderating?.action === "remove"
                 ? "Their stage connection closes and active credentials are revoked."
-                : "Their current stage connection closes. They must rejoin with the new permission and choose their own devices. This never turns on their microphone."}
+                : "Their current stage connection closes. They must rejoin with the new permission and choose their own devices. Allowing access never turns on their devices."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {snapshot.error && (

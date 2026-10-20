@@ -306,6 +306,20 @@ export const recordingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
     });
     return reply.code(201).send(result);
   });
+  app.post("/assets/:assetId/access-grants/revoke", (request) => {
+    validate(z.object({}).strict(), request.body ?? {});
+    return database.transaction(async (db) => {
+      const { r, stream, auth } = await scoped(db, request, true);
+      return command(db, request, {}, 200, async () => {
+        await db.execute(sql`UPDATE recording SET grant_epoch=grant_epoch+1 WHERE id=${r.id}`);
+        await db.execute(
+          sql`UPDATE recording_access_grant SET revoked_at=now() WHERE recording_id=${r.id} AND revoked_at IS NULL`,
+        );
+        await audited(db, request, stream, auth, r.id, "recording.access_grants.revoked");
+        return { assetId: r.asset_id, revoked: true };
+      });
+    });
+  });
   return Promise.resolve();
 };
 
@@ -430,8 +444,16 @@ export const assetMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
       )
     )
       throw missing();
+    if (
+      /^(?:vod_|export_)/u.test(actual) &&
+      !actual.startsWith(`vod_${String(r.export_fence)}.`) &&
+      !actual.startsWith(`vod_${String(r.export_fence)}_`) &&
+      !actual.startsWith(`export_${String(r.export_fence)}_`)
+    )
+      throw missing();
+    if (r.kind === "clip" && /^(?:seg_|init_)/u.test(actual)) throw missing();
     const [object] = await database.execute(
-      sql`SELECT object_key FROM recording_object WHERE recording_id=${r.id} AND name=${actual} AND committed_at IS NOT NULL`,
+      sql`SELECT object_key FROM recording_object WHERE recording_id=${r.id} AND name=${actual} AND committed_at IS NOT NULL AND (${!actual.startsWith("seg_") && !actual.startsWith("init_")} OR EXISTS(SELECT 1 FROM recording_segment s WHERE s.recording_id=${r.id} AND (s.name=${actual} OR s.init_name=${actual} OR s.audio_name=${actual} OR s.audio_init_name=${actual})))`,
     );
     if (!object) throw missing();
     let body = await store.get(String(object.object_key));

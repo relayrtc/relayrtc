@@ -52,7 +52,7 @@ export function RecordingPreview({
         if (!Hls.isSupported()) throw new Error("Unsupported browser");
         const hls = new Hls({ lowLatencyMode: false });
         hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) onError();
+          if (data.fatal || data.response?.code === 401 || data.response?.code === 410) onError();
         });
         hls.on(Hls.Events.MANIFEST_PARSED, onReady);
         hls.attachMedia(video);
