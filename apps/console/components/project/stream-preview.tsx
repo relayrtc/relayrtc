@@ -57,8 +57,8 @@ export function StreamPreview({
         return result.data;
       },
       getGrant: async (signal) => {
-        const result = await (dvr && broadcastId
-          ? dvrGrantAction({ ...scope, broadcastId })
+        const result = await (dvr
+          ? dvrGrantAction(dvrScope)
           : createStreamPlaybackGrantAction(scope));
         signal.throwIfAborted();
         if (result.error) throw new Error("Grant unavailable");
