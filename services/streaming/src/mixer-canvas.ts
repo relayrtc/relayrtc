@@ -73,11 +73,14 @@ export function blit(
 }
 export function mixAudio(scene: MixerScene, blocks: Map<string, Buffer>, previousDuck: number) {
   const output = Buffer.alloc(PCM_BYTES),
-    dominant = scene.ducking ? blocks.get(scene.ducking.sourceId) : undefined;
+    dominantSource = scene.ducking
+      ? scene.audio.find((source) => source.sourceId === scene.ducking?.sourceId && !source.muted)
+      : undefined,
+    dominant = dominantSource ? blocks.get(dominantSource.sourceId) : undefined;
   let rms = 0;
   if (dominant) {
     for (let i = 0; i < dominant.length; i += 2) rms += (dominant.readInt16LE(i) / 32768) ** 2;
-    rms = Math.sqrt(rms / (dominant.length / 2));
+    rms = Math.sqrt(rms / (dominant.length / 2)) * 10 ** ((dominantSource?.gainDb ?? 0) / 20);
   }
   const target =
     scene.ducking && rms >= scene.ducking.threshold ? 10 ** (-scene.ducking.attenuationDb / 20) : 1;
