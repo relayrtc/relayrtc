@@ -9,6 +9,8 @@ export interface RequestLimits {
   project: number;
   room: number;
   entries: number;
+  mediaNode?: number;
+  mediaIp?: number;
 }
 
 export function readRequestLimits(
@@ -27,10 +29,12 @@ export function readRequestLimits(
     project: read("API_REQUESTS_PER_PROJECT_PER_MINUTE", 3000),
     room: read("API_REQUESTS_PER_ROOM_PER_MINUTE", 1200),
     entries: read("API_LIMIT_TRACKED_SCOPES", 10000),
+    mediaNode: read("API_MEDIA_REQUESTS_PER_NODE_PER_MINUTE", 100000),
+    mediaIp: read("API_MEDIA_REQUESTS_PER_IP_PER_MINUTE", 12000),
   };
 }
 
-export function registerRequestLimits(app: FastifyInstance, limits: RequestLimits) {
+export function registerRequestLimits(app: FastifyInstance, limits: RequestLimits, mediaOrigins: readonly string[] = []) {
   const buckets = new Map<string, { count: number; expires: number }>();
   let prunedAt = 0;
   const check = (key: string, maximum: number) => {
@@ -52,15 +56,25 @@ export function registerRequestLimits(app: FastifyInstance, limits: RequestLimit
   app.addHook("onRequest", async (request, reply) => {
     const path = request.url.split("?", 1)[0] ?? "";
     if (path !== "/v1" && !path.startsWith("/v1/")) return;
+    // Match only public delivery routes, never management metadata/grant APIs.
+    const media = ["GET", "HEAD", "OPTIONS"].includes(request.method) &&
+      /^\/v1\/(?:playback\/[^/]+\/[^/]+\/[^/]+|dvr\/[^/]+\/[^/]+\/[^/]+|assets\/[^/]+\/[^/]+)\/?$/.test(path);
+    if (media && request.headers.origin && mediaOrigins.includes(request.headers.origin)) {
+      // Runs before any rejection, including rate limits and validation errors.
+      reply.header("access-control-allow-origin", request.headers.origin)
+        .header("vary", "Origin")
+        .header("access-control-expose-headers", "Retry-After,Content-Range,Accept-Ranges");
+    }
     const retry =
-      check("node", limits.node) ||
-      check(`ip:${createHash("sha256").update(request.ip).digest("hex")}`, limits.ip);
+      check(media ? "media-node" : "node", media ? limits.mediaNode ?? 100000 : limits.node) ||
+      check(`${media ? "media-ip" : "ip"}:${createHash("sha256").update(request.ip).digest("hex")}`, media ? limits.mediaIp ?? 12000 : limits.ip);
     if (retry) {
       reply.header("retry-after", retry);
       throw new ApiError(
         429,
         "RATE_LIMITED",
-        "The API instance or client IP request limit was reached; retry after the indicated delay",
+        media ? "The media delivery instance or client IP request limit was reached; retry after the indicated delay"
+          : "The API instance or client IP request limit was reached; retry after the indicated delay",
       );
     }
   });

@@ -234,6 +234,8 @@ export const readApiEnvironment = (source: ApiEnvironmentSource): ApiConfig => {
     ...(authSecret && authUrl ? { consoleAuth: { baseUrl: authUrl, secret: authSecret } } : {}),
     ...([
       "API_REQUESTS_PER_NODE_PER_MINUTE",
+      "API_MEDIA_REQUESTS_PER_NODE_PER_MINUTE",
+      "API_MEDIA_REQUESTS_PER_IP_PER_MINUTE",
       "API_REQUESTS_PER_IP_PER_MINUTE",
       "API_REQUESTS_PER_KEY_PER_MINUTE",
       "API_REQUESTS_PER_PROJECT_PER_MINUTE",

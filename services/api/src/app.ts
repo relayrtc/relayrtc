@@ -134,7 +134,7 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
   });
 
   registerErrorHandling(app);
-  registerRequestLimits(app, options.config.requestLimits ?? readRequestLimits({}));
+  registerRequestLimits(app, options.config.requestLimits ?? readRequestLimits({}), options.config.streaming?.allowedOrigins);
   if (options.config.accountAuth) {
     registerAdministrativeAudit(app, options.database);
     void app.register(accountRoutes, {

@@ -316,7 +316,7 @@ export const playbackRoutes: FastifyPluginAsync<{
       reply
         .header("access-control-allow-origin", request.headers.origin)
         .header("vary", "Origin")
-        .header("access-control-expose-headers", "Content-Range,Accept-Ranges");
+        .header("access-control-expose-headers", "Retry-After,Content-Range,Accept-Ranges");
     }
     const token =
       query.token ?? /^Bearer ([^\s]+)$/u.exec(request.headers.authorization ?? "")?.[1] ?? "";
