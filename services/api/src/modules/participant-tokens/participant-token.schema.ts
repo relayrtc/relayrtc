@@ -1,4 +1,4 @@
-import { metadataSchema, nameSchema } from "@relayrtc/validation";
+import { metadataSchema, nameSchema, sessionIdSchema } from "@relayrtc/validation";
 import { z } from "zod";
 
 export const participantPermissions = [
@@ -34,3 +34,13 @@ export const createParticipantTokenBodySchema = z
 
 export type CreateParticipantTokenBody = z.infer<typeof createParticipantTokenBodySchema>;
 export type ParticipantPermission = z.infer<typeof participantPermissionSchema>;
+
+export const renewParticipantTokenBodySchema = z
+  .object({
+    participantToken: z.string().min(1).max(8192),
+    sessionId: sessionIdSchema,
+    ttlSeconds: z.number().int().min(60).max(3_600).default(600),
+  })
+  .strict();
+
+export type RenewParticipantTokenBody = z.infer<typeof renewParticipantTokenBodySchema>;

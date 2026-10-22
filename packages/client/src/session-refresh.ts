@@ -25,6 +25,7 @@ export class SessionRefresh {
   readonly #timers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #controllers = new Set<AbortController>();
   readonly #pending = new Map<CredentialKind, Promise<void>>();
+  #tokenRetryAttempts = 0;
 
   constructor(
     readonly options: RelayClientOptions,
@@ -217,17 +218,40 @@ export class SessionRefresh {
           : new RoomError(
               kind === "token" ? "TOKEN_REFRESH_FAILED" : "TURN_REFRESH_FAILED",
               "The application could not renew room credentials",
+              kind === "token",
             );
       const interrupted =
         this.#paused &&
-        [
-          "CONNECTION_FAILED",
-          "CONNECTION_CLOSED",
-          "NOT_CONNECTED",
-          "REQUEST_TIMEOUT",
-          "ICE_RECOVERY_FAILED",
-        ].includes(failure.code);
-      if (!this.#closed && !interrupted) this.onFailure(failure);
+        ((kind === "token" && failure.retryable) ||
+          [
+            "CONNECTION_FAILED",
+            "CONNECTION_CLOSED",
+            "NOT_CONNECTED",
+            "REQUEST_TIMEOUT",
+            "ICE_RECOVERY_FAILED",
+          ].includes(failure.code));
+      const currentToken = this.#token;
+      const tokenRetryable =
+        kind === "token" &&
+        !this.#closed &&
+        !this.#paused &&
+        currentToken &&
+        currentToken.expiresAt - Date.now() > 1000 &&
+        (failure.retryable || failure.code === "REQUEST_TIMEOUT");
+      if (tokenRetryable) {
+        const delay = Math.min(
+          5000,
+          1000 * 2 ** Math.min(this.#tokenRetryAttempts++, 3),
+          Math.max(1, currentToken.expiresAt - Date.now() - 500),
+        );
+        clearTimeout(this.#timers.get("token:renew"));
+        this.#timers.set(
+          "token:renew",
+          setTimeout(() => {
+            void this.#renew("token", "expiring").catch(() => undefined);
+          }, delay),
+        );
+      } else if (!this.#closed && !interrupted) this.onFailure(failure);
       throw failure;
     });
     this.#pending.set(kind, operation);
@@ -303,6 +327,7 @@ export class SessionRefresh {
         throw error;
       }
       this.#token = next;
+      this.#tokenRetryAttempts = 0;
       this.#rawToken = token;
       this.#candidate = undefined;
       this.#schedule("token", next.expiresAt, true);

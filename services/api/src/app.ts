@@ -27,6 +27,7 @@ import type { ApiConfig } from "./config/environment.js";
 import { registerErrorHandling } from "./http/errors/error-handler.js";
 import { ApiError } from "./http/errors/api-error.js";
 import { createParticipantTokenSigner } from "./modules/participant-tokens/participant-token.signer.js";
+import { createParticipantTokenVerifier } from "./modules/participant-tokens/participant-token.verifier.js";
 import { createRoomRuntimeService } from "./modules/rooms/room-runtime.service.js";
 import { createTurnCredentialService } from "./modules/turn-credentials/turn-credential.service.js";
 import { createRetainedTurnCredentialIssuer } from "./modules/turn-credentials/turn-credential.repository.js";
@@ -95,6 +96,7 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
           "req.body.newPassword",
           "req.body.otp",
           "req.body.code",
+          "req.body.participantToken",
         ],
       },
     },
@@ -452,6 +454,12 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
       ? {}
       : { usageRetentionDays: options.usageRetentionDays }),
     participantTokenSigner,
+    participantTokenVerifier: createParticipantTokenVerifier({
+      audience: options.config.participantTokenAudience,
+      issuer: options.config.participantTokenIssuer,
+      keyId: options.config.participantTokenKeyId,
+      secret: options.config.participantTokenSigningSecret,
+    }),
     roomRuntime,
     runtimeConfig,
     turnCredentialIssuer,
