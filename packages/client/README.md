@@ -1,5 +1,11 @@
 # @relayrtc/client
 
+## Streaming polling and rate limits
+
+Broadcast, recording, playback, clip, mixer and scheduled-broadcast clients apply bounded exponential polling backoff (up to 60 seconds for ordinary failures) and honor a longer `retryAfterMs` supplied by an application callback. Cooldown also applies to manual refresh/recovery calls and commands. A successful observation returns to the configured polling cadence once cooldown has elapsed. Disconnect resets the client's cooldown.
+
+When forwarding an HTTP failure from your application backend, throw an error with a numeric HTTP `status` and `retryAfterMs` in milliseconds, parsed from `Retry-After`. The SDK exposes a sanitized `StreamingRequestError` in the snapshot: `status` and `retryAfterMs` are retained, but endpoint URLs, response bodies and original causes are not. Import `StreamingRequestError` to inspect those fields. Each client owns its cooldown; applications sharing an IP/project budget should additionally coordinate cooldown across their HTTP callbacks. REST polling is intentional; this change does not replace it with server push.
+
 ## Join and leave a room
 
 ```ts

@@ -380,7 +380,7 @@ export const assetMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
       reply
         .header("access-control-allow-origin", request.headers.origin)
         .header("vary", "Origin")
-        .header("access-control-expose-headers", "Content-Range, Accept-Ranges, Content-Length");
+        .header("access-control-expose-headers", "Retry-After, Content-Range, Accept-Ranges, Content-Length");
     if (download) {
       if (!r.mp4_parts) throw missing();
       const objects = await database.execute(

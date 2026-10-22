@@ -26,6 +26,10 @@ Participant listing accepts `limit`, `cursor`, and `status` (`active` or `left`)
 
 ## Environment
 
+Public media delivery (`GET`/`HEAD`/`OPTIONS` on `/v1/playback/:streamId/:sessionId/:name`, `/v1/dvr/:streamId/:windowId/:name` and `/v1/assets/:assetId/:name`) uses a separate bounded request budget from management APIs. Defaults are `API_MEDIA_REQUESTS_PER_NODE_PER_MINUTE=100000` and `API_MEDIA_REQUESTS_PER_IP_PER_MINUTE=12000`. Management limits retain their existing defaults, including 600 requests/IP/minute and 10000 requests/node/minute. Media requests still require their normal grants, tenant checks and media/egress limits. Budgets are per API instance and share the bounded tracked-scope table; they are not distributed cluster-wide quotas. Size the media limits for viewers behind shared NAT and low-latency HLS playlist/part frequency.
+
+For configured streaming origins, CORS headers are set before delivery rate-limit rejection. Media error responses therefore expose their real HTTP status and `Retry-After` rather than appearing solely as a browser CORS failure. Disallowed origins are not reflected. `429` responses include `Retry-After`; API clients should wait for that delay rather than treating rate limiting as a playback or authorization failure.
+
 `POST /v1/rooms/:roomId/tokens/renew` requires `tokens:create` and a body containing the current unexpired `participantToken`, its active `sessionId`, and optional `ttlSeconds` (60–3600; default 600). It returns a new token for the same identity and permissions. Renewal checks scoped tenant/room/session eligibility and rejects removed participants, expired tokens and streaming guest grants. Call it through an authenticated application backend and supply replacements to the browser `refreshToken` callback. `tokens.create` is not renewal.
 
 - `DATABASE_URL` — required PostgreSQL connection URL

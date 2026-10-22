@@ -1,4 +1,5 @@
 import type { RecordingResource } from "@relayrtc/types";
+import { StreamingBackoff } from "./streaming-request-error.js";
 export interface RecordingCommandContext {
   idempotencyKey: string;
   signal: AbortSignal;
@@ -26,6 +27,7 @@ export class RecordingClient {
   private polling = false;
   private commandKeys = new Map<string, string>();
   private interval: number;
+  private readonly backoff = new StreamingBackoff();
   constructor(private readonly options: RecordingClientOptions) {
     this.interval = options.pollIntervalMs ?? 2500;
     if (!Number.isInteger(this.interval) || this.interval < 1000 || this.interval > 60000)
@@ -53,12 +55,17 @@ export class RecordingClient {
     this.controller = undefined;
     clearTimeout(this.timer);
     this.revision++;
+    this.backoff.reset();
     this.publish(initial);
   }
   refresh = async () => {
     const controller = this.controller;
     if (!controller || this.polling) return;
     clearTimeout(this.timer);
+    if (this.backoff.remaining() > 0) {
+      this.timer = setTimeout(() => { void this.refresh(); }, this.backoff.remaining());
+      return;
+    }
     this.polling = true;
     const revision = this.revision;
     try {
@@ -69,27 +76,29 @@ export class RecordingClient {
         this.controller === controller &&
         !controller.signal.aborted &&
         revision === this.revision
-      )
+      ) {
+        this.backoff.succeed();
         this.publish({ ...this.snapshot, recording, error: null });
-    } catch {
+      }
+    } catch (error) {
       if (
         this.controller === controller &&
         !controller.signal.aborted &&
         revision === this.revision
       )
-        this.publish({ ...this.snapshot, error: new Error("Recording status is unavailable.") });
+        this.publish({ ...this.snapshot, error: this.backoff.fail("Recording status is unavailable.", error, this.interval) });
     } finally {
       this.polling = false;
       if (this.controller && !this.controller.signal.aborted)
         this.timer = setTimeout(() => {
           void this.refresh();
-        }, this.interval);
+        }, this.backoff.delay(this.interval));
     }
   };
   private async command(kind: "start" | "stop" | "delete") {
     const controller = this.controller,
       callback = this.options[kind];
-    if (!controller || !callback || this.snapshot.pending) return;
+    if (!controller || !callback || this.snapshot.pending || this.backoff.remaining() > 0) return;
     this.revision++;
     this.publish({ ...this.snapshot, pending: kind, error: null });
     const key = this.commandKeys.get(kind) ?? crypto.randomUUID();
@@ -101,16 +110,18 @@ export class RecordingClient {
       });
       if (this.controller === controller && !controller.signal.aborted) {
         this.commandKeys.delete(kind);
+        this.backoff.succeed();
         this.revision++;
         this.publish({ recording, pending: null, error: null });
       }
-    } catch {
+    } catch (error) {
       if (this.controller === controller && !controller.signal.aborted)
         this.publish({
           ...this.snapshot,
           pending: null,
-          error: new Error(
+          error: this.backoff.fail(
             "The recording command could not be confirmed. Retry to check the same command.",
+            error, this.interval,
           ),
         });
     }

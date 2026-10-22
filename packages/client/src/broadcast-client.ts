@@ -1,3 +1,5 @@
+import { StreamingBackoff } from "./streaming-request-error.js";
+
 export type BroadcastState =
   | "created"
   | "waiting_for_source"
@@ -93,6 +95,7 @@ export class BroadcastClient {
   private revision = 0;
   private refreshAgain = false;
   private interval: number;
+  private readonly backoff = new StreamingBackoff();
   private retryCommand:
     | {
         kind: "start" | "stop" | "retry";
@@ -128,9 +131,13 @@ export class BroadcastClient {
     const controller = this.controller;
     if (!controller) return Promise.resolve();
     clearTimeout(this.timer);
+    if (this.backoff.remaining() > 0) {
+      this.timer = setTimeout(() => { void this.refresh(); }, this.backoff.remaining());
+      return Promise.resolve();
+    }
     this.reading = this.read(controller).finally(() => {
       this.reading = undefined;
-      const next = this.refreshAgain ? 0 : this.interval;
+      const next = this.backoff.delay(this.refreshAgain ? 0 : this.interval);
       this.refreshAgain = false;
       if (this.controller === controller && !controller.signal.aborted)
         this.timer = setTimeout(() => {
@@ -159,7 +166,8 @@ export class BroadcastClient {
         !controller.signal.aborted &&
         this.controller === controller &&
         revision === this.revision
-      )
+      ) {
+        this.backoff.succeed();
         this.publish({
           ...this.snapshot,
           broadcast,
@@ -168,7 +176,8 @@ export class BroadcastClient {
             this.snapshot.operation === previousOperation ? operation : this.snapshot.operation,
           error: this.retryCommand ? this.snapshot.error : null,
         });
-    } catch {
+      }
+    } catch (error) {
       if (
         !controller.signal.aborted &&
         this.controller === controller &&
@@ -176,7 +185,7 @@ export class BroadcastClient {
       )
         this.publish({
           ...this.snapshot,
-          error: new Error("Broadcast status is unavailable. Check access or retry."),
+          error: this.backoff.fail("Broadcast status is unavailable. Check access or retry.", error, this.interval),
         });
     }
   }
@@ -194,7 +203,7 @@ export class BroadcastClient {
                 retry(outputId, input, signal)
             : undefined
           : this.options[kind];
-    if (!controller || !broadcast || !callback || this.controlling) return;
+    if (!controller || !broadcast || !callback || this.controlling || this.backoff.remaining() > 0) return;
     this.controlling = true;
     this.revision++;
     this.publish({
@@ -222,6 +231,7 @@ export class BroadcastClient {
       if (!controller.signal.aborted && this.controller === controller) {
         this.revision++;
         this.retryCommand = undefined;
+        this.backoff.succeed();
         this.publish({
           ...this.snapshot,
           pending: null,
@@ -231,14 +241,14 @@ export class BroadcastClient {
         });
         await this.refresh();
       }
-    } catch {
+    } catch (error) {
       this.revision++;
       if (!controller.signal.aborted && this.controller === controller)
         this.publish({
           ...this.snapshot,
           pending: null,
           pendingOutputId: null,
-          error: new Error("Broadcast command failed. Retry the same action or reload status."),
+          error: this.backoff.fail("Broadcast command failed. Retry the same action or reload status.", error, this.interval),
         });
     } finally {
       this.controlling = false;
@@ -254,6 +264,7 @@ export class BroadcastClient {
     clearTimeout(this.timer);
     this.retryCommand = undefined;
     this.refreshAgain = false;
+    this.backoff.reset();
     this.publish(initial);
   }
   dispose(): void {

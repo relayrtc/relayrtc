@@ -1,4 +1,5 @@
 import type { ClipResource } from "@relayrtc/types";
+import { StreamingBackoff } from "./streaming-request-error.js";
 export interface ClipCommandContext {
   idempotencyKey: string;
   signal: AbortSignal;
@@ -26,6 +27,7 @@ export class ClipClient {
   private polling = false;
   private commandKeys = new Map<string, string>();
   private interval: number;
+  private readonly backoff = new StreamingBackoff();
   constructor(private readonly options: ClipClientOptions) {
     this.interval = options.pollIntervalMs ?? 2500;
     if (!Number.isInteger(this.interval) || this.interval < 1000 || this.interval > 60000)
@@ -53,12 +55,17 @@ export class ClipClient {
     this.controller = undefined;
     clearTimeout(this.timer);
     this.revision++;
+    this.backoff.reset();
     this.emit(initial);
   }
   refresh = async () => {
     const controller = this.controller;
     if (!controller || this.polling) return;
     clearTimeout(this.timer);
+    if (this.backoff.remaining() > 0) {
+      this.timer = setTimeout(() => { void this.refresh(); }, this.backoff.remaining());
+      return;
+    }
     this.polling = true;
     const revision = this.revision;
     try {
@@ -69,27 +76,29 @@ export class ClipClient {
         this.controller === controller &&
         !controller.signal.aborted &&
         revision === this.revision
-      )
+      ) {
+        this.backoff.succeed();
         this.emit({ ...this.snapshot, clip, error: null });
-    } catch {
+      }
+    } catch (error) {
       if (
         this.controller === controller &&
         !controller.signal.aborted &&
         revision === this.revision
       )
-        this.emit({ ...this.snapshot, error: new Error("Clip status is unavailable.") });
+        this.emit({ ...this.snapshot, error: this.backoff.fail("Clip status is unavailable.", error, this.interval) });
     } finally {
       this.polling = false;
       if (this.controller && !this.controller.signal.aborted)
         this.timer = setTimeout(() => {
           void this.refresh();
-        }, this.interval);
+        }, this.backoff.delay(this.interval));
     }
   };
   private async command(kind: "create" | "publish" | "delete") {
     const controller = this.controller,
       callback = this.options[kind];
-    if (!controller || !callback || this.snapshot.pending) return;
+    if (!controller || !callback || this.snapshot.pending || this.backoff.remaining() > 0) return;
     this.revision++;
     this.emit({ ...this.snapshot, pending: kind, error: null });
     const key = this.commandKeys.get(kind) ?? crypto.randomUUID();
@@ -101,16 +110,18 @@ export class ClipClient {
       });
       if (this.controller === controller && !controller.signal.aborted) {
         this.commandKeys.delete(kind);
+        this.backoff.succeed();
         this.revision++;
         this.emit({ clip, pending: null, error: null });
       }
-    } catch {
+    } catch (error) {
       if (this.controller === controller && !controller.signal.aborted)
         this.emit({
           ...this.snapshot,
           pending: null,
-          error: new Error(
+          error: this.backoff.fail(
             "The clip command could not be confirmed. Retry to check the same command.",
+            error, this.interval,
           ),
         });
     }

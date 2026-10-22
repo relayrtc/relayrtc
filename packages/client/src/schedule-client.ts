@@ -1,4 +1,5 @@
 import type { ScheduledBroadcast, ScheduleTiming, ScheduledPlayback } from "@relayrtc/types";
+import { StreamingBackoff, StreamingRequestError } from "./streaming-request-error.js";
 export interface ScheduleCommand {
   version: number;
   idempotencyKey: string;
@@ -37,6 +38,7 @@ export class ScheduledBroadcastClient {
   private revision = 0;
   private keys = new Map<string, { key: string; version: number }>();
   private interval: number;
+  private readonly backoff = new StreamingBackoff();
   constructor(private options: ScheduledBroadcastOptions) {
     this.interval = options.pollIntervalMs ?? 2500;
     if (!Number.isInteger(this.interval) || this.interval < 1000 || this.interval > 60000)
@@ -64,13 +66,18 @@ export class ScheduledBroadcastClient {
     this.controller = undefined;
     clearTimeout(this.timer);
     this.revision++;
+    this.backoff.reset();
     this.publish(initial);
   }
   refresh = async () => {
     const controller = this.controller;
     if (!controller || this.polling) return;
-    this.polling = true;
     clearTimeout(this.timer);
+    if (this.backoff.remaining() > 0) {
+      this.timer = setTimeout(() => { void this.refresh(); }, this.backoff.remaining());
+      return;
+    }
+    this.polling = true;
     const revision = this.revision;
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]);
     try {
@@ -79,14 +86,17 @@ export class ScheduledBroadcastClient {
       if (this.options.getPlayback)
         try {
           playback = await this.options.getPlayback(signal);
-        } catch {
+        } catch (error) {
+          const failure = new StreamingRequestError("Schedule playback is unavailable.", error);
+          if (failure.status === 429 || (failure.status !== null && failure.status >= 500) || failure.retryAfterMs !== null) throw failure;
           playback = null;
         }
       if (
         this.controller === controller &&
         !controller.signal.aborted &&
         revision === this.revision
-      )
+      ) {
+        this.backoff.succeed();
         this.publish({
           ...this.snapshot,
           schedule,
@@ -94,25 +104,26 @@ export class ScheduledBroadcastClient {
           error: null,
           serverOffsetMs: playback ? Date.parse(playback.serverTime) - Date.now() : 0,
         });
-    } catch {
+      }
+    } catch (error) {
       if (
         this.controller === controller &&
         !controller.signal.aborted &&
         revision === this.revision
       )
-        this.publish({ ...this.snapshot, error: new Error("Schedule status is unavailable.") });
+        this.publish({ ...this.snapshot, error: this.backoff.fail("Schedule status is unavailable.", error, this.interval) });
     } finally {
       this.polling = false;
       if (this.controller && !this.controller.signal.aborted)
         this.timer = setTimeout(() => {
           void this.refresh();
-        }, this.interval);
+        }, this.backoff.delay(this.interval));
     }
   };
   private async command(kind: "update" | "cancel" | "startNow", timing?: ScheduleTiming) {
     const controller = this.controller,
       schedule = this.snapshot.schedule;
-    if (!controller || !schedule || this.snapshot.pending) return;
+    if (!controller || !schedule || this.snapshot.pending || this.backoff.remaining() > 0) return;
     const identity = JSON.stringify({
         kind,
         timing,
@@ -137,6 +148,7 @@ export class ScheduledBroadcastClient {
               : schedule;
       if (this.controller === controller && !controller.signal.aborted) {
         this.keys.delete(identity);
+        this.backoff.succeed();
         this.revision++;
         this.publish({
           ...this.snapshot,
@@ -150,13 +162,14 @@ export class ScheduledBroadcastClient {
           error: null,
         });
       }
-    } catch {
+    } catch (error) {
       if (this.controller === controller && !controller.signal.aborted)
         this.publish({
           ...this.snapshot,
           pending: null,
-          error: new Error(
+          error: this.backoff.fail(
             "The schedule command could not be confirmed. Retry the same command or refresh its status.",
+            error, this.interval,
           ),
         });
     }
