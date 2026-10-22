@@ -1,3 +1,4 @@
+import { observeServiceUsage } from "./service-usage.js";
 import { schema } from "@relayrtc/database";
 import {
   streamingObjectNameSchema,
@@ -29,7 +30,7 @@ export async function observeMixer(
   const m = await getMixer(db, session.mixerId, true);
   if (m.desired_state !== "running") return;
   const [render] = await db.execute(
-    sql`SELECT * FROM mixer_render_session WHERE session_id=${session.id} AND generation=${session.generation} AND mixer_id=${m.id} AND ended_at IS NULL FOR UPDATE`,
+    sql`SELECT * FROM mixer_render_session WHERE session_id=${session.id} AND generation=${String(session.generation)} AND mixer_id=${m.id} AND ended_at IS NULL FOR UPDATE`,
   );
   if (!render || Number(render.sequence) >= sequence) return;
   if (report.frames < Number(render.frames) || report.revision > m.desired_version)
@@ -39,12 +40,21 @@ export async function observeMixer(
   if (report.lostSources.some((s) => !allowed.has(s)))
     throw conflict("MIXER_REPORT_INVALID", "Unknown source report.");
   const seconds = Math.min(10, Math.max(0, elapsed)),
-    frames = Math.min(300, report.frames - Number(render.frames));
+    frames = report.frames - Number(render.frames);
+  const usageEnd = new Date();
+  const runId = `${session.id}:${String(session.generation)}`;
+  const [previousUsage] = await db.execute(sql`SELECT counters FROM service_usage_sample WHERE resource_type='mixer' AND resource_id=${m.id} AND run_id=${runId} ORDER BY ended_at DESC LIMIT 1`);
+  const previousInput = (previousUsage?.counters as { inputSeconds?: number } | undefined)?.inputSeconds ?? 0;
+  const inputSeconds = report.inputSeconds === undefined ? 0 : Math.max(0, report.inputSeconds - previousInput);
+  const programSeconds = observed && frames > 0 && !report.overloaded && !report.preparationFailed && !report.lostSources.length && m.applied_version > 0 && m.applied_version === report.revision && m.applied_scene_id === report.sceneId ? seconds : 0;
+  await observeServiceUsage(db, { projectId: m.project_id, environmentId: m.environment_id, streamId: m.stream_id, resourceType: "mixer", resourceId: m.id, runId }, `mixer:${runId}:${String(sequence)}`, {
+    mixerRenderSeconds: frames > 0 ? seconds : 0, mixerProgramSeconds: programSeconds, mixerInputSeconds: inputSeconds, mixerFrames: frames,
+  }, new Date(usageEnd.getTime() - seconds * 1000), usageEnd, report.inputSeconds === undefined || elapsed > 10 ? "partial" : "estimated", report.inputSeconds === undefined ? {} : { inputSeconds: report.inputSeconds });
   await db.execute(
-    sql`INSERT INTO mixer_usage(mixer_id,session_id,generation,sequence,render_seconds,program_seconds,input_seconds,frames) VALUES(${m.id},${session.id},${session.generation},${sequence},${frames > 0 ? seconds : 0},${observed ? seconds : 0},${seconds * sources.length},${frames}) ON CONFLICT DO NOTHING`,
+    sql`INSERT INTO mixer_usage(mixer_id,session_id,generation,sequence,render_seconds,program_seconds,input_seconds,frames) VALUES(${m.id},${session.id},${String(session.generation)},${String(sequence)},${frames > 0 ? seconds : 0},${programSeconds},${inputSeconds},${frames}) ON CONFLICT DO NOTHING`,
   );
   await db.execute(
-    sql`UPDATE mixer_render_session SET sequence=${sequence},frames=${report.frames},candidate_revision=${report.revision},candidate_sequence=CASE WHEN candidate_revision<>${report.revision} THEN ${sequence} ELSE candidate_sequence END WHERE session_id=${session.id} AND generation=${session.generation}`,
+    sql`UPDATE mixer_render_session SET sequence=${String(sequence)},frames=${report.frames},candidate_revision=${report.revision},candidate_sequence=CASE WHEN candidate_revision<>${report.revision} THEN ${String(sequence)} ELSE candidate_sequence END WHERE session_id=${session.id} AND generation=${String(session.generation)}`,
   );
   const applied =
     observed &&
@@ -66,7 +76,7 @@ export async function observeMixer(
       ? "degraded"
       : m.state;
   await db.execute(
-    sql`UPDATE mixer SET render_seconds=render_seconds+${frames > 0 ? seconds : 0},program_seconds=program_seconds+${observed ? seconds : 0},input_seconds=input_seconds+${seconds * sources.length},frames=frames+${frames},state=${state},lost_sources=${JSON.stringify(report.lostSources)}::jsonb,applied_snapshot=CASE WHEN ${applied} THEN snapshot ELSE applied_snapshot END,applied_version=CASE WHEN ${applied} THEN ${report.revision} ELSE applied_version END,applied_scene_id=CASE WHEN ${applied} THEN ${report.sceneId} ELSE applied_scene_id END,last_error=${report.overloaded ? "MIXER_OVERLOADED" : report.preparationFailed ? "MIXER_PREPARATION_FAILED" : report.lostSources.length ? "MIXER_SOURCE_LOST" : null} WHERE id=${m.id}`,
+    sql`UPDATE mixer SET render_seconds=render_seconds+${frames > 0 ? seconds : 0},program_seconds=program_seconds+${programSeconds},input_seconds=input_seconds+${inputSeconds},frames=frames+${frames},state=${state},lost_sources=${JSON.stringify(report.lostSources)}::jsonb,applied_snapshot=CASE WHEN ${applied} THEN snapshot ELSE applied_snapshot END,applied_version=CASE WHEN ${applied} THEN ${report.revision} ELSE applied_version END,applied_scene_id=CASE WHEN ${applied} THEN ${report.sceneId} ELSE applied_scene_id END,last_error=${report.overloaded ? "MIXER_OVERLOADED" : report.preparationFailed ? "MIXER_PREPARATION_FAILED" : report.lostSources.length ? "MIXER_SOURCE_LOST" : null} WHERE id=${m.id}`,
   );
   const next = await getMixer(db, m.id);
   if (changed) {

@@ -1,3 +1,4 @@
+import { ServiceUsagePanel } from "@/components/project/service-usage-panel";
 import {
   Table,
   TableHeader,
@@ -82,6 +83,7 @@ export default async function OrganizationUsagePage({
         </div>
       </div>
       <UsageMetrics summary={data.summary} dataQuality={data.dataQuality} period={range} />
+      <ServiceUsagePanel data={data.serviceUsage} />
       <Panel>
         <h2 className="mb-4 text-base font-medium">Usage by project</h2>
         <div className="overflow-x-auto">

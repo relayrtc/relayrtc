@@ -1,3 +1,4 @@
+import { observeServiceUsage } from "./service-usage.js";
 import { schema } from "@relayrtc/database";
 import { streamingSecretHash } from "@relayrtc/protocol/streaming-control";
 import { eq, sql } from "drizzle-orm";
@@ -182,8 +183,10 @@ export const restreamRuntimeRoutes: FastifyPluginAsync<
           "Source counters must be monotonic and bounded",
         );
       await db.execute(
-        sql`INSERT INTO restream_usage(session_id,fence,sequence,fetched_bytes,processing_seconds) VALUES(${job.id},${job.fence},${input.sequence},${bytes},${seconds})`,
+        sql`INSERT INTO restream_usage(session_id,fence,sequence,fetched_bytes,processing_seconds) VALUES(${job.id},${String(job.fence)},${String(input.sequence)},${bytes},${seconds})`,
       );
+      const usageEnd = new Date();
+      await observeServiceUsage(db, { ...stream, streamId: stream.id, resourceType: "external-source", resourceId: source.id, runId: `${job.id}:${String(job.fence)}` }, `external:${job.id}:${String(job.fence)}:${String(input.sequence)}`, { externalFetchBytes: bytes, externalProcessingSeconds: seconds }, new Date(usageEnd.getTime() - seconds * 1000), usageEnd, "observed");
       const [canonicalState] = await db.execute(
         sql`SELECT state FROM streaming_session WHERE ingress_credential_id=${job.credentialId} ORDER BY created_at DESC LIMIT 1`,
       );

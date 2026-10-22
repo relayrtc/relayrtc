@@ -1,3 +1,4 @@
+import { getServiceUsage } from "./service-usage-report.js";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import {
   organizationUsageResponseSchema,
@@ -23,6 +24,7 @@ export async function getOrganizationUsage(
     { summary: unknown; projects: unknown; total: string | number; complete: boolean; turn_coverage?: unknown } | undefined;
   return organizationUsageResponseSchema.parse({
     organizationId,
+    serviceUsage: await getServiceUsage(database, { organizationId, projectId: null, environmentId: null }, { startedAt: window.startedAt, endedAt: window.endedAt }, endedAt),
     window,
     summary: row?.summary,
     projects: row?.projects,

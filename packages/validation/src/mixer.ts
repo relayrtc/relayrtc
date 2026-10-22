@@ -132,6 +132,7 @@ export const mixerReportSchema = z
     revision: z.number().int().nonnegative(),
     sceneId: streamingIdSchema.nullable(),
     frames: z.number().int().nonnegative(),
+    inputSeconds: z.number().nonnegative().refine(Number.isFinite).optional(),
     lostSources: z.array(streamingIdSchema).max(4),
     overloaded: z.boolean(),
     preparationFailed: z.boolean().default(false),

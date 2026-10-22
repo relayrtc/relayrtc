@@ -17,6 +17,7 @@ export function analyticsView(data: ProjectAnalyticsResponse) {
   });
   return {
     window: data.window,
+    serviceUsage: data.serviceUsage,
     summary: data.summary,
     dataQuality: data.dataQuality,
     network: network(data.network),

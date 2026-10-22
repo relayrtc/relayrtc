@@ -26,9 +26,12 @@ export async function expireUsageHistory(
       sql`select pg_try_advisory_xact_lock(hashtextextended('relayrtc:usage-retention', 0)) as acquired`,
     );
     if (lock?.acquired !== true) return { status: "busy" as const, cutoff };
+    await transaction.execute(sql`UPDATE service_usage_activation SET retained_from=greatest(coalesce(retained_from,${sourceBoundary}::timestamptz),${sourceBoundary}::timestamptz) WHERE id='streaming-v1'`);
     await transaction.execute(
       sql`delete from usage_aggregation_dirty where hour_started_at + interval '1 hour' < ${cutoff}::timestamptz`,
     );
+    await transaction.execute(sql`delete from service_usage_sample where ended_at<${sourceBoundary}::timestamptz`);
+    await transaction.execute(sql`delete from service_usage_object where removed_at<${sourceBoundary}::timestamptz`);
     await transaction.execute(
       sql`delete from usage_event where occurred_at < ${sourceBoundary}::timestamptz`,
     );

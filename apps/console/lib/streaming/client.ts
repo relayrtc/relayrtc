@@ -2,7 +2,7 @@ import "server-only";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { reportingOrigin, sessionCookie } from "@/lib/reporting/request";
-import type { StreamingResult } from "./contracts";
+type StreamingResult<T> = { data: T; error: null } | { data: null; error: { code: string; description: string } };
 
 const errorSchema = z.object({ code: z.string().max(100), description: z.string().max(600) });
 

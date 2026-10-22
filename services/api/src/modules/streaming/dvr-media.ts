@@ -1,3 +1,6 @@
+import { meterMediaResponse } from "./delivery-usage.js";
+import { recordingUsageOwner, type ServiceUsageOwner } from "./service-usage.js";
+import { mediaRange } from "./media-range.js";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import type { FastifyPluginAsync } from "fastify";
@@ -5,7 +8,7 @@ import { verifyStreamingGrant } from "@relayrtc/protocol/streaming-control";
 import { streamingIdSchema, streamingObjectNameSchema } from "@relayrtc/validation";
 import { validate } from "../../http/validation/validate.js";
 import { ApiError } from "../../http/errors/api-error.js";
-import { id, type Transaction } from "./repository.js";
+import { type Transaction } from "./repository.js";
 import { dvrWindowData } from "./dvr-service.js";
 import { StreamingStore } from "./store.js";
 import type { StreamingRoutesOptions } from "./routes.js";
@@ -54,9 +57,11 @@ export const dvrMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
     }
     const relative = (value: string) => `${value}?token=${encodeURIComponent(token)}`;
     let objectKey: string | undefined;
+    let deliveryOwner: ServiceUsageOwner | undefined;
     let body: Buffer = await database.transaction(async (db) => {
       const data = await access(db, isManifest),
         segments = data.segments;
+      deliveryOwner = { ...recordingUsageOwner(data.r), resourceType: "dvr", resourceId: windowId, runId: data.r.id };
       const first = segments[0];
       if (["index.m3u8", "video.m3u8", "audio.m3u8"].includes(name)) {
         if (segments.length)
@@ -129,24 +134,15 @@ export const dvrMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
     });
     if (objectKey) body = await store.get(objectKey);
     await database.transaction((db) => access(db));
-    const deliveredBytes = request.method === "HEAD" ? 0 : body.length,
-      usageId = id("dvrdelivery");
-    // Record origin HTTP payload bytes only after successful server-side completion.
-    reply.raw.once("finish", () => {
-      if (!reply.raw.writableFinished || reply.statusCode >= 400) return;
-      void database
-        .transaction(async (db) => {
-          const added = await db.execute(
-            sql`INSERT INTO dvr_delivery_usage(id,window_id,bytes) VALUES(${usageId},${windowId},${deliveredBytes}) ON CONFLICT DO NOTHING RETURNING id`,
-          );
-          if (added.length)
-            await db.execute(
-              sql`UPDATE dvr_window SET delivered_bytes=delivered_bytes+${deliveredBytes} WHERE id=${windowId}`,
-            );
-        })
-        .catch((err: unknown) => {
-          app.log.error({ err, windowId }, "DVR delivery metering failed");
-        });
+    if (request.headers.range && !isManifest) {
+      const range = mediaRange(request, reply, body.length);
+      if (!range) return reply.send();
+      body = body.subarray(range.start, range.end + 1);
+    }
+    const subject = verifyStreamingGrant(config.secret, token, "streaming-playback")?.sub ?? "";
+    if (deliveryOwner) await meterMediaResponse(database, request, reply, deliveryOwner, subject, !isManifest, async (db, bytes, identity) => {
+      const added = await db.execute(sql`INSERT INTO dvr_delivery_usage(id,window_id,bytes) VALUES(${identity},${windowId},${bytes}) ON CONFLICT DO NOTHING RETURNING id`);
+      if (added.length) await db.execute(sql`UPDATE dvr_window SET delivered_bytes=delivered_bytes+${bytes} WHERE id=${windowId}`);
     });
     return reply
       .type(name.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp4")

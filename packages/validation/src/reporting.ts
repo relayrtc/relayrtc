@@ -1,3 +1,4 @@
+import { serviceUsageReportSchema } from "./service-usage.js";
 import { z } from "zod";
 
 import { environmentIdSchema, organizationIdSchema, projectIdSchema } from "./common.js";
@@ -94,6 +95,7 @@ export const usageDataQualitySchema = z
   .strict();
 export const projectUsageResponseSchema = z
   .object({
+    serviceUsage: serviceUsageReportSchema.optional(),
     scope: z.object(projectScope).strict(),
     window: reportingWindowSchema,
     summary: reportingUsageMetricsSchema,
@@ -104,6 +106,7 @@ export const projectUsageResponseSchema = z
 export const organizationUsageResponseSchema = z
   .object({
     organizationId: organizationIdSchema,
+    serviceUsage: serviceUsageReportSchema.optional(),
     window: reportingWindowSchema,
     summary: reportingUsageMetricsSchema,
     projects: z.array(
@@ -137,6 +140,7 @@ const network = z
   .strict();
 export const projectAnalyticsResponseSchema = z
   .object({
+    serviceUsage: serviceUsageReportSchema.optional(),
     scope: z.object(projectScope).strict(),
     window: reportingWindowSchema,
     summary: z

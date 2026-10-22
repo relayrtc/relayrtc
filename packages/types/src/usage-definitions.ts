@@ -37,7 +37,7 @@ export const usageAccountingRules = {
   recovery:
     "Close abandoned intervals at the last supported liveness boundary. A lease-expiry closure is a bounded recovery estimate and must not extend activity to the later reconciliation time.",
   optionalFeatures:
-    "Recording and external streaming metrics are outside the current implemented metric contract; define their server sources before enabling those features.",
+    "Room metrics retain their existing semantics. Streaming and retained-asset observations use the separate serviceUsageDefinitions contract.",
 } as const;
 
 export const usageMetricDefinitions = {

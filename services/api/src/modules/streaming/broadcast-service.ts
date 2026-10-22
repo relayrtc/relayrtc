@@ -1,3 +1,4 @@
+import { observeServiceUsage } from "./service-usage.js";
 import { recordAudit, type AuditActor } from "@relayrtc/auth/server";
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
 import type {
@@ -212,10 +213,10 @@ export async function releaseJob(db: Transaction, job: JobRow, outcome: string) 
       });
   }
   await db.execute(
-    sql`UPDATE broadcast_attempt SET ended_at=coalesce(ended_at,now()),outcome=coalesce(outcome,${outcome}) WHERE job_id=${job.id} AND fence=${job.fence}`,
+    sql`UPDATE broadcast_attempt SET ended_at=coalesce(ended_at,now()),outcome=coalesce(outcome,${outcome}) WHERE job_id=${job.id} AND fence=${String(job.fence)}`,
   );
   await db.execute(
-    sql`DELETE FROM broadcast_reservation WHERE job_id=${job.id} AND fence=${job.fence}`,
+    sql`DELETE FROM broadcast_reservation WHERE job_id=${job.id} AND fence=${String(job.fence)}`,
   );
   await db
     .update(schema.broadcastJob)
@@ -286,8 +287,13 @@ export async function sampleJob(
     job.kind === "rtmp" && output?.configuration.profile !== "remux" ? liveSeconds : 0;
   const inserted =
     await db.execute(sql`INSERT INTO broadcast_usage_sample(job_id,fence,sequence,broadcast_id,organization_id,project_id,environment_id,output_seconds,reservation_seconds,coverage,egress_bytes,transcode_seconds)
-    VALUES(${job.id},${job.fence},${sequence},${run.id},${run.organizationId},${run.projectId},${run.environmentId},${liveSeconds},${reserved},${observed ? "observed" : "partial"},${deltaBytes},${transcodeSeconds}) ON CONFLICT DO NOTHING RETURNING job_id`);
+    VALUES(${job.id},${String(job.fence)},${String(sequence)},${run.id},${run.organizationId},${run.projectId},${run.environmentId},${liveSeconds},${reserved},${observed ? "observed" : "partial"},${deltaBytes},${transcodeSeconds}) ON CONFLICT DO NOTHING RETURNING job_id`);
   if (inserted.length) {
+    const endedAt = new Date();
+    const startedAt = new Date(Math.max(job.lastHeartbeatAt?.getTime() ?? endedAt.getTime(), endedAt.getTime() - Math.max(reserved, liveSeconds) * 1000));
+    await observeServiceUsage(db, { ...run, streamId: run.streamId, resourceType: "broadcast", resourceId: run.id, runId: `${job.id}:${String(job.fence)}` }, `output:${job.id}:${String(job.fence)}:${String(sequence)}`, {
+      outputSeconds: liveSeconds, outputReservationSeconds: reserved, externalOutputBytes: deltaBytes, externalTranscodeSeconds: transcodeSeconds,
+    }, startedAt, endedAt, observed ? "observed" : "partial");
     await db.execute(
       sql`UPDATE broadcast_run SET run_seconds=run_seconds+${job.kind === "hls" ? liveSeconds : 0},output_seconds=output_seconds+${liveSeconds},egress_bytes=egress_bytes+${deltaBytes},transcode_seconds=transcode_seconds+${transcodeSeconds},reservation_seconds=reservation_seconds+${reserved},usage_samples=usage_samples+1,partial_samples=partial_samples+${observed ? 0 : 1} WHERE id=${run.id}`,
     );

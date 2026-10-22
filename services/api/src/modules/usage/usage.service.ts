@@ -1,3 +1,4 @@
+import { getServiceUsage } from "../reporting/service-usage-report.js";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import { usageMetricDefinitions, type UsageMetrics } from "@relayrtc/types";
 import {
@@ -30,7 +31,7 @@ const categoryMetrics = {
     "signalingMessagesOut",
   ],
   "screen-share": ["screenShareSeconds", "screenShareIngressBytes", "screenShareEgressBytes"],
-} as const satisfies Record<Exclude<PublicUsageCategory, "all">, readonly (keyof UsageMetrics)[]>;
+} as const satisfies Record<Exclude<PublicUsageCategory, "all" | "streaming">, readonly (keyof UsageMetrics)[]>;
 
 export async function getPublicUsage(
   database: RelayKitDatabase,
@@ -70,7 +71,7 @@ export async function getPublicUsage(
     query.granularity ??
     (endedAt.getTime() - startedAt.getTime() <= durations["24h"] ? "hour" : "day");
   const metrics =
-    category === "all" ? Object.values(categoryMetrics).flat() : [...categoryMetrics[category]];
+    category === "all" ? Object.values(categoryMetrics).flat() : category === "streaming" ? [] : [...categoryMetrics[category]];
   const selectMetrics = (value: unknown) => {
     const { messagesIn, messagesOut, ...report } = reportingUsageMetricsSchema.parse(value);
     const canonical = {
@@ -113,6 +114,7 @@ export async function getPublicUsage(
     metricDefinitions: Object.fromEntries(
       metrics.map((metric) => [metric, usageMetricDefinitions[metric]]),
     ),
+    serviceUsage: category === "all" || category === "streaming" ? await getServiceUsage(database, scope, { startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString(), granularity }, now) : undefined,
     summary: selectMetrics(row.summary),
     buckets: row.buckets.map((bucket) => ({ ...bucket, metrics: selectMetrics(bucket.metrics) })),
     dataQuality: {

@@ -1,3 +1,4 @@
+import { openUsageObject, observeRecordingProcessing, observeServiceUsage, recordingUsageOwner } from "./service-usage.js";
 import { effectiveBufferPolicy } from "./dvr-service.js";
 import { timingSafeEqual } from "node:crypto";
 import {
@@ -102,6 +103,7 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
       const changed = await db.execute(
         sql`UPDATE recording_object SET committed_at=now(),metered_at=now() WHERE recording_id=${r.id} AND name=${name} AND committed_at IS NULL RETURNING size_bytes`,
       );
+      if (changed.length) await openUsageObject(db, r.id, name);
       if (changed.length)
         await db.execute(
           sql`UPDATE recording SET storage_byte_seconds=storage_byte_seconds+stored_bytes*greatest(0,EXTRACT(EPOCH FROM now()-storage_metered_at)),storage_metered_at=now(),stored_bytes=stored_bytes+${body.length} WHERE id=${r.id}`,
@@ -155,8 +157,9 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
   app.post("/internal/v1/recordings/heartbeat", (request) =>
     database.transaction(async (db) => {
       const r = await leased(db, request, true);
+      const processing = await observeRecordingProcessing(db, r);
       await db.execute(
-        sql`UPDATE recording SET processing_seconds=processing_seconds+${r.state === "finalizing" ? Math.min(15, Math.max(0, (Date.now() - (r.heartbeat_at?.getTime() ?? Date.now())) / 1000)) : 0},heartbeat_at=now(),leased_until=now()+interval '30 seconds' WHERE id=${r.id}`,
+        sql`UPDATE recording SET processing_seconds=processing_seconds+${processing},heartbeat_at=now(),leased_until=now()+interval '30 seconds' WHERE id=${r.id}`,
       );
       return { token: token(r), stop: r.stop_requested && r.state !== "finalizing" };
     }),
@@ -164,8 +167,9 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
   app.post("/internal/v1/recordings/release", (request) =>
     database.transaction(async (db) => {
       const r = await leased(db, request, true);
+      const processing = await observeRecordingProcessing(db, r);
       await db.execute(
-        sql`UPDATE recording SET lease_token=NULL,leased_until=NULL,worker_id=NULL WHERE id=${r.id}`,
+        sql`UPDATE recording SET processing_seconds=processing_seconds+${processing},heartbeat_at=now(),lease_token=NULL,leased_until=NULL,worker_id=NULL WHERE id=${r.id}`,
       );
       return { released: true };
     }),
@@ -195,8 +199,9 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
           .strict(),
         request.body ?? {},
       );
+      const processing = await observeRecordingProcessing(db, r);
       await db.execute(
-        sql`UPDATE recording SET lease_token=NULL,leased_until=NULL,worker_id=NULL,last_error=${code},next_attempt_at=now()+make_interval(secs=>${Math.min(60, 5 * 2 ** Math.max(0, r.attempts - 1))}) WHERE id=${r.id}`,
+        sql`UPDATE recording SET processing_seconds=processing_seconds+${processing},heartbeat_at=now(),lease_token=NULL,leased_until=NULL,worker_id=NULL,last_error=${code},next_attempt_at=now()+make_interval(secs=>${Math.min(60, 5 * 2 ** Math.max(0, r.attempts - 1))}) WHERE id=${r.id}`,
       );
       if (
         [
@@ -629,8 +634,11 @@ export const recordingRuntimeRoutes: FastifyPluginAsync<StreamingRoutesOptions> 
       }
       if (current.partial && !current.policy.allowPartial)
         throw new Error("RECORDING_PARTIAL_NOT_ALLOWED");
+      const processing = await observeRecordingProcessing(db, current);
+      const finalizedAt = new Date();
+      await observeServiceUsage(db, recordingUsageOwner(current), `finalized:${current.id}:${String(current.fence)}`, { [r.kind === "clip" ? "clipFinalizations" : "recordingFinalizations"]: 1 }, finalizedAt, finalizedAt, "observed");
       const [row] = await db.execute(
-        sql`UPDATE recording SET export_fence=${String(r.fence)},mp4_parts=${input.parts},has_thumbnail=${input.thumbnail},codecs=${JSON.stringify(input.codecs)}::jsonb,duration_seconds=CASE WHEN kind='clip' THEN ${input.duration} ELSE duration_seconds END,processing_seconds=processing_seconds+greatest(0,EXTRACT(EPOCH FROM clock_timestamp()-coalesce(heartbeat_at,clock_timestamp()))),expires_at=coalesce(expires_at,now()+make_interval(secs=>${r.policy.retentionSeconds})),ended_at=coalesce(ended_at,now()),lease_token=NULL,leased_until=NULL,worker_id=NULL WHERE id=${r.id} RETURNING *`,
+        sql`UPDATE recording SET export_fence=${String(r.fence)},mp4_parts=${input.parts},has_thumbnail=${input.thumbnail},codecs=${JSON.stringify(input.codecs)}::jsonb,duration_seconds=CASE WHEN kind='clip' THEN ${input.duration} ELSE duration_seconds END,processing_seconds=processing_seconds+${processing},expires_at=coalesce(expires_at,now()+make_interval(secs=>${r.policy.retentionSeconds})),ended_at=coalesce(ended_at,now()),lease_token=NULL,leased_until=NULL,worker_id=NULL WHERE id=${r.id} RETURNING *`,
       );
       if (r.kind === "clip")
         await db.execute(sql`DELETE FROM recording_segment WHERE recording_id=${r.id}`);

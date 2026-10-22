@@ -1,4 +1,7 @@
 import { Readable } from "node:stream";
+import { meterMediaResponse } from "./delivery-usage.js";
+import { recordingUsageOwner } from "./service-usage.js";
+import { mediaRange } from "./media-range.js";
 import { recordAudit } from "@relayrtc/auth/server";
 import {
   signStreamingGrant,
@@ -390,29 +393,9 @@ export const assetMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
       );
       if (parts.length !== r.mp4_parts) throw missing();
       const total = parts.reduce((n, p) => n + Number(p.size_bytes), 0);
-      let start = 0,
-        end = total - 1;
-      if (request.headers.range) {
-        const range = /^bytes=(\d*)-(\d*)$/u.exec(request.headers.range);
-        if (!range || (!range[1] && !range[2]))
-          return reply
-            .code(416)
-            .header("content-range", `bytes */${String(total)}`)
-            .send();
-        if (!range[1]) start = Math.max(0, total - Number(range[2]));
-        else {
-          start = Number(range[1]);
-          end = range[2] ? Math.min(end, Number(range[2])) : end;
-        }
-        if (start > end || start >= total)
-          return reply
-            .code(416)
-            .header("content-range", `bytes */${String(total)}`)
-            .send();
-        reply
-          .code(206)
-          .header("content-range", `bytes ${String(start)}-${String(end)}/${String(total)}`);
-      }
+      const range = mediaRange(request, reply, total);
+      if (!range) return reply.send();
+      const { start, end } = range;
       reply
         .type("video/mp4")
         .header("accept-ranges", "bytes")
@@ -431,6 +414,8 @@ export const assetMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
           offset += size;
         }
       }
+      const claims = verifyStreamingGrant(config.secret, token, "streaming-asset");
+      await meterMediaResponse(database, request, reply, recordingUsageOwner(r), claims?.sub ?? "", false);
       return reply.send(Readable.from(chunks()));
     }
     const actual = ["index.m3u8", "video.m3u8", "audio.m3u8"].includes(name)
@@ -477,6 +462,13 @@ export const assetMediaRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (
           .join("\n"),
       );
     }
+    if (request.headers.range && !name.endsWith(".m3u8")) {
+      const range = mediaRange(request, reply, body.length);
+      if (!range) return reply.send();
+      body = body.subarray(range.start, range.end + 1);
+    }
+    const claims = verifyStreamingGrant(config.secret, token, "streaming-asset");
+    await meterMediaResponse(database, request, reply, recordingUsageOwner(r), claims?.sub ?? "", !name.endsWith(".m3u8") && name !== "thumbnail.jpg");
     return reply
       .type(
         name.endsWith("m3u8")

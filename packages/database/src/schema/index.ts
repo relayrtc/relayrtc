@@ -32,3 +32,4 @@ export * from "./mixer.js";
 export * from "./dvr.js";
 
 export * from "./guest.js";
+export * from "./service-usage.js";
