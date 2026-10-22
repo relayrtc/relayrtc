@@ -82,6 +82,22 @@ export function ServiceUsagePanel({ data }: { data: ServiceUsageReport | undefin
   const metrics = resource?.metrics ?? project?.metrics ?? data.summary;
   const metricCoverage = resource?.metricCoverage ?? project?.metricCoverage ?? data.coverage;
   const entries = Object.entries(serviceUsageDefinitions);
+  const highlights = [
+    { metric: "sourceSeconds", label: "Stream processing" },
+    { metric: "liveDeliveryBytes", label: "Live delivery" },
+    { metric: "viewerSeconds", label: "Estimated viewer activity" },
+    { metric: "recordingStoredBytes", label: "Recording storage" },
+    { metric: "clipStoredBytes", label: "Clip storage" },
+    { metric: "bufferStoredBytes", label: "DVR & clip buffer storage" },
+  ] as const;
+  const windowDate = (value: string) =>
+    new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+    }).format(new Date(value));
   const exportUsage = () =>
     downloadCsv(
       "streaming-usage.csv",
@@ -117,118 +133,179 @@ export function ServiceUsagePanel({ data }: { data: ServiceUsageReport | undefin
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">
-        Same selected UTC window as room usage. Delivery is measured at our origin; viewer activity
-        estimates recent media requests. These are usage quantities, with no price conversion
-        applied.
+        Processing, media delivery and saved storage for the selected period. These are measured
+        quantities, not charges.
       </p>
-      {data.projects.length > 1 && (
-        <label className="flex flex-col gap-2 text-sm sm:max-w-xl">
-          Project
-          <select
-            className="h-9 rounded-md border bg-background px-3"
-            value={projectId}
-            onChange={(e) => {
-              setProjectId(e.target.value);
+      <p className="text-xs text-muted-foreground">
+        {windowDate(data.window.startedAt)} – {windowDate(data.window.endedAt)} UTC
+      </p>
+      {(resource || project) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="break-all">
+            Showing{" "}
+            {resource
+              ? `${resource.resourceType}: ${resource.resourceId}`
+              : `project: ${project!.projectId}`}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
               setResourceId("");
+              setProjectId("");
             }}
           >
-            <option value="">All projects</option>
-            {data.projects.map((p) => (
-              <option key={p.projectId} value={p.projectId}>
-                {p.projectId}
-              </option>
-            ))}
-          </select>
-        </label>
+            Clear filter
+          </Button>
+        </div>
       )}
-      <p className="text-xs text-muted-foreground">
-        {data.window.startedAt} to {data.window.endedAt} (UTC, end exclusive)
-      </p>
-      <label className="flex flex-col gap-2 text-sm sm:max-w-xl">
-        Resource
-        <select
-          className="h-9 rounded-md border bg-background px-3"
-          value={resourceId}
-          onChange={(e) => {
-            setResourceId(e.target.value);
-            setProjectId("");
-          }}
-        >
-          <option value="">All resources in this scope</option>
-          {data.resources.map((r) => (
-            <option
-              key={`${r.resourceType}:${r.resourceId}`}
-              value={`${r.resourceType}:${r.resourceId}`}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {highlights.map(({ metric, label }) => {
+          const coverage = metricCoverage[metric] ?? "unavailable";
+          return (
+            <div
+              key={metric}
+              className="rounded-xl border border-border/70 bg-card/30 p-4"
+              title={serviceUsageDefinitions[metric].definition}
             >
-              {r.resourceType}: {r.resourceId}
-            </option>
-          ))}
-        </select>
-      </label>
-      {resource && (
-        <p className="break-all text-xs text-muted-foreground">
-          Stream: {resource.streamId}. Resource figures use the same window and units as the totals.
-        </p>
-      )}
-      {data.resourcesTruncated && (
-        <p className="text-xs text-muted-foreground">
-          Showing the first 100 resource drilldowns. Scope totals include every resource; use an
-          individual resource usage report for other resources.
-        </p>
-      )}
-      {data.historicalCoverage === "partial" && (
-        <p role="status" className="text-sm text-muted-foreground">
-          Streaming measurements started {new Date(data.journalStartedAt).toLocaleString()}. Earlier
-          activity is unavailable and has not been reconstructed from lifetime counters.
-        </p>
-      )}
-      <div className="grid gap-4 xl:grid-cols-2">
-        {categories.map((category) => (
-          <Panel key={category}>
-            <h3 className="mb-3 text-base font-medium">{names[category]}</h3>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-muted-foreground">
-                  <th className="pb-2 font-normal">Metric</th>
-                  <th className="pb-2 text-right font-normal">Usage</th>
-                  <th className="pb-2 text-right font-normal">Coverage</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries
-                  .filter(([, d]) => d.category === category)
-                  .map(([name, d]) => {
-                    const coverage = metricCoverage[name] ?? "unavailable";
-                    return (
-                      <tr key={name} className="border-t">
-                        <td className="py-2 pr-3" title={d.definition}>
-                          {labels[name] ?? name}
-                        </td>
-                        <td
-                          className="py-2 text-right tabular-nums"
-                          title={`${metrics[name] ?? 0} ${d.unit}. ${d.definition}`}
-                        >
-                          {coverage === "unavailable"
-                            ? "Unavailable"
-                            : quantity(metrics[name] ?? 0, d.unit)}
-                        </td>
-                        <td className="py-2 pl-3 text-right text-xs text-muted-foreground">
-                          {coverage}
-                        </td>
-                      </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
-          </Panel>
-        ))}
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="mt-2 text-xl font-semibold tabular-nums">
+                {coverage === "unavailable"
+                  ? "No measurement"
+                  : quantity(metrics[metric] ?? 0, serviceUsageDefinitions[metric].unit)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {coverage === "unavailable"
+                  ? "No usable measurement in this period"
+                  : coverage === "partial"
+                    ? "Partial measurement"
+                    : coverage === "estimated"
+                      ? "Estimated"
+                      : "Measured"}
+              </p>
+            </div>
+          );
+        })}
       </div>
-      <p className="text-xs text-muted-foreground">
-        SFU, TURN, room export, encoder program and external output are separate service hops and
-        can contain the same media. Avoid adding them together as unique traffic. Storage counts
-        physical recording, clip and shared buffer objects once; origin caches and pending uploads
-        are excluded.
-      </p>
+      {data.historicalCoverage === "partial" && (
+        <p role="status" className="text-xs text-muted-foreground">
+          Tracking started {new Date(data.journalStartedAt).toLocaleString()}. This period includes
+          time before tracking began.
+        </p>
+      )}
+      <details className="rounded-xl border border-border/70 p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          Detailed measurements and resource breakdown
+        </summary>
+        <div className="mt-4 flex flex-col gap-4">
+          {data.projects.length > 1 && (
+            <label className="flex flex-col gap-2 text-sm sm:max-w-xl">
+              Project
+              <select
+                className="h-9 rounded-md border bg-background px-3"
+                value={projectId}
+                onChange={(e) => {
+                  setProjectId(e.target.value);
+                  setResourceId("");
+                }}
+              >
+                <option value="">All projects</option>
+                {data.projects.map((p) => (
+                  <option key={p.projectId} value={p.projectId}>
+                    {p.projectId}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="flex flex-col gap-2 text-sm sm:max-w-xl">
+            Resource
+            <select
+              className="h-9 rounded-md border bg-background px-3"
+              value={resourceId}
+              onChange={(e) => {
+                setResourceId(e.target.value);
+                setProjectId("");
+              }}
+            >
+              <option value="">All resources in this scope</option>
+              {data.resources.map((r) => (
+                <option
+                  key={`${r.resourceType}:${r.resourceId}`}
+                  value={`${r.resourceType}:${r.resourceId}`}
+                >
+                  {r.resourceType}: {r.resourceId}
+                </option>
+              ))}
+            </select>
+          </label>
+          {resource && (
+            <p className="break-all text-xs text-muted-foreground">
+              Stream: {resource.streamId}. Resource figures use the same window and units as the
+              totals.
+            </p>
+          )}
+          {data.resourcesTruncated && (
+            <p className="text-xs text-muted-foreground">
+              Showing the first 100 resource drilldowns. Scope totals include every resource; use an
+              individual resource usage report for other resources.
+            </p>
+          )}
+          {data.historicalCoverage === "partial" && (
+            <p role="status" className="text-sm text-muted-foreground">
+              Streaming measurements started {new Date(data.journalStartedAt).toLocaleString()}.
+              Earlier activity is unavailable and has not been reconstructed from lifetime counters.
+            </p>
+          )}
+          <div className="grid gap-4 xl:grid-cols-2">
+            {categories.map((category) => (
+              <Panel key={category}>
+                <h3 className="mb-3 text-base font-medium">{names[category]}</h3>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-muted-foreground">
+                      <th className="pb-2 font-normal">Metric</th>
+                      <th className="pb-2 text-right font-normal">Usage</th>
+                      <th className="pb-2 text-right font-normal">Coverage</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries
+                      .filter(([, d]) => d.category === category)
+                      .map(([name, d]) => {
+                        const coverage = metricCoverage[name] ?? "unavailable";
+                        return (
+                          <tr key={name} className="border-t">
+                            <td className="py-2 pr-3" title={d.definition}>
+                              {labels[name] ?? name}
+                            </td>
+                            <td
+                              className="py-2 text-right tabular-nums"
+                              title={`${metrics[name] ?? 0} ${d.unit}. ${d.definition}`}
+                            >
+                              {coverage === "unavailable"
+                                ? "Unavailable"
+                                : quantity(metrics[name] ?? 0, d.unit)}
+                            </td>
+                            <td className="py-2 pl-3 text-right text-xs text-muted-foreground">
+                              {coverage}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </Panel>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            SFU, TURN, room export, encoder program and external output are separate service hops
+            and can contain the same media. Avoid adding them together as unique traffic. Storage
+            counts physical recording, clip and shared buffer objects once; origin caches and
+            pending uploads are excluded.
+          </p>
+        </div>
+      </details>
     </section>
   );
 }

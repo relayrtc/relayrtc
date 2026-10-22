@@ -33,18 +33,16 @@ export default async function ProjectOverviewPage({
   params: Promise<{ orgId: string; projectId: string }>
 }) {
   const { orgId, projectId } = await params
-  const data = await requireProject(orgId, projectId)
+  await requireProject(orgId, projectId)
 
   const [analytics, quota] = await Promise.all([getProjectAnalytics(projectId, '7d'), getOrganizationQuota(orgId)])
 
-  const firstName =
-    data.session.user.name?.trim().split(/\s+/)[0] || 'there'
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title={`Welcome, ${firstName}!`}
-        description={`Manage and overview your Relayrtc projects.`}
+        title="Overview"
+        description="Usage, connection health and activity across your project."
         actions={
           <Link
             href={`${routes.projectPage(orgId, projectId, 'api-keys')}?new=1`}
@@ -78,7 +76,9 @@ export default async function ProjectOverviewPage({
         <StatCard label="Connection success" value={analytics.summary.totalSessions === 0 ? 'No sessions' : `${analytics.summary.connectionSuccessRate.toFixed(1)}%`} hint="7d" />
       </div>
 
-      <Panel className="flex flex-col gap-4">
+      <details className="rounded-xl border p-5">
+        <summary className="cursor-pointer text-sm font-medium">Integration quickstart</summary>
+      <Panel className="mt-4 flex flex-col gap-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-base font-medium">Start building</h2>
@@ -103,6 +103,7 @@ export default async function ProjectOverviewPage({
 
         <QuickstartTabs />
       </Panel>
+      </details>
     </div>
   )
 }
