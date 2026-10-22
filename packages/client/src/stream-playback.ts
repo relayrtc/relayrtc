@@ -1,3 +1,5 @@
+import { StreamingBackoff } from "./streaming-request-error.js";
+
 /** Application-authorized playback. These callbacks must never use a management key in a browser. */
 export interface StreamPlaybackMetadata {
   streamId: string;
@@ -46,6 +48,7 @@ export class StreamPlaybackClient {
   private pending: Promise<void> | undefined;
   private renew = false;
   private interval: number;
+  private readonly backoff = new StreamingBackoff();
   constructor(private readonly options: StreamPlaybackOptions) {
     this.interval = options.pollIntervalMs ?? 5000;
     if (!Number.isInteger(this.interval) || this.interval < 1000 || this.interval > 60000)
@@ -70,15 +73,19 @@ export class StreamPlaybackClient {
     const controller = this.controller;
     if (!controller) return Promise.resolve();
     clearTimeout(this.timer);
+    if (this.backoff.remaining() > 0) {
+      this.timer = setTimeout(() => { void this.refresh(); }, this.backoff.remaining());
+      return Promise.resolve();
+    }
     this.pending = this.update(controller).finally(() => {
       this.pending = undefined;
       if (this.controller === controller && !controller.signal.aborted) {
         const expires = Date.parse(this.snapshot.grant?.expiresAt ?? "") - Date.now() - 20000;
-        const next = this.renew
+        const next = this.backoff.delay(this.renew
           ? 0
           : Number.isFinite(expires) && expires > 0
             ? Math.min(this.interval, expires)
-            : this.interval;
+            : this.interval);
         this.timer = setTimeout(() => {
           void this.refresh();
         }, next);
@@ -129,9 +136,11 @@ export class StreamPlaybackClient {
         )
           throw new Error("Invalid playback grant");
       }
-      if (!controller.signal.aborted && this.controller === controller)
+      if (!controller.signal.aborted && this.controller === controller) {
+        this.backoff.succeed();
         this.publish({ playback, grant, error: null });
-    } catch {
+      }
+    } catch (error) {
       if (!controller.signal.aborted && this.controller === controller) {
         // Never surface authenticated URLs or endpoint error bodies.
         const grant =
@@ -141,7 +150,7 @@ export class StreamPlaybackClient {
         this.publish({
           ...this.snapshot,
           grant,
-          error: new Error("Playback is unavailable. Check your access or try again."),
+          error: this.backoff.fail("Playback is unavailable. Check your access or try again.", error, this.interval),
         });
       }
     }
@@ -155,6 +164,7 @@ export class StreamPlaybackClient {
     this.controller = undefined;
     clearTimeout(this.timer);
     this.renew = false;
+    this.backoff.reset();
     this.publish(initial);
   }
   dispose(): void {

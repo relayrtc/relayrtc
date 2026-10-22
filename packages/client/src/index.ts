@@ -60,6 +60,7 @@ export type {MixerResource,MixerScene,MixerSceneResource,MixerSource,MixerLayer,
 export type { DvrPolicy, DvrPolicyResource, DvrPlayback } from "@relayrtc/types";
 
 export * from "./dvr-playback.js";
+export { StreamingRequestError } from "./streaming-request-error.js";
 
 export * from "./stream-guest-client.js";
 export type {GuestMedia,GuestRole,GuestDelegation,GuestResource,GuestStage,GuestRoster,GuestJoinGrant} from "@relayrtc/types";
