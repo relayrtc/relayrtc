@@ -26,6 +26,8 @@ Participant listing accepts `limit`, `cursor`, and `status` (`active` or `left`)
 
 ## Environment
 
+`POST /v1/rooms/:roomId/tokens/renew` requires `tokens:create` and a body containing the current unexpired `participantToken`, its active `sessionId`, and optional `ttlSeconds` (60–3600; default 600). It returns a new token for the same identity and permissions. Renewal checks scoped tenant/room/session eligibility and rejects removed participants, expired tokens and streaming guest grants. Call it through an authenticated application backend and supply replacements to the browser `refreshToken` callback. `tokens.create` is not renewal.
+
 - `DATABASE_URL` — required PostgreSQL connection URL
 - `API_HOST` — listening address, defaults to `0.0.0.0`
 - `API_PORT` — listening port, defaults to `8080`

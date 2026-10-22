@@ -7,13 +7,20 @@ import { ApiError } from "../../http/errors/api-error.js";
 import { validate } from "../../http/validation/validate.js";
 import { createRoomRepository } from "../rooms/room.repository.js";
 import { roomParamsSchema } from "../rooms/room.schema.js";
-import { createParticipantTokenBodySchema } from "./participant-token.schema.js";
+import {
+  createParticipantTokenBodySchema,
+  renewParticipantTokenBodySchema,
+} from "./participant-token.schema.js";
+import { createParticipantTokenRenewalService } from "./participant-token-renewal.service.js";
+import { createActiveRenewalSession } from "./participant-token-renewal.repository.js";
+import type { ParticipantTokenVerifier } from "./participant-token.verifier.js";
 import { createParticipantTokenService } from "./participant-token.service.js";
 import type { ParticipantTokenSigner } from "./participant-token.signer.js";
 
 interface ParticipantTokenRoutesOptions {
   database: RelayKitDatabase;
   signer: ParticipantTokenSigner;
+  verifier: ParticipantTokenVerifier;
 }
 
 const requestScope = (request: FastifyRequest) => {
@@ -33,6 +40,11 @@ export const participantTokenRoutes: FastifyPluginCallback<ParticipantTokenRoute
   options,
   done,
 ) => {
+  const renewal = createParticipantTokenRenewalService({
+    signer: options.signer,
+    verifier: options.verifier,
+    withActiveSession: createActiveRenewalSession(options.database),
+  });
   const service = createParticipantTokenService({
     isProjectActive: async ({ projectId, environmentId }) => {
       const [project] = await options.database
@@ -62,6 +74,17 @@ export const participantTokenRoutes: FastifyPluginCallback<ParticipantTokenRoute
       const body = validate(createParticipantTokenBodySchema, request.body);
       const token = await service.create(requestScope(request), params.roomId, body);
       return reply.status(201).send(token);
+    },
+  );
+
+  app.post(
+    "/rooms/:roomId/tokens/renew",
+    { preHandler: requireApiKeyScope("tokens:create") },
+    async (request, reply) => {
+      const params = validate(roomParamsSchema, request.params);
+      const body = validate(renewParticipantTokenBodySchema, request.body);
+      const token = await renewal.renew(requestScope(request), params.roomId, body);
+      return reply.header("cache-control", "no-store").status(201).send(token);
     },
   );
 
