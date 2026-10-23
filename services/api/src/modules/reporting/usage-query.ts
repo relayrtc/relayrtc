@@ -187,12 +187,25 @@ export function createUsageReportQuery(
       select e.* from usage_lifecycle_event e join scoped_rooms r on r.id = e.room_id
       cross join bounds b where e.occurred_at >= b.starts and e.occurred_at < b.ends
     ), scoped_usage_events as (
-      select ue.* from usage_event ue
+      select ue.project_id, ue.metric, ue.value, ue.occurred_at from usage_event ue
       join scoped_projects pr on pr.id = ue.project_id cross join bounds b
       where ue.organization_id = ${scope.organizationId}
         and (ue.metric not in ('turnIngressBytes', 'turnEgressBytes', 'turn.bytes.ingress', 'turn.bytes.egress') or ue.source = 'coturn')
         ${scope.environmentId === null ? sql`` : sql`and ue.environment_id = ${scope.environmentId}`}
         and ue.occurred_at >= b.starts and ue.occurred_at < b.ends
+      union all
+      -- Room export consumers are separate from the RTC consumers metered in
+      -- usage_event. Include their journaled deltas once as SFU egress, while
+      -- retaining roomExportBytes as an itemized streaming usage breakdown.
+      select s.project_id, 'sfuEgressBytes'::text metric,
+        (s.metrics->>'roomExportBytes')::double precision value, s.occurred_at
+      from service_usage_sample s
+      join scoped_projects pr on pr.id = s.project_id cross join bounds b
+      where s.organization_id = ${scope.organizationId} and s.resource_type = 'stream'
+        ${scope.environmentId === null ? sql`` : sql`and s.environment_id = ${scope.environmentId}`}
+        and s.started_at < b.ends and s.ended_at >= b.starts
+        and s.occurred_at >= b.starts and s.occurred_at < b.ends
+        and (s.metrics->>'roomExportBytes')::double precision > 0
     ), scoped_turn_allocations as (
       select t.* from turn_allocation t join scoped_projects pr on pr.id = t.project_id
       where t.organization_id = ${scope.organizationId}

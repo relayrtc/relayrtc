@@ -37,7 +37,7 @@ export const usageAccountingRules = {
   recovery:
     "Close abandoned intervals at the last supported liveness boundary. A lease-expiry closure is a bounded recovery estimate and must not extend activity to the later reconciliation time.",
   optionalFeatures:
-    "Room metrics retain their existing semantics. Streaming and retained-asset observations use the separate serviceUsageDefinitions contract.",
+    "Room participant metrics retain their existing semantics. Room export bytes contribute to reported SFU egress and remain itemized under serviceUsageDefinitions. Other streaming and retained-asset observations stay separate.",
 } as const;
 
 export const usageMetricDefinitions = {
@@ -87,8 +87,8 @@ export const usageMetricDefinitions = {
     aggregation: "sum",
     integer: true,
     definition:
-      "Nonnegative native consumer bytesSent deltas observed at the SFU; fan-out to multiple subscribers counts each consumer.",
-    source: "mediasoup consumer statistics.",
+      "Nonnegative native consumer byte deltas sent by the SFU to RTC subscribers and room-to-stream exports; fan-out counts each consumer once. Itemized roomExportBytes are included in this total.",
+    source: "mediasoup consumer statistics and retained room-export usage observations.",
   },
   turnIngressBytes: {
     unit: "bytes",
