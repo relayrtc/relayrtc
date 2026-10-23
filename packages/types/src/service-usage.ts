@@ -66,7 +66,7 @@ export const serviceUsageDefinitions = {
     "sources",
     "bytes",
     "event",
-    "SFU-to-source export hop; may overlap SFU egress, never unique viewer traffic.",
+    "SFU-to-source export hop; included in reported SFU egress, never unique viewer traffic. Do not add it again to the SFU total.",
   ),
   externalIngressBytes: metric(
     "sources",

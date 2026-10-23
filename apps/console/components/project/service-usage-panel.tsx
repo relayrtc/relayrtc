@@ -299,10 +299,11 @@ export function ServiceUsagePanel({ data }: { data: ServiceUsageReport | undefin
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            SFU, TURN, room export, encoder program and external output are separate service hops
-            and can contain the same media. Avoid adding them together as unique traffic. Storage
-            counts physical recording, clip and shared buffer objects once; origin caches and
-            pending uploads are excluded.
+            Room export traffic is included in SFU egress and itemized here; do not add it again
+            to the SFU total. SFU, TURN, encoder program and external output counters can contain
+            the same media. Avoid adding them together as unique traffic. Storage counts
+            physical recording, clip and shared buffer objects once; origin caches and pending
+            uploads are excluded.
           </p>
         </div>
       </details>
