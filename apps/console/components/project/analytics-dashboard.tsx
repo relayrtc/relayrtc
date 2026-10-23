@@ -362,7 +362,11 @@ export function AnalyticsDashboard({
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard label="SFU ingress" value={formatBytes(data.network.sfuIngress, 2)} />
 
-          <StatCard label="SFU egress" value={formatBytes(data.network.sfuEgress, 2)} />
+          <StatCard
+            label="SFU egress"
+            value={formatBytes(data.network.sfuEgress, 2)}
+            hint="Includes room export traffic"
+          />
 
           <StatCard
             label="TURN ingress"

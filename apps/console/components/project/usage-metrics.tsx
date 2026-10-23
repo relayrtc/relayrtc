@@ -82,7 +82,8 @@ export function UsageMetrics({
             : turnCoverage === "partial"
               ? "TURN totals include only the observed activity. "
               : "TURN totals come from server allocation observations. "}
-          Relayed traffic can appear in both SFU and TURN totals.
+          SFU egress includes room export traffic. Relayed traffic can appear in both SFU and
+          TURN totals.
         </p>
       </section>
       <section aria-labelledby={`${id}-breakdown`} className="flex flex-col gap-4">
