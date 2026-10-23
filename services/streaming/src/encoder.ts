@@ -17,6 +17,8 @@ export interface EncoderInput {
   video: string[];
   audio: string[];
   sourceInfo: z.infer<typeof streamSourceInfoSchema>;
+  /** Independent RTP inputs prevent a silent microphone from blocking video demux. */
+  mediaInputs?: Partial<Record<"audio" | "video", EncoderInput>>;
 }
 export function encoderDiagnostic(text: string, urls: readonly string[]) {
   let safe = text;
@@ -46,12 +48,13 @@ export async function roomInput(tracks: ExportTrack[], directory: string): Promi
       tracks: tracks.map((track) => ({ kind: track.kind, codec: track.codec, trackId: track.id })),
     }),
   };
+  result.mediaInputs = {};
   for (const [index, track] of tracks.entries()) {
     const file = join(directory, `track-${String(index)}.sdp`);
     await writeFile(file, track.sdp, { mode: 0o600 });
-    result.args.push(
+    const args = [
       "-thread_queue_size",
-      "512",
+      "32",
       "-protocol_whitelist",
       "file,udp,rtp",
       "-fflags",
@@ -60,10 +63,26 @@ export async function roomInput(tracks: ExportTrack[], directory: string): Promi
       "1000000",
       "-probesize",
       "1000000",
+      "-reorder_queue_size",
+      "128",
+      "-buffer_size",
+      "1048576",
+      "-max_delay",
+      "250000",
       "-i",
       file,
-    );
+    ];
+    result.args.push(...args);
     result[track.kind].push(`${String(index)}:${track.kind === "video" ? "v" : "a"}:0`);
+    const medium = (result.mediaInputs[track.kind] ??= {
+      args: [],
+      video: [],
+      audio: [],
+      sourceInfo: { tracks: [] },
+    });
+    const mediumIndex = medium[track.kind].length;
+    medium.args.push(...args);
+    medium[track.kind].push(`${String(mediumIndex)}:${track.kind === "video" ? "v" : "a"}:0`);
   }
   return result;
 }
@@ -278,7 +297,8 @@ export function encoderArguments(
   return args;
 }
 const encodingProgress = new WeakMap<ChildProcess, { seconds: number; frames: number }>();
-export const encoderProgress = (child: ChildProcess | undefined) => child ? encodingProgress.get(child) ?? { seconds: 0, frames: 0 } : { seconds: 0, frames: 0 };
+export const encoderProgress = (child: ChildProcess | undefined) =>
+  child ? (encodingProgress.get(child) ?? { seconds: 0, frames: 0 }) : { seconds: 0, frames: 0 };
 export function trackEncoderProgress(child: ChildProcess, pipe: number) {
   const value = { seconds: 0, frames: 0 };
   encodingProgress.set(child, value);

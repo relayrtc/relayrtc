@@ -161,7 +161,10 @@ async function runJob(value: unknown, slot: number) {
             sequence: ++sequence,
             status: "running",
             sourceInfo,
-            processing: { encodedSeconds: encoderProgress(active).seconds, composedFrames: mixerEngine?.report().frames ?? 0 },
+            processing: {
+              encodedSeconds: encoderProgress(active).seconds,
+              composedFrames: mixerEngine?.report().frames ?? 0,
+            },
             ...(mixerEngine ? { mixer: mixerEngine.report() } : {}),
           },
           token,
@@ -248,9 +251,10 @@ async function runJob(value: unknown, slot: number) {
         ...(stageControl
           ? {
               inputForSource: stageControl.inputForSource,
-              onSourcesReady: () => {
+              nativeRoomVideo: !job.mixerId,
+              onSourcesReady: (needsResume) => {
                 sourceInfo = stageControl.sourceInfo();
-                return call("room-export/resume", {}, token, signal);
+                return call(`room-export/${needsResume ? "resume" : "renew"}`, {}, token, signal);
               },
             }
           : {}),
@@ -304,7 +308,10 @@ async function runJob(value: unknown, slot: number) {
     await mixerEngine?.close();
     await stopEncoder(active);
     if (active) encoders.delete(active);
-    const finalProcessing = { encodedSeconds: encoderProgress(active).seconds, composedFrames: mixerEngine?.report().frames ?? 0 };
+    const finalProcessing = {
+      encodedSeconds: encoderProgress(active).seconds,
+      composedFrames: mixerEngine?.report().frames ?? 0,
+    };
     active = undefined;
     const finalSignal = AbortSignal.timeout(5000);
     if (exportCreated)
