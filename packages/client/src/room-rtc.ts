@@ -2,7 +2,7 @@ import { Device, type types } from "mediasoup-client";
 import type { RtcSessionScope } from "@relayrtc/protocol";
 import type { Track, VideoQualityPreference } from "@relayrtc/types";
 import type { RoomLocalTrackType } from "./room-media.js";
-import { simulcastEncodings, normalizeRtcStats, type RtcQualityStats } from "./quality.js";
+import { videoEncodings, normalizeRtcStats, type RtcQualityStats } from "./quality.js";
 import { RoomError } from "./room-errors.js";
 import type { MediaConnectionStats, MediaTransportStats, RelayClientOptions } from "./room.js";
 import type { SignalingClient } from "./signaling-client.js";
@@ -50,6 +50,7 @@ export class RoomRtc {
   #receiveTransport: types.Transport | undefined;
   #device: Device | undefined;
   #timeoutMs = 10_000;
+  #videoSimulcast = true;
   #scope: RtcSessionScope | undefined;
   #signaling: SignalingClient | undefined;
   #onFailure: ((error: RoomError) => void) | undefined;
@@ -191,6 +192,7 @@ export class RoomRtc {
     this.#signaling = signaling;
     this.#onFailure = onFailure;
     this.#timeoutMs = options.requestTimeoutMs ?? 10_000;
+    this.#videoSimulcast = options.videoSimulcast !== false;
     const capabilities = await signaling.request("rtc.capabilities.get", scope, "rtc.capabilities");
     this.#assertOpen();
     const device = new Device();
@@ -725,9 +727,7 @@ export class RoomRtc {
         disableTrackOnPause: true,
         zeroRtpOnPause: true,
         appData: data,
-        ...(track.kind === "video"
-          ? { encodings: simulcastEncodings.map((encoding) => ({ ...encoding })) }
-          : {}),
+        ...(track.kind === "video" ? { encodings: videoEncodings(this.#videoSimulcast) } : {}),
       });
       this.#assertOpen();
       if (!data.publication)
