@@ -6,6 +6,7 @@ interface Entry {
   track: StreamingExportTrack;
   slot: number;
   bytes: number;
+  lastKeyFrameAt: number;
 }
 interface State {
   roomId: string;
@@ -125,8 +126,13 @@ export class DynamicStreamingExports {
             transport.close();
             throw new Error("STREAM_EXPORT_EXPIRED");
           }
+          // This consumer feeds the broadcast compositor, whose output can be
+          // full resolution. Layer zero permanently degrades the program even
+          // when the publisher and the internal network have ample capacity.
           if (producer.kind === "video" && producer.type === "simulcast")
-            await consumer.setPreferredLayers({ spatialLayer: 0, temporalLayer: 0 });
+            await consumer.setPreferredLayers({
+              spatialLayer: Math.max(0, (producer.rtpParameters.encodings?.length ?? 1) - 1),
+            });
           const out = consumer.rtpParameters.codecs[0];
           if (!out) throw new Error("STREAM_CODEC_UNSUPPORTED");
           if (
@@ -161,6 +167,7 @@ export class DynamicStreamingExports {
             transport,
             slot,
             bytes: 0,
+            lastKeyFrameAt: 0,
             track: {
               id: producer.id,
               participantId: String(producer.appData.participantId),
@@ -203,7 +210,14 @@ export class DynamicStreamingExports {
         if (!e.consumer.closed) {
           const wasPaused = e.consumer.paused;
           await e.consumer.resume();
-          if (wasPaused && e.consumer.kind === "video") await e.consumer.requestKeyFrame();
+          // A decoder may bind its RTP socket after the initial resume, or be
+          // replaced while this consumer stays alive. Explicit resume retries
+          // must be able to request another keyframe without recreating media.
+          const now = Date.now();
+          if (e.consumer.kind === "video" && (wasPaused || now - e.lastKeyFrameAt >= 1000)) {
+            e.lastKeyFrameAt = now;
+            await e.consumer.requestKeyFrame();
+          }
         }
     }
     let bytes = state.bytes;

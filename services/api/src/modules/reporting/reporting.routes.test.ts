@@ -36,7 +36,9 @@ const createApp = () => {
   const app = Fastify();
   registerErrorHandling(app);
   void app.register(reportingRoutes, {
-    database: {} as RelayKitDatabase,
+    database: {
+      transaction: async (load: (db: unknown) => Promise<unknown>) => load({ execute: vi.fn() }),
+    } as unknown as RelayKitDatabase,
     verifyConsoleSession,
     prefix: "/v1",
   });

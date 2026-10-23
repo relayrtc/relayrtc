@@ -7,16 +7,17 @@ import { z } from "zod";
 import { mixerSceneSchema } from "@relayrtc/validation";
 import { decodeMixerPng } from "@relayrtc/protocol/mixer-png";
 import type { MixerScene, StreamProfile } from "@relayrtc/types";
-import { encoderArguments, encoderDiagnostic, stopEncoder, trackEncoderProgress, type EncoderInput } from "./encoder.js";
 import {
-  solid,
-  blit,
-  mixAudio,
-  sceneLayers,
-  MIXER_FPS,
-  PCM_BYTES,
-  type Raster,
-} from "./mixer-canvas.js";
+  encoderArguments,
+  encoderDiagnostic,
+  stopEncoder,
+  trackEncoderProgress,
+  type EncoderInput,
+} from "./encoder.js";
+import { roomDecoderArguments } from "./room-decoder.js";
+import { dueMixerFrames } from "./mixer-clock.js";
+import { blitYuv, solidYuv } from "./mixer-yuv.js";
+import { solid, blit, mixAudio, sceneLayers, type Raster } from "./mixer-canvas.js";
 
 const configSchema = z.object({
   mixer: z
@@ -34,14 +35,20 @@ const configSchema = z.object({
 });
 interface Decoder {
   child: ChildProcess | undefined;
+  audioChild: ChildProcess | undefined;
+  width: number;
+  height: number;
   frame: Raster | null;
   frameAt: number;
   audio: Buffer;
   audioAt: number;
-  partial: Buffer;
   sourceId: string;
   inputKey: string;
+  videoKey: string;
+  audioKey: string;
+  videoStartedAt: number;
   videoExpected: boolean;
+  audioExpected: boolean;
   retryAt: number;
 }
 interface PreparedScene {
@@ -52,9 +59,10 @@ interface PreparedScene {
   images: Map<string, Raster>;
 }
 export interface MixerEngineOptions {
+  nativeRoomVideo?: boolean;
   primary: EncoderInput;
   inputForSource?: (sourceId: string) => EncoderInput | undefined;
-  onSourcesReady?: () => Promise<unknown>;
+  onSourcesReady?: (needsResume: boolean) => Promise<unknown>;
   profile: StreamProfile;
   programUrl: string;
   maxDurationSeconds: number;
@@ -67,6 +75,15 @@ export interface MixerEngineOptions {
   onFatal: () => void;
 }
 export async function startMixerEngine(options: MixerEngineOptions) {
+  const pixelFormat = options.nativeRoomVideo ? "yuv420p" : "rgba";
+  const background = (color: string) =>
+    options.nativeRoomVideo
+      ? solidYuv(color, options.profile.width, options.profile.height)
+      : solid(color, options.profile.width, options.profile.height);
+  const MIXER_FPS = options.profile.fps,
+    PCM_BYTES = Math.round(48000 / MIXER_FPS) * 4,
+    width = options.profile.width,
+    height = options.profile.height;
   const { signal, binary } = options,
     decoders = new Map<string, Decoder>(),
     children = new Set<ChildProcess>();
@@ -160,12 +177,93 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     });
     return child;
   }
+  function bindVideo(d: Decoder, video: Readable, live: boolean) {
+    const frameBytes = d.width * d.height * (options.nativeRoomVideo ? 1.5 : 4);
+    let assembling: Buffer = Buffer.allocUnsafe(frameBytes),
+      frameOffset = 0;
+    video.on("data", (data: Buffer) => {
+      let offset = 0;
+      while (offset < data.length) {
+        const size = Math.min(frameBytes - frameOffset, data.length - offset);
+        data.copy(assembling, frameOffset, offset, offset + size);
+        frameOffset += size;
+        offset += size;
+        if (frameOffset === frameBytes) {
+          const previous = d.frame?.pixels;
+          d.frame = { width: d.width, height: d.height, opaque: true, pixels: assembling };
+          d.frameAt = Date.now();
+          assembling = previous?.length === frameBytes ? previous : Buffer.allocUnsafe(frameBytes);
+          frameOffset = 0;
+          if (!live) video.pause();
+        }
+      }
+    });
+  }
+  function bindAudio(d: Decoder, audio: Readable, live: boolean) {
+    audio.on("data", (data: Buffer) => {
+      const combined = Buffer.concat([d.audio, data]);
+      d.audio = Buffer.from(
+        combined.subarray(Math.max(0, Math.ceil((combined.length - PCM_BYTES * 3) / 4) * 4)),
+      );
+      d.audioAt = Date.now();
+      if (!live && d.audio.length >= PCM_BYTES * 2) audio.pause();
+    });
+  }
+  function startRoomDecoder(d: Decoder, input: EncoderInput) {
+    if (Date.now() < d.retryAt || jobSignal.aborted) return false;
+    let started = false;
+    for (const kind of ["video", "audio"] as const) {
+      const medium = input.mediaInputs?.[kind];
+      const key = kind === "video" ? "child" : "audioChild";
+      if (!medium || d[key] || (kind === "video" && options.profile.audioOnly)) continue;
+      const child = track(
+        spawn(
+          binary,
+          roomDecoderArguments(medium, kind, d.width, d.height, MIXER_FPS, pixelFormat),
+          {
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+            signal: jobSignal,
+            env: cleanEnv,
+          },
+        ),
+      );
+      d[key] = child;
+      if (kind === "video") d.videoStartedAt = Date.now();
+      let diagnostic = "";
+      child.stderr?.on("data", (data: Buffer) => {
+        diagnostic += data.toString().slice(0, Math.max(0, 8192 - diagnostic.length));
+      });
+      if (child.stdout) {
+        if (kind === "video") bindVideo(d, child.stdout, true);
+        else bindAudio(d, child.stdout, true);
+      }
+      child.once("close", (code) => {
+        if (d[key] !== child) return;
+        d[key] = undefined;
+        d.retryAt = Date.now() + 2000;
+        if (!jobSignal.aborted && code !== 0)
+          console.warn(
+            JSON.stringify({
+              event: "mixer.decoder.failed",
+              sourceId: d.sourceId,
+              kind,
+              code,
+              diagnostic: encoderDiagnostic(diagnostic, medium.args),
+            }),
+          );
+      });
+      started = true;
+    }
+    return started;
+  }
   function startDecoder(
     d: Decoder,
     source: NonNullable<z.infer<typeof configSchema>["mixer"]>["sources"][number],
   ) {
-    if (d.child || Date.now() < d.retryAt || jobSignal.aborted) return;
     const custom = options.inputForSource?.(source.id);
+    if (custom?.mediaInputs) return startRoomDecoder(d, custom);
+    if (d.child || Date.now() < d.retryAt || jobSignal.aborted) return false;
     let input = custom ?? options.primary;
     if (!custom && source.id !== "primary")
       input = {
@@ -197,7 +295,7 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     };
     const normalize = encoderArguments(
       input,
-      { ...options.profile, audioOnly: false, width: 320, height: 180, fps: 15, layout: "grid" },
+      { ...options.profile, audioOnly: false, width, height, fps: MIXER_FPS, layout: "grid" },
       "unused",
       options.maxDurationSeconds,
     );
@@ -237,33 +335,11 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     child.stderr?.on("data", (data: Buffer) => {
       diagnostic += data.toString().slice(0, Math.max(0, 8192 - diagnostic.length));
     });
-    d.partial = Buffer.alloc(0);
     d.audio = Buffer.alloc(0);
     const video = child.stdout,
       audio = child.stdio[3] as Readable | null;
-    video?.on("data", (data: Buffer) => {
-      const bytes = Buffer.concat([d.partial, data]),
-        size = 320 * 180 * 4,
-        count = Math.floor(bytes.length / size);
-      if (count) {
-        d.frame = {
-          width: 320,
-          height: 180,
-          pixels: Buffer.from(bytes.subarray((count - 1) * size, count * size)),
-        };
-        d.frameAt = Date.now();
-        video.pause();
-      }
-      d.partial = Buffer.from(bytes.subarray(count * size));
-    });
-    audio?.on("data", (data: Buffer) => {
-      const combined = Buffer.concat([d.audio, data]);
-      d.audio = Buffer.from(
-        combined.subarray(Math.max(0, Math.ceil((combined.length - PCM_BYTES * 3) / 4) * 4)),
-      );
-      d.audioAt = Date.now();
-      if (d.audio.length >= PCM_BYTES * 2) audio.pause();
-    });
+    if (video) bindVideo(d, video, !!custom);
+    if (audio) bindAudio(d, audio, !!custom);
     child.once("close", (code) => {
       if (!jobSignal.aborted && code !== 0)
         console.warn(
@@ -277,6 +353,7 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       d.child = undefined;
       d.retryAt = Date.now() + 2000;
     });
+    return true;
   }
   async function textRaster(text: MixerScene["texts"][number], index: number) {
     const file = `mixer-text-${String(index)}.txt`;
@@ -346,32 +423,78 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       for (const [key, d] of decoders)
         if (!current.sources.some((s) => s.id === key)) {
           await stopEncoder(d.child);
+          await stopEncoder(d.audioChild);
           decoders.delete(key);
         }
+      let needsResume = false;
       for (const source of current.sources) {
         let d = decoders.get(source.id);
         if (!d) {
           d = {
             child: undefined,
+            audioChild: undefined,
+            width,
+            height,
             frame: null,
             frameAt: 0,
             audio: Buffer.alloc(0),
             audioAt: 0,
-            partial: Buffer.alloc(0),
             sourceId: source.id,
             inputKey: "",
+            videoKey: "",
+            audioKey: "",
+            videoStartedAt: 0,
             videoExpected:
               source.id === "primary" ? options.primary.video.length > 0 : !source.audioOnly,
+            audioExpected: true,
             retryAt: 0,
           };
           decoders.set(source.id, d);
         }
-        const custom = options.inputForSource?.(source.id),
-          inputKey = custom ? JSON.stringify([custom.args, custom.sourceInfo]) : "";
-        if (d.inputKey !== inputKey) {
+        const custom = options.inputForSource?.(source.id);
+        const layer = sceneLayers(current.scene).find((l) => l.sourceId === source.id);
+        const decodeWidth =
+          custom && layer ? Math.max(2, Math.round((layer.width * width) / 640 / 2) * 2) : width;
+        const decodeHeight =
+          custom && layer ? Math.max(2, Math.round((layer.height * height) / 360 / 2) * 2) : height;
+        const inputKey = custom
+          ? JSON.stringify([custom.args, custom.sourceInfo, decodeWidth, decodeHeight])
+          : "";
+        if (custom?.mediaInputs) {
+          const videoKey = custom.mediaInputs.video
+            ? JSON.stringify([custom.mediaInputs.video.args, decodeWidth, decodeHeight])
+            : "";
+          const audioKey = custom.mediaInputs.audio
+            ? JSON.stringify(custom.mediaInputs.audio.args)
+            : "";
+          if (d.videoKey !== videoKey) {
+            await stopEncoder(d.child);
+            d.frame = null;
+            d.frameAt = 0;
+            d.videoKey = videoKey;
+            d.width = decodeWidth;
+            d.height = decodeHeight;
+            d.retryAt = 0;
+          }
+          if (d.audioKey !== audioKey) {
+            await stopEncoder(d.audioChild);
+            d.audio = Buffer.alloc(0);
+            d.audioKey = audioKey;
+            d.retryAt = 0;
+          }
+          // UDP receivers cannot request retransmission themselves. Replace a
+          // wedged video decoder and request a keyframe after it binds again.
+          if (d.child && Date.now() - Math.max(d.frameAt, d.videoStartedAt) > 5000) {
+            await stopEncoder(d.child);
+            d.retryAt = 0;
+          }
+        } else if (d.inputKey !== inputKey) {
           await stopEncoder(d.child);
+          await stopEncoder(d.audioChild);
           d.frame = null;
           d.audio = Buffer.alloc(0);
+          d.width = decodeWidth;
+          d.height = decodeHeight;
           d.inputKey = inputKey;
           d.retryAt = 0;
         }
@@ -380,9 +503,16 @@ export async function startMixerEngine(options: MixerEngineOptions) {
           : source.id === "primary"
             ? options.primary.video.length > 0
             : !source.audioOnly;
-        startDecoder(d, source);
+        d.audioExpected = custom ? custom.audio.length > 0 : true;
+        needsResume = startDecoder(d, source) || needsResume;
+        if (d.videoExpected && Date.now() - d.frameAt > 2000) needsResume = true;
       }
-      await options.onSourcesReady?.();
+      // Plain RTP exports have no browser receiver sending loss feedback. A
+      // bounded two-second keyframe cadence prevents a lost VP8 reference from
+      // freezing the program until the next natural camera keyframe.
+      if (options.inputForSource && [...decoders.values()].some((d) => d.videoExpected))
+        needsResume = true;
+      await options.onSourcesReady?.(needsResume);
       if (prepared?.revision === current.revision) {
         preparationFailed = false;
         return;
@@ -404,7 +534,7 @@ export async function startMixerEngine(options: MixerEngineOptions) {
           revision: desired.revision,
           sceneId: desired.sceneId,
           scene: desired.scene,
-          background: solid(desired.scene.background),
+          background: background(desired.scene.background),
           images,
         };
         preparationFailed = false;
@@ -440,15 +570,15 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     : {
         args: [
           "-thread_queue_size",
-          "2",
+          "8",
           "-f",
           "rawvideo",
           "-pixel_format",
-          "rgba",
+          pixelFormat,
           "-video_size",
-          "640x360",
+          `${String(width)}x${String(height)}`,
           "-framerate",
-          "15",
+          String(MIXER_FPS),
           "-probesize",
           "32",
           "-analyzeduration",
@@ -474,17 +604,25 @@ export async function startMixerEngine(options: MixerEngineOptions) {
         audio: ["1:a:0"],
         sourceInfo: options.primary.sourceInfo,
       };
+  const outputArgs = encoderArguments(
+    raw,
+    options.profile,
+    options.programUrl,
+    options.maxDurationSeconds,
+  );
+  // Room composition also decodes and copies full-resolution RTC frames. Keep
+  // encoding within the worker CPU budget; direct ingest retains its preset.
+  if (options.inputForSource) {
+    const preset = outputArgs.indexOf("-preset");
+    if (preset >= 0) outputArgs[preset + 1] = "superfast";
+  }
   const output = track(
-    spawn(
-      binary,
-      ["-progress", "pipe:5", ...encoderArguments(raw, options.profile, options.programUrl, options.maxDurationSeconds)],
-      {
-        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe", "pipe"],
-        windowsHide: true,
-        signal: jobSignal,
-        env: cleanEnv,
-      },
-    ),
+    spawn(binary, ["-progress", "pipe:5", ...outputArgs], {
+      stdio: ["ignore", "ignore", "pipe", "pipe", "pipe", "pipe"],
+      windowsHide: true,
+      signal: jobSignal,
+      env: cleanEnv,
+    }),
   );
   trackEncoderProgress(output, 5);
   let outputDiagnostic = "";
@@ -540,7 +678,10 @@ export async function startMixerEngine(options: MixerEngineOptions) {
     );
     options.onFatal();
   });
-  const black = solid("#000000");
+  // FFmpeg opens the raw video input before probing PCM. Supply a bounded
+  // startup audio block so probing cannot wait on a clock blocked by video IO.
+  audioOut.write(Buffer.alloc(32768));
+  const black = background("#000000");
   const lostFor = (scene: PreparedScene | null) => {
     if (!scene) return [];
     const video = new Set(
@@ -554,14 +695,19 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       return (
         !d ||
         (video.has(id) && d.videoExpected && Date.now() - d.frameAt > 2000) ||
-        (audio.has(id) && Date.now() - d.audioAt > 2000)
+        (audio.has(id) && d.audioExpected && Date.now() - d.audioAt > 2000)
       );
     });
   };
   const lost = () => [...new Set([...lostFor(prepared), ...lostFor(displayed)])];
+  const clockStarted = performance.now();
   const tick = () => {
     if (closed || jobSignal.aborted) return;
     const begun = Date.now();
+    const due = options.inputForSource
+      ? dueMixerFrames(performance.now() - clockStarted, frames, MIXER_FPS)
+      : 1;
+    if (!due) return;
     if (videoBusy || audioBusy) {
       overloadedUntil = begun + 5000;
       if (!blockedAt) blockedAt = begun;
@@ -578,32 +724,39 @@ export async function startMixerEngine(options: MixerEngineOptions) {
       return;
     }
     blockedAt = 0;
-    if (
-      prepared &&
-      !preparationFailed &&
-      Date.now() >= overloadedUntil &&
-      !lostFor(prepared).length
-    )
-      displayed = prepared;
+    if (prepared && !preparationFailed) displayed = prepared;
     const scene = displayed,
-      unavailable = new Set(lost()),
-      blocks = new Map<string, Buffer>();
-    for (const d of decoders.values()) {
-      if (d.audio.length >= PCM_BYTES) {
-        if (Date.now() - d.audioAt <= 2000) blocks.set(d.sourceId, d.audio.subarray(0, PCM_BYTES));
-        d.audio = Buffer.from(d.audio.subarray(PCM_BYTES));
+      audioChunks: Buffer[] = [];
+    for (let i = 0; i < due; i++) {
+      const blocks = new Map<string, Buffer>();
+      for (const d of decoders.values()) {
+        if (d.audio.length >= PCM_BYTES) {
+          if (Date.now() - d.audioAt <= 2000)
+            blocks.set(d.sourceId, d.audio.subarray(0, PCM_BYTES));
+          d.audio = Buffer.from(d.audio.subarray(PCM_BYTES));
+        }
       }
+      const mixed = scene
+        ? mixAudio(scene.scene, blocks, duck, PCM_BYTES)
+        : { output: Buffer.alloc(PCM_BYTES), duck: 1 };
+      duck = mixed.duck;
+      audioChunks.push(mixed.output);
+    }
+    for (const d of decoders.values()) {
       d.child?.stdout?.resume();
       (d.child?.stdio[3] as Readable | undefined)?.resume();
     }
     const canvas = Buffer.from(scene?.background.pixels ?? black.pixels);
-    if (scene && Date.now() >= overloadedUntil) {
+    if (scene) {
       const layers = [
         ...sceneLayers(scene.scene).map((layer) => ({
           layer,
-          image: unavailable.has(layer.sourceId)
-            ? black
-            : (decoders.get(layer.sourceId)?.frame ?? black),
+          // Audio silence/stalls must not suppress a healthy camera. Each
+          // medium recovers independently; missing audio is mixed as silence.
+          image:
+            Date.now() - (decoders.get(layer.sourceId)?.frameAt ?? 0) > 10000
+              ? black
+              : (decoders.get(layer.sourceId)?.frame ?? black),
         })),
         ...scene.scene.overlays.map((layer) => ({
           layer,
@@ -614,19 +767,56 @@ export async function startMixerEngine(options: MixerEngineOptions) {
           image: scene.images.get(`text:${layer.id}`) ?? black,
         })),
       ].sort((a, b) => a.layer.z - b.layer.z);
-      for (const { layer, image } of layers)
-        blit(canvas, image, layer, "fit" in layer ? layer.fit : "contain");
+      for (const { layer, image } of layers) {
+        if (options.nativeRoomVideo) {
+          blitYuv(
+            canvas,
+            image,
+            {
+              x: Math.round((layer.x * width) / 640 / 2) * 2,
+              y: Math.round((layer.y * height) / 360 / 2) * 2,
+              width: Math.max(2, Math.round((layer.width * width) / 640 / 2) * 2),
+              height: Math.max(2, Math.round((layer.height * height) / 360 / 2) * 2),
+            },
+            width,
+            height,
+          );
+          continue;
+        }
+        blit(
+          canvas,
+          image,
+          {
+            ...layer,
+            x: Math.round((layer.x * width) / 640),
+            y: Math.round((layer.y * height) / 360),
+            width:
+              Math.round(((layer.x + layer.width) * width) / 640) -
+              Math.round((layer.x * width) / 640),
+            height:
+              Math.round(((layer.y + layer.height) * height) / 360) -
+              Math.round((layer.y * height) / 360),
+          },
+          "fit" in layer ? layer.fit : "contain",
+          width,
+        );
+      }
     }
-    const mixed = scene
-      ? mixAudio(scene.scene, blocks, duck)
-      : { output: Buffer.alloc(PCM_BYTES), duck: 1 };
-    duck = mixed.duck;
-    videoBusy = !options.profile.audioOnly && !videoOut.write(canvas);
-    audioBusy = !audioOut.write(
-      Date.now() < overloadedUntil ? Buffer.alloc(PCM_BYTES) : mixed.output,
-    );
-    frames++;
-    inputSeconds += [...decoders.values()].filter((d) => Date.now() - d.audioAt <= 2000 || (d.videoExpected && Date.now() - d.frameAt <= 2000)).length / MIXER_FPS;
+    // Render the newest picture once. A delayed callback repeats that picture
+    // for missed slots instead of permanently slowing the raw media clock.
+    // Catch-up is bounded to 250 ms; pipe backpressure still fences all writes.
+    for (let i = 0; i < due; i++) {
+      if (!options.profile.audioOnly) videoBusy = !videoOut.write(canvas) || videoBusy;
+      audioBusy = !audioOut.write(audioChunks[i] ?? Buffer.alloc(PCM_BYTES)) || audioBusy;
+    }
+    frames += due;
+    inputSeconds +=
+      ([...decoders.values()].filter(
+        (d) =>
+          Date.now() - d.audioAt <= 2000 || (d.videoExpected && Date.now() - d.frameAt <= 2000),
+      ).length *
+        due) /
+      MIXER_FPS;
     if (scene && Date.now() >= overloadedUntil && !preparationFailed && !lostFor(scene).length) {
       appliedVersion = scene.revision;
       appliedSceneId = scene.sceneId;

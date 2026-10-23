@@ -16,7 +16,7 @@
     "db:generate": "pnpm --filter @relayrtc/database db:generate",
     "db:migrate": "pnpm --filter @relayrtc/database db:migrate",
     "docker:config": "docker compose --env-file .env config --quiet",
-    "docker:down": "docker compose --env-file .env down",
+    "docker:down": "docker compose --env-file .env down --remove-orphans",
     "docker:logs": "docker compose --env-file .env logs --follow",
     "docker:status": "docker compose --env-file .env ps",
     "docker:up": "node scripts/docker-up.mjs",

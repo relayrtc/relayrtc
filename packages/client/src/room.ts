@@ -100,6 +100,8 @@ export interface RelayClientOptions extends RoomCredentialOptions {
   readonly iceServers?: readonly RTCIceServer[];
   readonly iceTransportPolicy?: RTCIceTransportPolicy;
   readonly autoSubscribe?: boolean;
+  /** Default true. Broadcast stages may opt into one full-resolution video layer. */
+  readonly videoSimulcast?: boolean;
   readonly reconnect?: false | RoomReconnectOptions;
 }
 

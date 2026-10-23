@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeRtcStats, simulcastEncodings } from "./quality.js";
+import { normalizeRtcStats, simulcastEncodings, videoEncodings } from "./quality.js";
 
 describe("RTC auto quality", () => {
+  it("keeps room simulcast defaults and allows a full-resolution broadcast layer", () => {
+    expect(videoEncodings()).toEqual(simulcastEncodings);
+    expect(videoEncodings()[0]).not.toBe(simulcastEncodings[0]);
+    expect(videoEncodings(false)).toEqual([
+      { active: true, maxBitrate: 4_000_000, maxFramerate: 30, scaleResolutionDownBy: 1 },
+    ]);
+  });
   it("defines low-to-high simulcast encodings", () => {
     expect(simulcastEncodings.map((encoding) => encoding.rid)).toEqual(["q", "h", "f"]);
     expect(simulcastEncodings.map((encoding) => encoding.scaleResolutionDownBy)).toEqual([
@@ -58,14 +65,40 @@ describe("RTC auto quality", () => {
   it("excludes the bandwidth probing stream from media loss and jitter", () => {
     const timestamp = Date.now();
     const report = new Map<string, Record<string, unknown>>([
-      ["media", { id: "media", type: "inbound-rtp", timestamp, trackIdentifier: "camera", bytesReceived: 500, packetsReceived: 98, packetsLost: 2, jitter: 0.01 }],
-      ["probe", { id: "probe", type: "inbound-rtp", timestamp, trackIdentifier: "probator", bytesReceived: 1000, packetsReceived: 8, packetsLost: 80, jitter: 0.5 }],
+      [
+        "media",
+        {
+          id: "media",
+          type: "inbound-rtp",
+          timestamp,
+          trackIdentifier: "camera",
+          bytesReceived: 500,
+          packetsReceived: 98,
+          packetsLost: 2,
+          jitter: 0.01,
+        },
+      ],
+      [
+        "probe",
+        {
+          id: "probe",
+          type: "inbound-rtp",
+          timestamp,
+          trackIdentifier: "probator",
+          bytesReceived: 1000,
+          packetsReceived: 8,
+          packetsLost: 80,
+          jitter: 0.5,
+        },
+      ],
     ]);
-    expect(normalizeRtcStats(report as unknown as RTCStatsReport)).toEqual(expect.objectContaining({
-      bytesReceived: 500,
-      packetsReceived: 98,
-      packetsLost: 2,
-      jitter: 0.01,
-    }));
+    expect(normalizeRtcStats(report as unknown as RTCStatsReport)).toEqual(
+      expect.objectContaining({
+        bytesReceived: 500,
+        packetsReceived: 98,
+        packetsLost: 2,
+        jitter: 0.01,
+      }),
+    );
   });
 });

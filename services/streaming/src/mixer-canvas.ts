@@ -3,6 +3,7 @@ export interface Raster {
   width: number;
   height: number;
   pixels: Buffer;
+  opaque?: boolean;
 }
 export const CANVAS_WIDTH = 640,
   CANVAS_HEIGHT = 360,
@@ -39,7 +40,7 @@ export function solid(color: string, width = 640, height = 360): Raster {
     pixels[i + 2] = b;
     pixels[i + 3] = 255;
   }
-  return { pixels, width, height };
+  return { pixels, width, height, opaque: true };
 }
 /** A bounded nearest-neighbour compositor; callers admit only fixed-size decoded rasters. */
 export function blit(
@@ -47,7 +48,14 @@ export function blit(
   image: Raster,
   box: { x: number; y: number; width: number; height: number; opacity: number },
   fit: "contain" | "cover" = "contain",
+  targetWidth = CANVAS_WIDTH,
 ) {
+  if (box.opacity === 1 && image.width === box.width && image.height === box.height &&
+      image.opaque) {
+    for (let y = 0; y < box.height; y++)
+      image.pixels.copy(target, ((box.y + y) * targetWidth + box.x) * 4, y * image.width * 4, (y + 1) * image.width * 4);
+    return;
+  }
   const ratio =
     fit === "cover"
       ? Math.max(box.width / image.width, box.height / image.height)
@@ -62,7 +70,7 @@ export function blit(
         sy = Math.floor((y - offsetY) / ratio);
       if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) continue;
       const from = (sy * image.width + sx) * 4,
-        to = ((box.y + y) * 640 + box.x + x) * 4,
+        to = ((box.y + y) * targetWidth + box.x + x) * 4,
         alpha = (Number(image.pixels[from + 3]) / 255) * box.opacity;
       if (alpha === 0) continue;
       for (let c = 0; c < 3; c++)
@@ -71,8 +79,8 @@ export function blit(
         );
     }
 }
-export function mixAudio(scene: MixerScene, blocks: Map<string, Buffer>, previousDuck: number) {
-  const output = Buffer.alloc(PCM_BYTES),
+export function mixAudio(scene: MixerScene, blocks: Map<string, Buffer>, previousDuck: number, pcmBytes = PCM_BYTES) {
+  const output = Buffer.alloc(pcmBytes),
     dominantSource = scene.ducking
       ? scene.audio.find((source) => source.sourceId === scene.ducking?.sourceId && !source.muted)
       : undefined,
@@ -86,7 +94,7 @@ export function mixAudio(scene: MixerScene, blocks: Map<string, Buffer>, previou
     scene.ducking && rms >= scene.ducking.threshold ? 10 ** (-scene.ducking.attenuationDb / 20) : 1;
   const duck = previousDuck + (target - previousDuck) * (target < previousDuck ? 0.75 : 0.2);
   const active = scene.audio.filter((a) => !a.muted && blocks.has(a.sourceId));
-  for (let i = 0; i < PCM_BYTES; i += 2) {
+  for (let i = 0; i < pcmBytes; i += 2) {
     let value = 0;
     for (const a of active) {
       const block = blocks.get(a.sourceId);

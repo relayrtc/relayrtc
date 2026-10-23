@@ -69,7 +69,7 @@ export async function getServiceUsage(
     }`;
   const rows = await database.execute(sql`
     WITH bounds AS (SELECT ${window.startedAt}::timestamptz lo,${window.endedAt}::timestamptz hi),
-    observations AS (SELECT s.* FROM service_usage_sample s,bounds WHERE ${filter} AND s.started_at<hi AND s.ended_at>=lo),
+    observations AS (SELECT s.project_id,s.resource_type,s.resource_id,s.stream_id,s.metrics,s.started_at,s.ended_at,s.occurred_at,s.coverage FROM service_usage_sample s,bounds WHERE ${filter} AND s.started_at<hi AND s.ended_at>=lo),
     objects AS (SELECT o.* FROM service_usage_object o,bounds WHERE ${filter} AND o.opened_at<hi AND coalesce(o.removed_at,hi)>=lo),
     inventory AS (SELECT DISTINCT resource_type,resource_id,stream_id FROM observations UNION SELECT DISTINCT resource_type,resource_id,stream_id FROM objects),
     selected_resources AS (SELECT * FROM inventory ORDER BY resource_type,resource_id LIMIT 100),
@@ -81,16 +81,34 @@ export async function getServiceUsage(
       UNION ALL SELECT 'project:'||project_id,lo,hi,NULL,NULL,NULL,project_id FROM (SELECT DISTINCT project_id FROM observations UNION SELECT DISTINCT project_id FROM objects) projects,bounds
     ),
     definitions AS (SELECT key metric,value->>'attribution' attribution FROM jsonb_each(${JSON.stringify(serviceUsageDefinitions)}::jsonb)),
+    -- Expand JSON once; aggregate all scopes together instead of comparing each
+    -- metric with every resource window. Buckets split intervals proportionally
+    -- and attribute events once, including events on an exact bucket boundary.
+    observation_metrics AS MATERIALIZED (
+      SELECT s.project_id,s.resource_type,s.resource_id,s.started_at,s.ended_at,s.occurred_at,s.coverage,
+        e.key metric,e.value::float8 metric_value,d.attribution
+      FROM observations s CROSS JOIN LATERAL jsonb_each_text(s.metrics) e JOIN definitions d ON d.metric=e.key
+    ),
+    metric_buckets AS (
+      SELECT s.*,b bucket,
+        CASE WHEN s.attribution='interval' THEN
+          coalesce(s.metric_value * extract(epoch FROM least(s.ended_at,hi,b+${`1 ${window.granularity}`}::interval)-greatest(s.started_at,lo,b))/nullif(extract(epoch FROM s.ended_at-s.started_at),0),0)
+        ELSE s.metric_value END value
+      FROM observation_metrics s CROSS JOIN bounds
+      CROSS JOIN LATERAL generate_series(
+        date_trunc(${window.granularity},(CASE WHEN s.attribution='interval' THEN greatest(s.started_at,lo) ELSE s.occurred_at END) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+        CASE WHEN s.attribution='interval' THEN least(s.ended_at,hi) ELSE s.occurred_at END,${`1 ${window.granularity}`}::interval) b
+      WHERE b<hi AND ((s.attribution='interval' AND s.started_at<least(hi,b+${`1 ${window.granularity}`}::interval) AND s.ended_at>greatest(lo,b))
+        OR (s.attribution='event' AND s.occurred_at>=lo AND s.occurred_at<hi))
+    ),
     values_by_window AS (
-      SELECT w.key,e.key metric,
-        sum(CASE WHEN d.attribution='interval' THEN coalesce(e.value::float8 * extract(epoch FROM least(s.ended_at,w.ends)-greatest(s.started_at,w.starts))/nullif(extract(epoch FROM s.ended_at-s.started_at),0),0)
-          ELSE e.value::float8 END)::float8 value,
-        CASE WHEN bool_or(s.coverage IN ('partial','unavailable')) THEN 'partial' WHEN e.key='viewerSeconds' OR bool_or(s.coverage='estimated') THEN 'estimated' ELSE 'observed' END coverage
-      FROM windows w JOIN observations s ON (w.project_id IS NULL OR w.project_id=s.project_id) AND (w.resource_id IS NULL OR (s.resource_id=w.resource_id AND s.resource_type=w.resource_type))
-      CROSS JOIN LATERAL jsonb_each_text(s.metrics) e JOIN definitions d ON d.metric=e.key
-      WHERE (d.attribution='interval' AND s.started_at<w.ends AND s.ended_at>w.starts)
-        OR (d.attribution='event' AND s.occurred_at>=w.starts AND s.occurred_at<w.ends)
-      GROUP BY w.key,e.key
+      SELECT CASE ${scope.projectId ? sql`` : sql`WHEN grouping(s.project_id)=0 THEN 'project:'||s.project_id`}
+        WHEN grouping(s.resource_id)=0 THEN 'resource:'||s.resource_type||':'||s.resource_id
+        WHEN grouping(s.bucket)=0 THEN 'bucket:'||s.bucket::text ELSE 'summary' END key,s.metric,
+        sum(s.value)::float8 value,
+        CASE WHEN bool_or(s.coverage IN ('partial','unavailable')) THEN 'partial' WHEN s.metric='viewerSeconds' OR bool_or(s.coverage='estimated') THEN 'estimated' ELSE 'observed' END coverage
+      FROM metric_buckets s
+      GROUP BY GROUPING SETS ((s.metric),${scope.projectId ? sql`` : sql`(s.metric,s.project_id),`}(s.metric,s.resource_type,s.resource_id),(s.metric,s.bucket))
       UNION ALL
       SELECT w.key,CASE o.resource_type WHEN 'clip' THEN 'clipStorageByteSeconds' WHEN 'dvr' THEN 'bufferStorageByteSeconds' ELSE 'recordingStorageByteSeconds' END,
         sum(o.size_bytes*greatest(0,extract(epoch FROM least(coalesce(o.removed_at,w.ends),w.ends)-greatest(o.opened_at,w.starts)) ))::float8,'observed'
@@ -101,19 +119,28 @@ export async function getServiceUsage(
       FROM windows w JOIN objects o ON (w.project_id IS NULL OR w.project_id=o.project_id) AND (w.resource_id IS NULL OR (o.resource_id=w.resource_id AND o.resource_type=w.resource_type)) AND o.opened_at<w.ends AND (o.removed_at IS NULL OR o.removed_at>=w.ends) GROUP BY w.key,o.resource_type
     ),
     viewer_edges AS (
-      SELECT w.key,greatest(s.started_at,w.starts) at,1 delta FROM windows w JOIN observations s ON (w.project_id IS NULL OR w.project_id=s.project_id) AND s.started_at<w.ends AND s.ended_at>w.starts AND (w.resource_id IS NULL OR (s.resource_id=w.resource_id AND s.resource_type=w.resource_type)) WHERE (s.metrics->>'viewerSeconds')::float8>0
-      UNION ALL
-      SELECT w.key,least(s.ended_at,w.ends),-1 FROM windows w JOIN observations s ON (w.project_id IS NULL OR w.project_id=s.project_id) AND s.started_at<w.ends AND s.ended_at>w.starts AND (w.resource_id IS NULL OR (s.resource_id=w.resource_id AND s.resource_type=w.resource_type)) WHERE (s.metrics->>'viewerSeconds')::float8>0
+      SELECT w.key,e.at,e.delta FROM observations s CROSS JOIN bounds
+      CROSS JOIN LATERAL (
+        SELECT 'summary' key,lo starts,hi ends
+        ${scope.projectId ? sql`` : sql`UNION ALL SELECT 'project:'||s.project_id,lo,hi`}
+        UNION ALL SELECT 'resource:'||s.resource_type||':'||s.resource_id,lo,hi
+        UNION ALL SELECT 'bucket:'||b::text,greatest(lo,b),least(hi,b+${`1 ${window.granularity}`}::interval)
+          FROM generate_series(date_trunc(${window.granularity},greatest(s.started_at,lo) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',least(s.ended_at,hi),${`1 ${window.granularity}`}::interval) b WHERE b<hi
+      ) w
+      CROSS JOIN LATERAL (VALUES (greatest(s.started_at,w.starts),1),(least(s.ended_at,w.ends),-1)) e(at,delta)
+      WHERE (s.metrics->>'viewerSeconds')::float8>0 AND s.started_at<w.ends AND s.ended_at>w.starts
     ),
     viewer_peaks AS (SELECT key,max(active)::float8 value FROM (SELECT key,sum(sum(delta)) OVER (PARTITION BY key ORDER BY at) active FROM viewer_edges GROUP BY key,at) a GROUP BY key),
-    values_complete AS (SELECT * FROM values_by_window UNION ALL SELECT key,'peakConcurrentViewers',value,'estimated' FROM viewer_peaks)
+    scoped_values AS (SELECT * FROM values_by_window UNION ALL SELECT key,'peakConcurrentViewers',value,'estimated' FROM viewer_peaks),
+    values_complete AS (SELECT * FROM scoped_values ${scope.projectId ? sql`UNION ALL SELECT ${`project:${scope.projectId}`},metric,value,coverage FROM scoped_values WHERE key='summary'` : sql``}),
+    report_values AS (SELECT key,jsonb_object_agg(metric,value) metrics,jsonb_object_agg(metric,coverage) coverage FROM values_complete GROUP BY key)
     SELECT w.*,
-      coalesce((SELECT jsonb_object_agg(metric,value) FROM values_complete v WHERE v.key=w.key),'{}'::jsonb) metrics,
-      coalesce((SELECT jsonb_object_agg(metric,coverage) FROM values_complete v WHERE v.key=w.key),'{}'::jsonb) coverage,
+      coalesce(v.metrics,'{}'::jsonb) metrics,
+      coalesce(v.coverage,'{}'::jsonb) coverage,
       (SELECT started_at FROM service_usage_activation WHERE id='streaming-v1') journal_started_at,
       (SELECT retained_from FROM service_usage_activation WHERE id='streaming-v1') retained_from,
       (SELECT count(*)>100 FROM inventory) truncated
-    FROM windows w ORDER BY w.starts,w.key
+    FROM windows w LEFT JOIN report_values v ON v.key=w.key ORDER BY w.starts,w.key
   `);
   const empty = () => Object.fromEntries(Object.keys(serviceUsageDefinitions).map((k) => [k, 0]));
   const summary = rows.find((r) => r.key === "summary");
@@ -125,7 +152,11 @@ export async function getServiceUsage(
   if (summary?.retained_from) {
     const retainedFrom = z.coerce.date().parse(summary.retained_from).toISOString();
     if (window.startedAt < retainedFrom)
-      throw new ApiError(400, "USAGE_HISTORY_EXPIRED", "Select a window within retained service history.");
+      throw new ApiError(
+        400,
+        "USAGE_HISTORY_EXPIRED",
+        "Select a window within retained service history.",
+      );
   }
   const coverageFor = (row: typeof summary) =>
     Object.fromEntries(

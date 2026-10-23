@@ -44,6 +44,8 @@ export class RelayClient {
         throw new Error();
       if (options.autoSubscribe !== undefined && typeof options.autoSubscribe !== "boolean")
         throw new Error();
+      if (options.videoSimulcast !== undefined && typeof options.videoSimulcast !== "boolean")
+        throw new Error();
       if (!Number.isInteger(timeout) || timeout < 1 || timeout > 60_000) throw new Error();
       if (options.iceTransportPolicy && !["all", "relay"].includes(options.iceTransportPolicy))
         throw new Error();

@@ -21,6 +21,7 @@ import { validate } from "../../http/validation/validate.js";
 import { getProjectUsage } from "./project-usage.service.js";
 import { getOrganizationUsage } from "./organization-usage.service.js";
 import { getProjectAnalytics } from "./project-analytics.service.js";
+import { createReportReader } from "./reporting-execution.js";
 import {
   authorizeOrganizationReport,
   authorizeProjectReport,
@@ -62,8 +63,13 @@ export const reportingRoutes: FastifyPluginCallback<ReportingRoutesOptions> = (
   done,
 ) => {
   const repository = createReportingAccessRepository(options.database);
+  const readReport = createReportReader(options.database);
   app.decorateRequest("reportingPrincipal", null);
   app.addHook("onRequest", async (request, reply) => {
+    // The API's default ten-second idle socket timeout can close a healthy
+    // journal report before its bounded database query and serialization finish.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Injected requests can omit IncomingMessage methods.
+    request.raw.setTimeout?.(30_000);
     reply.header("cache-control", "private, no-store");
     reply.header("x-relayrtc-api-version", "v1");
     if (request.headers.authorization !== undefined) {
@@ -101,7 +107,9 @@ export const reportingRoutes: FastifyPluginCallback<ReportingRoutesOptions> = (
       const { organizationId } = validate(reportingOrganizationParamsSchema, request.params);
       const query = validate(organizationUsageQuerySchema, request.query);
       await authorizeOrganizationReport(repository, principalFor(request), organizationId);
-      return getOrganizationUsage(options.database, organizationId, query);
+      return readReport(JSON.stringify(["organization", organizationId, query]), (db) =>
+        getOrganizationUsage(db, organizationId, query),
+      );
     },
   );
 
@@ -137,7 +145,9 @@ export const reportingRoutes: FastifyPluginCallback<ReportingRoutesOptions> = (
         query.environmentId,
         "usage:read",
       );
-      return getProjectUsage(options.database, scope, query.range);
+      return readReport(JSON.stringify(["usage", scope, query.range]), (db) =>
+        getProjectUsage(db, scope, query.range),
+      );
     },
   );
 
@@ -156,7 +166,9 @@ export const reportingRoutes: FastifyPluginCallback<ReportingRoutesOptions> = (
         query.environmentId,
         "analytics:read",
       );
-      return getProjectAnalytics(options.database, scope, query.range);
+      return readReport(JSON.stringify(["analytics", scope, query.range]), (db) =>
+        getProjectAnalytics(db, scope, query.range),
+      );
     },
   );
   done();

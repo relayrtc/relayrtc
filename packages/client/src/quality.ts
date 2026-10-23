@@ -38,6 +38,10 @@ export const simulcastEncodings: readonly RTCRtpEncodingParameters[] = [
   { active: true, maxBitrate: 1_500_000, maxFramerate: 30, rid: "h", scaleResolutionDownBy: 1.5 },
   { active: true, maxBitrate: 4_000_000, maxFramerate: 30, rid: "f", scaleResolutionDownBy: 1 },
 ];
+export const videoEncodings = (simulcast = true): RTCRtpEncodingParameters[] =>
+  simulcast
+    ? simulcastEncodings.map((encoding) => ({ ...encoding }))
+    : [{ active: true, maxBitrate: 4_000_000, maxFramerate: 30, scaleResolutionDownBy: 1 }];
 const numeric = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 const string = (value: unknown): string | null => (typeof value === "string" ? value : null);
