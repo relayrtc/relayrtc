@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 export function ReportingRefresh({
   startedAt,
   endedAt,
-  intervalMs = 5000,
+  intervalMs = 15000,
 }: {
   startedAt: string;
   endedAt: string;

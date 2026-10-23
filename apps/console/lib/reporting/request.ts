@@ -48,7 +48,7 @@ export async function fetchReporting<T>(
       headers: { cookie: sessionCookie(cookie), accept: "application/json" },
       cache: "no-store",
       redirect: "error",
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new ReportingApiError(response.status);
     return schema.parse(await response.json());

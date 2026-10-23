@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { getProjectUsage } from "./project-usage.service.js";
 import { getOrganizationUsage } from "./organization-usage.service.js";
 import { getProjectAnalytics } from "./project-analytics.service.js";
+import { getServiceUsage } from "./service-usage-report.js";
 import { reportingRoutes } from "./reporting.routes.js";
 import { registerErrorHandling } from "../../http/errors/error-handler.js";
 
@@ -49,6 +50,27 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
   });
   afterAll(async () => {
     await database.close();
+  });
+
+  it("attributes streaming intervals and boundary events once across all report scopes", async () => {
+    await query(`INSERT INTO service_usage_sample
+      (id,organization_id,project_id,environment_id,resource_type,resource_id,stream_id,run_id,metrics,started_at,ended_at,occurred_at,coverage) VALUES
+      ('interval','org_1','project_1','env_1','stream','stream_1','stream_1','run_1','{"sourceSeconds":7200,"viewerSeconds":7200}','2026-10-08T09:30Z','2026-10-08T11:30Z','2026-10-08T11:30Z','observed'),
+      ('boundary','org_1','project_1','env_1','stream','stream_1','stream_1','run_1','{"programBytes":123}','2026-10-08T10:00Z','2026-10-08T10:00Z','2026-10-08T10:00Z','observed'),
+      ('outside','org_1','project_1','env_2','stream','stream_2','stream_2','run_2','{"programBytes":999}','2026-10-08T10:00Z','2026-10-08T10:00Z','2026-10-08T10:00Z','observed')`);
+    const report = await getServiceUsage(
+      database.db,
+      { ...scope, environmentId: "env_1" },
+      { startedAt: "2026-10-08T10:00:00Z", endedAt: "2026-10-08T12:00:00Z", granularity: "hour" },
+      now,
+    );
+    expect(report.summary.sourceSeconds).toBe(5400);
+    expect(report.summary.programBytes).toBe(123);
+    expect(report.summary.peakConcurrentViewers).toBe(1);
+    expect(report.buckets.map((b) => b.metrics.sourceSeconds)).toEqual([3600, 1800]);
+    expect(report.buckets.map((b) => b.metrics.programBytes)).toEqual([123, 0]);
+    expect(report.resources[0]?.metrics.sourceSeconds).toBe(5400);
+    expect(report.projects[0]?.metrics.programBytes).toBe(123);
   });
 
   const room = async (id = "room_1", environment = "env_1", project = "project_1") => {

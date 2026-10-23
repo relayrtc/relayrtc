@@ -1,5 +1,5 @@
 import { getServiceUsage } from "./service-usage-report.js";
-import type { RelayKitDatabase } from "@relayrtc/database";
+import type { ReportingDatabase } from "./reporting-execution.js";
 import { projectUsageResponseSchema, type ProjectUsageResponse } from "@relayrtc/validation";
 
 import { createUsageReportQuery, usageDataQuality, type UsageRange } from "./usage-query.js";
@@ -11,7 +11,7 @@ export interface ProjectUsageScope {
 }
 
 export async function getProjectUsage(
-  database: RelayKitDatabase,
+  database: ReportingDatabase,
   scope: ProjectUsageScope,
   range: UsageRange,
   endedAt = new Date(),
