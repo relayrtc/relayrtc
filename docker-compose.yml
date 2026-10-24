@@ -81,29 +81,10 @@ services:
       target: runner
     restart: unless-stopped
     environment:
-      SKIP_EMAIL_VERIFICATION: ${SKIP_EMAIL_VERIFICATION:-false}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set in .env}
-      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:3002,http://127.0.0.1:3002}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL must be set in .env}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-relaykit}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/${POSTGRES_DB:-relaykit}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?GITHUB_CLIENT_ID must be set in .env}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:?GITHUB_CLIENT_SECRET must be set in .env}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID must be set in .env}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET must be set in .env}
-      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY must be set in .env}
-      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:?RESEND_FROM_EMAIL must be set in .env}
       RELAYRTC_API_URL: http://api:8080
-      RELAYRTC_API_HEALTH_URL: http://api:8080/ready
-      RELAYRTC_INTERNAL_SECRET: ${RELAYRTC_INTERNAL_SECRET:?RELAYRTC_INTERNAL_SECRET must be set in .env}
-      RELAYRTC_MEDIA_INTERNAL_URL: http://media:8082/internal/v1
-      RELAYRTC_SIGNALING_INTERNAL_URL: http://signaling:8081/internal/v1
-      RELAYRTC_MEDIA_HEALTH_URL: http://media:8082/ready
-      RELAYRTC_PROMETHEUS_HEALTH_URL: http://prometheus:9090/-/ready
-      RELAYRTC_PROMETHEUS_URL: http://prometheus:9090
-      RELAYRTC_SIGNALING_HEALTH_URL: http://signaling:8081/ready
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      api:
+        condition: service_healthy
     ports:
       - 127.0.0.1:${CONSOLE_PORT:-3002}:3002
     healthcheck:
