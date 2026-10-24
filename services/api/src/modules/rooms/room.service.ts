@@ -95,6 +95,8 @@ export const createRoomService = (repository: RoomRepository, runtime?: RoomRunt
       ...(query.cursor ? { cursor: decodeCursor(query.cursor) } : {}),
       limit: query.limit,
       ...(query.status ? { status: query.status } : {}),
+        ...(query.search ? { search: query.search } : {}),
+        ...(query.joinable ? { joinable: true } : {}),
     });
     const hasNextPage = rooms.length > query.limit;
     const nodes = rooms.slice(0, query.limit);
