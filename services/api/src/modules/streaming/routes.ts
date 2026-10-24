@@ -272,6 +272,12 @@ export const streamingRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app,
       },
     });
   }
+  app.get("/streams/:streamId/ingest-credentials", (request) =>
+    withStream(request, "streams:read", async (db, stream) => {
+      const rows = await db.execute(sql`SELECT id,expires_at AS "expiresAt",revoked_at AS "revokedAt",created_at AS "createdAt" FROM streaming_ingest_credential WHERE stream_id=${stream.id} ORDER BY created_at DESC LIMIT 50`);
+      return { data: rows };
+    }),
+  );
   const vaultKey = createHash("sha256")
     .update(config.secret)
     .update("streaming-idempotency")

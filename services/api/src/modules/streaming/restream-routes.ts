@@ -158,6 +158,7 @@ export const restreamRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app, 
           streamScopeSchema
             .extend({
               cursor: streamingIdSchema.optional(),
+              streamId: streamingIdSchema.optional(),
               limit: z.coerce.number().int().min(1).max(100).default(30),
             })
             .strict(),
@@ -171,6 +172,7 @@ export const restreamRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app, 
           and(
             eq(schema.restreamSource.projectId, s.projectId),
             eq(schema.restreamSource.environmentId, s.environmentId),
+            q.streamId ? eq(schema.restreamSource.streamId, q.streamId) : undefined,
             request.method === "DELETE" ? undefined : isNull(schema.restreamSource.deletedAt),
             q.cursor ? gt(schema.restreamSource.id, q.cursor) : undefined,
           ),
