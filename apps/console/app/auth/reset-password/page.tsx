@@ -1,3 +1,7 @@
-import { AccountRecoveryPage } from '@/components/auth/account-recovery-page'
-export const metadata = { title: 'Reset password', referrer: 'no-referrer' }
-export default function Page() { return <AccountRecoveryPage mode="reset" /> }
+import type { Metadata } from "next";
+import { AuthFlow, type AuthParams } from "@/components/auth-flow";
+
+export const metadata: Metadata = { title: { absolute: "Reset password · Relayrtc" } };
+export default async function Page({ searchParams }: { searchParams: Promise<AuthParams> }) {
+  return <AuthFlow mode="reset-password" params={await searchParams} />;
+}

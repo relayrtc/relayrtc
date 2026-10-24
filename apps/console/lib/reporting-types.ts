@@ -1,0 +1,42 @@
+export type UsageRange = "24h" | "7d" | "14d" | "30d";
+export type AnalyticsRange = "live" | "24h" | "7d" | "30d";
+export type ReportWindow = { range: UsageRange | AnalyticsRange; startedAt: string; endedAt: string; timezone: "UTC"; endExclusive: true };
+export type ReportQuality = { sessionHistory: "complete" | "partial"; messageHistory: "complete" | "partial"; turnTraffic: "unavailable" | "partial" | "authoritative" };
+export type Coverage = "observed" | "estimated" | "partial" | "unavailable";
+export type ServiceUsage = {
+  window: Omit<ReportWindow, "range"> & { granularity: "hour" | "day" };
+  summary: Record<string, number>; coverage: Record<string, Coverage>;
+  metricDefinitions: Record<string, { category: string; unit: string; attribution: string; aggregation: string; definition: string; source: string; pricing: "unpriced" }>;
+  rules: Record<string, string>; journalStartedAt: string; historicalCoverage: "complete" | "partial"; deliveryAuthority: "origin"; pricing: "unpriced";
+  buckets: { startedAt: string; endedAt: string; metrics: Record<string, number> }[];
+  resources: { resourceType: string; resourceId: string; streamId: string; metrics: Record<string, number>; metricCoverage: Record<string, Coverage>; coverage: Coverage }[];
+  projects: { projectId: string; metrics: Record<string, number>; metricCoverage: Record<string, Coverage>; coverage: Coverage }[];
+  resourceLimit: number; resourcesTruncated: boolean;
+};
+export type UsageSummary = {
+  participantSeconds: number; audioParticipantSeconds: number; videoParticipantSeconds: number; screenShareSeconds: number; screenShareIngressBytes: number; screenShareEgressBytes: number;
+  sfuIngressBytes: number; sfuEgressBytes: number; turnIngressBytes: number; turnEgressBytes: number; turnRelaySeconds: number; turnSessions: number;
+  roomsCreated: number; roomsStarted: number; roomSeconds: number; averageConcurrentParticipants: number; peakConcurrentParticipants: number; peakConcurrentRooms: number;
+  signalingConnections: number; signalingConnectionSeconds: number; messagesIn: number; messagesOut: number;
+};
+export type ProjectUsage = { scope: { organizationId: string; projectId: string; environmentId: string | null }; window: ReportWindow; summary: UsageSummary; dataQuality: ReportQuality; buckets: { startedAt: string; endedAt: string; participantSeconds: number; roomsCreated: number }[]; serviceUsage?: ServiceUsage };
+export type OrganizationUsage = { organizationId: string; window: ReportWindow; summary: UsageSummary; dataQuality: ReportQuality; projects: { projectId: string; summary: UsageSummary; dataQuality: ReportQuality }[]; pagination: { limit: number; offset: number; total: number }; serviceUsage?: ServiceUsage };
+export type OrganizationQuota = { organizationId: string; status: "unconfigured"; limits: never[] };
+export type AnalyticsReport = {
+  scope: ProjectUsage["scope"]; window: ReportWindow; dataQuality: ReportQuality;
+  summary: { peakConcurrent: number; totalSessions: number; averageSessionSeconds: number; participantSeconds: number; connectionSuccessRate: number };
+  network: Pick<UsageSummary, "sfuIngressBytes" | "sfuEgressBytes" | "turnIngressBytes" | "turnEgressBytes">;
+  traffic: { startedAt: string; endedAt: string; participants: number; sessions: number; participantSeconds: number }[];
+  networkSeries: (AnalyticsReport["network"] & { startedAt: string; endedAt: string })[];
+  qualityGranularitySeconds: 60;
+  quality: { startedAt: string; endedAt: string; roundTripTimeMs: number | null; jitterMs: number | null; packetLossPercent: number | null; sampleCount: number }[];
+  regions: { name: string; sessions: number }[];
+  qualityDistribution: { quality: "excellent" | "good" | "poor" | "critical" | "lost"; count: number }[];
+  topRooms: { id: string; name: string; participants: number; participantSeconds: number }[]; serviceUsage?: ServiceUsage;
+};
+export type ActivityView = "rooms" | "streams" | "assets" | "sources";
+export type ActivityRow = { id: string; label: string; detail: string; status: string; createdAt: string };
+export type ActivityPage = { rows: ActivityRow[]; hasNext: boolean; page: number; observedAt: string };
+export type InspectionRecord = Record<string, string | number | boolean | null>;
+export type InspectionGroup = { title: string; rows: InspectionRecord[]; hasNext: boolean };
+export type ActivityInspection = { kind: ActivityView; room?: InspectionRecord; stream?: InspectionRecord; asset?: InspectionRecord; source?: InspectionRecord; sessions?: InspectionRecord[]; broadcasts?: InspectionRecord[]; outputs?: InspectionRecord[]; groups: InspectionGroup[]; hasNext: boolean; page: number; observedAt: string };

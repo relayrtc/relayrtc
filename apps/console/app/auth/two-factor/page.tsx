@@ -1,3 +1,7 @@
-import { AccountRecoveryPage } from '@/components/auth/account-recovery-page'
-export const metadata = { title: 'Verify sign-in', referrer: 'no-referrer' }
-export default function Page() { return <AccountRecoveryPage mode="mfa" /> }
+import type { Metadata } from "next";
+import { AuthFlow, type AuthParams } from "@/components/auth-flow";
+
+export const metadata: Metadata = { title: { absolute: "Two-factor authentication · Relayrtc" } };
+export default async function Page({ searchParams }: { searchParams: Promise<AuthParams> }) {
+  return <AuthFlow mode="two-factor" params={await searchParams} />;
+}

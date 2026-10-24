@@ -28,7 +28,7 @@ export function createReportReader(database: RelayKitDatabase) {
     cache.set(key, entry);
     void result.then(
       () => {
-        entry.expiresAt = Date.now() + 15000;
+        entry.expiresAt = Date.now() + 1000;
       },
       () => {
         if (cache.get(key) === entry) cache.delete(key);

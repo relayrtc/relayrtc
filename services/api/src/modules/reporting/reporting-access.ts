@@ -24,7 +24,8 @@ export const createReportingAccessRepository = (
         status: schema.project.status,
       })
       .from(schema.project)
-      .where(eq(schema.project.id, projectId))
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.project.organizationId))
+      .where(and(eq(schema.project.id, projectId), eq(schema.organization.status, "active")))
       .limit(1);
     return project ?? null;
   },
@@ -32,8 +33,9 @@ export const createReportingAccessRepository = (
     const [member] = await database
       .select({ id: schema.member.id })
       .from(schema.member)
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
       .where(
-        and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, userId)),
+        and(eq(schema.member.organizationId, organizationId), eq(schema.member.userId, userId), eq(schema.organization.status, "active")),
       )
       .limit(1);
     return member !== undefined;
@@ -43,7 +45,7 @@ export const createReportingAccessRepository = (
       .select({ id: schema.environment.id })
       .from(schema.environment)
       .where(
-        and(eq(schema.environment.id, environmentId), eq(schema.environment.projectId, projectId)),
+        and(eq(schema.environment.id, environmentId), eq(schema.environment.projectId, projectId), eq(schema.environment.status, "active")),
       )
       .limit(1);
     return environment !== undefined;

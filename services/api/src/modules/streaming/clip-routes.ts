@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { validate } from "../../http/validation/validate.js";
+import { ApiError } from "../../http/errors/api-error.js";
 import {
   authorize,
   getStream,
@@ -138,23 +139,29 @@ export const clipRoutes: FastifyPluginAsync<StreamingRoutesOptions> = (app, opti
     });
     return reply.code(202).send(result);
   });
-  app.get("/streams/:streamId/clips", (request) =>
+  const list = (nested: boolean) => (request: FastifyRequest) =>
     database.transaction(async (db) => {
-      const { stream } = await scoped(db, request),
-        q = validate(
+      const q = validate(
           streamScopeSchema.extend({
             cursor: streamingIdSchema.optional(),
             limit: z.coerce.number().int().min(1).max(100).default(30),
           }),
           request.query,
         );
+      const stream = nested ? (await scoped(db, request)).stream : null;
+      const actor = principal(request);
+      const projectId = stream?.projectId ?? q.projectId ?? (actor.type === "key" ? actor.key.projectId : undefined);
+      const environmentId = stream?.environmentId ?? q.environmentId ?? (actor.type === "key" ? actor.key.environmentId : undefined);
+      if (!projectId || !environmentId) throw new ApiError(400, "SCOPE_REQUIRED", "Select a project and environment.");
+      await authorize(db, actor, { projectId, environmentId }, "recordings:read");
       const rows = await db.execute(
-        sql`SELECT c.id FROM clip_request c JOIN recording r ON r.id=c.recording_id WHERE r.stream_id=${stream.id} ${q.cursor ? sql`AND c.id>${q.cursor}` : sql``} ORDER BY c.id LIMIT ${q.limit + 1}`,
+        sql`SELECT c.id FROM clip_request c JOIN recording r ON r.id=c.recording_id WHERE r.project_id=${projectId} AND r.environment_id=${environmentId} ${stream ? sql`AND r.stream_id=${stream.id}` : sql``} ${q.cursor ? sql`AND c.id>${q.cursor}` : sql``} ORDER BY c.id LIMIT ${q.limit + 1}`,
       );
       const data = await Promise.all(rows.slice(0, q.limit).map((r) => getClip(db, String(r.id))));
       return { data, nextCursor: rows.length > q.limit ? String(rows[q.limit - 1]?.id) : null };
-    }),
-  );
+    });
+  app.get("/streams/:streamId/clips", list(true));
+  app.get("/clips", list(false));
   app.get("/clips/:clipId", (request) =>
     database.transaction(async (db) => (await scoped(db, request)).clip),
   );

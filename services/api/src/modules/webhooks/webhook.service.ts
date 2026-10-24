@@ -94,7 +94,7 @@ export async function authorizeWebhookScope(
       select role from member where organization_id = ${String(resource.organization_id)} and user_id = ${principal.userId} for share
     `);
     if (!membership) throw notFound();
-    if (writing && membership.role !== "owner" && membership.role !== "admin")
+    if (writing && !String(membership.role).split(",").some(role => ["owner", "admin"].includes(role.trim())))
       throw new ApiError(
         403,
         "WEBHOOK_MANAGEMENT_FORBIDDEN",

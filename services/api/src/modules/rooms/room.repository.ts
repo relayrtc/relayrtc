@@ -1,7 +1,7 @@
 import type { RelayKitDatabase } from "@relayrtc/database";
 import { schema } from "@relayrtc/database";
 import type { Metadata, RoomStatus } from "@relayrtc/types";
-import { and, desc, eq, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, lt, ne, or } from "drizzle-orm";
 
 export interface RoomScope {
   environmentId: string;
@@ -35,6 +35,8 @@ export interface ListRoomRecords extends RoomScope {
   cursor?: RoomCursor;
   limit: number;
   status?: RoomStatus;
+  search?: string;
+  joinable?: boolean;
 }
 
 export interface RoomRepository {
@@ -100,6 +102,12 @@ export const createRoomRepository = (database: RelayKitDatabase): RoomRepository
     ];
 
     if (input.status) conditions.push(eq(schema.room.status, input.status));
+    if (input.joinable) conditions.push(inArray(schema.room.status, ["created", "active"]));
+    if (input.search) {
+      const pattern = `%${input.search.replace(/[\\%_]/gu, "\\$&")}%`;
+      const match = or(ilike(schema.room.name, pattern), ilike(schema.room.id, pattern));
+      if (match) conditions.push(match);
+    }
     if (input.cursor) {
       const cursorCondition = or(
         lt(schema.room.createdAt, input.cursor.createdAt),

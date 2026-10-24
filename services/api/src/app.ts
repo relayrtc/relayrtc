@@ -140,6 +140,8 @@ export const buildApp = (options: BuildAppOptions): FastifyInstance => {
     void app.register(accountRoutes, {
       database: options.database,
       environment: options.config.accountAuth,
+      participantTokenSigner,
+      ...(options.config.webhookSigningEncryptionKey ? { webhookSigningEncryptionKey: options.config.webhookSigningEncryptionKey } : {}),
     });
   }
 

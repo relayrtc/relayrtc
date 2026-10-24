@@ -20,6 +20,22 @@
     "./server": {
       "types": "./dist/server.d.ts",
       "import": "./dist/server.js"
+    },
+    "./projects": {
+      "types": "./dist/projects.d.ts",
+      "import": "./dist/projects.js"
+    },
+    "./api-keys": {
+      "types": "./dist/api-keys.d.ts",
+      "import": "./dist/api-keys.js"
+    },
+    "./activity": {
+      "types": "./dist/activity.d.ts",
+      "import": "./dist/activity.js"
+    },
+    "./activity-features": {
+      "types": "./dist/activity-features.d.ts",
+      "import": "./dist/activity-features.js"
     }
   },
   "main": "./dist/index.js",
@@ -37,7 +53,8 @@
     "better-auth": "^1.7.7",
     "drizzle-orm": "^0.45.3",
     "resend": "6.31.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@relayrtc/validation": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.10.1"

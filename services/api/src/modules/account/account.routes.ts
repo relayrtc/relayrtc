@@ -11,8 +11,14 @@ import { z } from "zod";
 import { ApiError } from "../../http/errors/api-error.js";
 import { validate } from "../../http/validation/validate.js";
 import { auditQuery, listAuditEvents } from "./audit-service.js";
+import { registerWorkspaceRoutes } from "./workspace.routes.js";
+import { registerDeveloperRoutes } from "./developer.routes.js";
+import { registerRoomsRoutes } from "./rooms.routes.js";
+import { registerActivityRoutes } from "./activity.routes.js";
+import type { ParticipantTokenSigner } from "../participant-tokens/participant-token.signer.js";
+import { createOrganizationInputSchema, inviteOrganizationMemberInputSchema, updateOrganizationMemberRoleInputSchema, removeOrganizationMemberInputSchema } from "@relayrtc/validation";
 
-interface Options { database: RelayKitDatabase; environment: AuthEnvironment }
+interface Options { database: RelayKitDatabase; environment: AuthEnvironment; webhookSigningEncryptionKey?: string; participantTokenSigner?: ParticipantTokenSigner }
 const password = z.string().min(8).max(128);
 const profile = z.object({ name: z.string().trim().min(1).max(120),
   image: z.union([z.url().refine((url) => url.startsWith("https://"), "Use an HTTPS image URL"), z.null()]).optional(),
@@ -142,6 +148,11 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
       if (session && session.user.email.toLowerCase() !== body.email.toLowerCase()) throw new ApiError(403, "EMAIL_MISMATCH", "Verify your current account email.");
     }
     if (path === "/update-user") validate(profile, request.body);
+    if (path === "/organization/create") validate(createOrganizationInputSchema.passthrough(), request.body);
+    if (path === "/organization/update") validate(z.object({ organizationId: z.string().min(1).max(128).optional(), data: z.object({ name: z.string().trim().min(1).max(120).optional(), logo: z.union([z.url().refine(url => url.startsWith("https://")), z.null()]).optional() }).passthrough() }).passthrough(), request.body);
+    if (path === "/organization/invite-member") validate(inviteOrganizationMemberInputSchema.extend({ resend: z.boolean().optional() }), request.body);
+    if (path === "/organization/update-member-role") validate(updateOrganizationMemberRoleInputSchema, request.body);
+    if (path === "/organization/remove-member") validate(removeOrganizationMemberInputSchema, request.body);
     if (path === "/change-password") validate(z.object({ currentPassword: z.string().min(1).max(128), newPassword: password, revokeOtherSessions: z.literal(true) }).strict(), request.body);
     if (path === "/unlink-account") {
       const session = await current(request);
@@ -278,6 +289,11 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
       action: "organization.audit_exported", outcome: "SUCCESS", resourceType: "organization", resourceId: organizationId, correlationId: request.id });
     return result;
   });
+
+  registerWorkspaceRoutes(app, { database: options.database, current });
+  registerActivityRoutes(app, { database: options.database, current });
+  registerRoomsRoutes(app, { database: options.database, current, ...(options.participantTokenSigner ? { signer: options.participantTokenSigner } : {}) });
+  registerDeveloperRoutes(app, { database: options.database, current, ...(options.webhookSigningEncryptionKey ? { encryptionKey: options.webhookSigningEncryptionKey } : {}) });
 
   let stopped = false;
   let running: Promise<void> | undefined;
