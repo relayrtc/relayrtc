@@ -1,85 +1,47 @@
-import { z } from "zod"
+const base = "https://console.invalid";
+const trackingKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
 
-export type RawSearchParams = Record<string, string | string[] | undefined>
-
-const trackingKeys = [
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_term",
-  "utm_content",
-] as const
-
-const firstValue = (value: string | string[] | undefined) =>
-  Array.isArray(value) ? value[0] : value
-
-const redirectSchema = z
-  .string()
-  .max(2048)
-  .refine((value) => {
-    if (
-      !value.startsWith("/") ||
-      value.startsWith("//") ||
-      value.includes("\\")
-    ) {
-      return false
-    }
-
-    try {
-      const url = new URL(value, "https://app.relayrtc.com")
-      const pathname = decodeURIComponent(url.pathname)
-      // Cleanup belongs to a previous account/resource, never a post-auth destination.
-      if (pathname === "/cleanup" || pathname.startsWith("/cleanup/")) return false
-      return (
-        url.origin ===
-        "https://app.relayrtc.com"
-      )
-    } catch {
-      return false
-    }
-  })
-  .catch("/")
-
-const optionalValue = z.string().trim().max(256).optional().catch(undefined)
-
-export interface AuthQuery {
-  error: string | undefined
-  redirect: string
-  tracking: Partial<Record<(typeof trackingKeys)[number], string>>
+export function authSearchParams(raw: Record<string, string | string[] | undefined>): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(raw)) {
+    const first = Array.isArray(value) ? value[0] : value;
+    if (first) params.set(key, first);
+  }
+  return params;
 }
 
-export const readAuthQuery = (raw: RawSearchParams): AuthQuery => {
-  const tracking: AuthQuery["tracking"] = {}
+// Destinations stay inside this console, including after OAuth and MFA.
+export function safeRedirect(value: string | null | undefined, fallback = "/rooms"): string {
+  if (!value || value.length > 2048 || !value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u0020]/.test(value)) return fallback;
+  try {
+    const url = new URL(value, base);
+    const path = decodeURIComponent(url.pathname);
+    if (url.origin !== base || path.startsWith("//") || /[\\\u0000-\u001f]/.test(path) || /^\/(?:auth|api|cleanup|_next)(?:\/|$)/.test(path)) return fallback;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch { return fallback; }
+}
 
+export function postAuthDestination(params: URLSearchParams): string {
+  let destination = params.get("redirect");
+  // The existing OAuth MFA hook may wrap the destination in /auth/continue.
+  if (destination?.startsWith("/auth/continue?")) {
+    try { destination = new URL(destination, base).searchParams.get("redirect"); } catch { destination = null; }
+  }
+  const url = new URL(safeRedirect(destination), base);
   for (const key of trackingKeys) {
-    const value = optionalValue.parse(firstValue(raw[key]))
-    if (value) tracking[key] = value
+    const value = params.get(key)?.trim();
+    if (value && value.length <= 256 && !url.searchParams.has(key)) url.searchParams.set(key, value);
   }
-
-  return {
-    error: optionalValue.parse(firstValue(raw.error)),
-    redirect: redirectSchema.parse(firstValue(raw.redirect) ?? "/"),
-    tracking,
-  }
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
-export const buildPostAuthRedirect = (query: AuthQuery): string => {
-  const url = new URL(query.redirect, "https://app.relayrtc.com")
-
-  for (const [key, value] of Object.entries(query.tracking)) {
-    if (value && !url.searchParams.has(key)) url.searchParams.set(key, value)
-  }
-
-  return `${url.pathname}${url.search}${url.hash}`
+export function authHref(path: string, destination: string, extras: Record<string, string> = {}): string {
+  const params = new URLSearchParams({ redirect: safeRedirect(destination), ...extras });
+  return `${path}?${params}`;
 }
 
-export const buildAuthHref = (path: string, query: AuthQuery): string => {
-  const params = new URLSearchParams()
-  params.set("redirect", query.redirect)
-
-  for (const [key, value] of Object.entries(query.tracking)) {
-    if (value) params.set(key, value)
-  }
-
-  return `${path}?${params.toString()}`
+export function oauthRedirect(url: string): string {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") throw new Error("The sign-in provider returned an invalid redirect.");
+  return parsed.href;
 }

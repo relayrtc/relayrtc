@@ -1,3 +1,4 @@
-import { proxyAccountRequest } from '@/lib/account-proxy'
-const handleAuthRequest = proxyAccountRequest
-export { handleAuthRequest as GET, handleAuthRequest as POST }
+import { proxyAccountRequest } from "@/lib/account-proxy";
+export const dynamic = "force-dynamic";
+export const GET = proxyAccountRequest;
+export const POST = proxyAccountRequest;
