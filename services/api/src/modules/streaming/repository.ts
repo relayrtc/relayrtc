@@ -57,7 +57,9 @@ export async function getStream(
     .select()
     .from(schema.streamingStream)
     .where(eq(schema.streamingStream.id, streamId));
-  const [row] = await (lock ? query.for("update") : query);
+  // Stream commands change non-key fields. Keep them exclusive with each other,
+  // but allow workers' foreign-key checks while a command waits for their session.
+  const [row] = await (lock ? query.for("no key update") : query);
   if (!row) throw missing();
   return row;
 }
