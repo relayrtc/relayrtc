@@ -9,7 +9,14 @@ import {
   mixerOperationSchema,
   mixerCommandResultSchema,
   mixerOverlaySchema,
+  streamScopeSchema,
 } from "@relayrtc/validation";
+import {
+  streamingOpenApiBase,
+  streamingIdempotencyParameter,
+  streamingPathParameter,
+  streamingQueryParameters,
+} from "./streaming-openapi.js";
 export function mixerOpenApi() {
   const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
   const response = (name: string, status = 200) => ({
@@ -18,41 +25,24 @@ export function mixerOpenApi() {
       content: { "application/json": { schema: ref(name) } },
     },
   });
-  const body = (name: string) => ({
-    required: true,
+  const body = (name: string, required = true) => ({
+    required,
     content: { "application/json": { schema: ref(name) } },
   });
-  const path = (name: string) => ({
-    in: "path",
-    name,
-    required: true,
-    schema: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
-  });
-  const scope = ["projectId", "environmentId"].map((name) => ({
-    in: "query",
-    name,
-    required: false,
-    schema: { type: "string" },
-  }));
-  const mutation = {
-    in: "header",
-    name: "Idempotency-Key",
-    schema: { type: "string", maxLength: 128 },
-    description: "Reuse with the identical request when retrying an uncertain command.",
-  };
+  const path = streamingPathParameter;
+  const scope = streamingQueryParameters(streamScopeSchema);
+  const mutation = streamingIdempotencyParameter;
+  const base = streamingOpenApiBase("RelayRTC cloud mixer", "cloud mixer management");
   const parameters = [...scope, path("mixerId")];
   return {
-    openapi: "3.1.0",
-    info: { title: "RelayRTC cloud mixer", version: "0.7.0" },
-    servers: [{ url: "/v1" }],
-    security: [{ bearerAuth: [] }],
+    ...base,
     paths: {
       "/broadcasts/{broadcastId}/mixers": {
         parameters: [...scope, path("broadcastId")],
         get: { responses: response("MixerList") },
         post: {
           parameters: [mutation],
-          requestBody: body("CreateMixer"),
+          requestBody: body("CreateMixer", false),
           responses: response("Mixer", 201),
         },
       },
@@ -100,7 +90,7 @@ export function mixerOpenApi() {
       },
     },
     components: {
-      securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+      ...base.components,
       schemas: {
         CreateMixer: z.toJSONSchema(createMixerSchema, { io: "input" }),
         PutScene: z.toJSONSchema(putMixerSceneSchema, { io: "input" }),

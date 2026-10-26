@@ -80,6 +80,7 @@ export interface StreamSession {
 export interface StreamingOperation {
   id: string;
   streamId: string;
+  sessionId: string | null;
   kind:
     "start" | "stop" | "delete" | "broadcast.start" | "broadcast.stop" | "broadcast.output.retry";
   broadcastId?: string | null;

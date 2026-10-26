@@ -9,10 +9,17 @@ import {
   guestResourceSchema,
   guestRosterSchema,
   guestJoinGrantSchema,
+  guestQuerySchema,
 } from "@relayrtc/validation";
+import {
+  streamingOpenApiBase,
+  streamingIdempotencyParameter,
+  streamingPathParameter,
+  streamingQueryParameters,
+} from "./streaming-openapi.js";
 export function guestOpenApi() {
-  const content = (schema: z.ZodType) => ({
-    "application/json": { schema: z.toJSONSchema(schema) },
+  const content = (schema: z.ZodType, io: "input" | "output" = "output") => ({
+    "application/json": { schema: z.toJSONSchema(schema, { io }) },
   });
   const operation = (
     input: z.ZodType | undefined,
@@ -22,32 +29,15 @@ export function guestOpenApi() {
   ) => ({
     ...(input
       ? {
-          parameters: [
-            {
-              in: "header",
-              name: "Idempotency-Key",
-              required: idempotent,
-              schema: { type: "string", maxLength: 128 },
-            },
-          ],
-          requestBody: { required: true, content: content(input) },
+          ...(idempotent ? { parameters: [streamingIdempotencyParameter] } : {}),
+          requestBody: { required: true, content: content(input, "input") },
         }
       : {}),
     responses: { [status]: { description: "Success", content: content(output) } },
   });
   const parameters = [
-    { in: "path", name: "streamId", required: true, schema: { type: "string" } },
-    { in: "query", name: "broadcastId", required: true, schema: { type: "string" } },
-    ...["projectId", "environmentId", "subject", "cursor"].map((name) => ({
-      in: "query",
-      name,
-      schema: { type: "string" },
-    })),
-    {
-      in: "query",
-      name: "limit",
-      schema: { type: "integer", minimum: 1, maximum: 50, default: 25 },
-    },
+    streamingPathParameter("streamId"),
+    ...streamingQueryParameters(guestQuerySchema),
   ];
   const paths: Record<string, unknown> = {};
   paths["/streams/{streamId}/guest-stage"] = {
@@ -85,10 +75,7 @@ export function guestOpenApi() {
   ] as const)
     for (const action of actions)
       paths[`/streams/{streamId}/${collection}/{${param}}/${action}`] = {
-        parameters: [
-          ...parameters,
-          { in: "path", name: param, required: true, schema: { type: "string" } },
-        ],
+        parameters: [...parameters, streamingPathParameter(param)],
         post: operation(
           action === "mute" ? guestMuteSchema : guestDecisionSchema,
           action === "join-grant" ? guestJoinGrantSchema : guestResourceSchema,
@@ -97,20 +84,7 @@ export function guestOpenApi() {
         ),
       };
   return {
-    openapi: "3.1.0",
-    info: { title: "RelayRTC live guests", version: "0.9.0" },
-    servers: [{ url: "/v1" }],
-    security: [{ bearerAuth: [] }],
-    components: {
-      securitySchemes: {
-        bearerAuth: {
-          type: "http",
-          scheme: "bearer",
-          description:
-            "Management key or narrow run-bound audience identity; role and subject checks still apply.",
-        },
-      },
-    },
+    ...streamingOpenApiBase("RelayRTC live guests", "live guests and co-hosting", true),
     paths,
   };
 }
