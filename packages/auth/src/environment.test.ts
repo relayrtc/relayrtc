@@ -39,8 +39,19 @@ describe("readAuthEnvironment", () => {
         },
       },
       secret: validEnvironment.BETTER_AUTH_SECRET,
+      skipEmailVerification: false,
       trustedOrigins: ["http://localhost:3000", "https://dashboard.example.com"],
     });
+  });
+
+  it("requires an explicit opt-in to skip email verification", () => {
+    expect(
+      readAuthEnvironment({ ...validEnvironment, SKIP_EMAIL_VERIFICATION: "true" })
+        .skipEmailVerification,
+    ).toBe(true);
+    expect(() =>
+      readAuthEnvironment({ ...validEnvironment, SKIP_EMAIL_VERIFICATION: "yes" }),
+    ).toThrow("SKIP_EMAIL_VERIFICATION");
   });
 
   it("rejects missing and weak secrets", () => {

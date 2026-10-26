@@ -12,12 +12,12 @@ describe("session policy", () => {
   it("uses a seven-day rolling lifetime with daily refresh", () => {
     expect(sessionExpiresInSeconds).toBe(604_800);
     expect(sessionUpdateAgeSeconds).toBe(86_400);
-    expect(sessionFreshAgeSeconds).toBe(900);
+    expect(sessionFreshAgeSeconds).toBe(0);
     expect(relayKitSessionPolicy).toEqual({
       cookieCache: { enabled: false },
       deferSessionRefresh: true,
       expiresIn: 604_800,
-      freshAge: 900,
+      freshAge: 0,
       storeSessionInDatabase: true,
       updateAge: 86_400,
     });

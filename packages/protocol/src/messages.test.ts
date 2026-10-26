@@ -85,6 +85,8 @@ describe("protocol envelope", () => {
 
   it("exports exhaustive category literals", () => {
     expect(protocolRequestTypes).toEqual([
+      "rtc.subscription.quality",
+      "rtc.stats.report",
       "heartbeat.ping",
       "message.send",
       "event.emit",
@@ -98,14 +100,40 @@ describe("protocol envelope", () => {
       "rtc.track.publish",
       "rtc.track.control",
       "rtc.track.subscribe",
+      "rtc.subscription.resume",
+      "rtc.subscription.close",
       "session.resume",
+      "session.refresh",
     ]);
-    expect(protocolResponseTypes).toHaveLength(14);
-    expect(protocolEventTypes).toHaveLength(13);
-    expect(protocolMessageTypes).toHaveLength(42);
+    expect(protocolResponseTypes).toHaveLength(19);
+    expect(protocolEventTypes).toHaveLength(15);
+    expect(protocolMessageTypes).toHaveLength(54);
     expectTypeOf<ProtocolMessageOfType<"participant.join">["payload"]>().toHaveProperty(
       "participantToken",
     );
+  });
+
+  it("validates credential refresh without accepting identity or permission overrides", () => {
+    const payload = {
+      roomId: "room_123",
+      sessionId: "session_123",
+      participantToken: "replacement-token",
+    };
+    expect(safeParseProtocolMessage(request("session.refresh", payload)).success).toBe(true);
+    expect(
+      safeParseProtocolMessage(request("session.refresh", { ...payload, participantToken: "" }))
+        .success,
+    ).toBe(false);
+    expect(
+      safeParseProtocolMessage(
+        request("session.refresh", { ...payload, permissions: ["room:join"] }),
+      ).success,
+    ).toBe(false);
+    expect(
+      safeParseProtocolMessage(
+        request("session.refresh", { ...payload, participantId: "different-participant" }),
+      ).success,
+    ).toBe(false);
   });
 });
 

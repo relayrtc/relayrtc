@@ -27,7 +27,8 @@ describe("createRelayKitAuth", () => {
     expect(auth.options.appName).toBe("RelayRTC");
     expect(auth.options.baseURL).toBe("http://localhost:3000");
     expect(auth.options.emailAndPassword).toMatchObject({
-      autoSignIn: true,
+      autoSignIn: false,
+      requireEmailVerification: true,
       enabled: true,
       maxPasswordLength: 128,
       minPasswordLength: 8,
@@ -37,7 +38,7 @@ describe("createRelayKitAuth", () => {
       cookieCache: { enabled: false },
       deferSessionRefresh: true,
       expiresIn: 604_800,
-      freshAge: 900,
+      freshAge: 0,
       storeSessionInDatabase: true,
       updateAge: 86_400,
     });
@@ -59,7 +60,7 @@ describe("createRelayKitAuth", () => {
     });
     expect(auth.options.account).toMatchObject({
       accountLinking: {
-        disableImplicitLinking: false,
+        disableImplicitLinking: true,
         enabled: true,
       },
       encryptOAuthTokens: true,
