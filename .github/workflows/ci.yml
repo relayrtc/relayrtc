@@ -18,4 +18,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose --env-file .env.example config --quiet
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test tests/configure-env.test.mjs tests/docker-compose.test.mjs
+      - run: node scripts/check-release-config.mjs
+
+  database-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: relayrtc_test
+          POSTGRES_PASSWORD: relayrtc_test
+          POSTGRES_DB: relayrtc_usage_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relayrtc_test -d relayrtc_usage_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RELAYRTC_TEST_DATABASE_URL: postgresql://relayrtc_test:relayrtc_test@localhost:5432/relayrtc_usage_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: corepack prepare pnpm@10.28.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec turbo run build --filter=@relayrtc/api
+      - run: pnpm test:database

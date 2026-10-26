@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createDatabase } from "@relayrtc/database";
@@ -26,6 +27,14 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
   });
   const query = (statement: string, values: string[] = []) =>
     database.client.unsafe(statement, values);
+  let cleanupStatements: string[];
+  let fixtureTransaction = false;
+  const cleanup = () =>
+    database.client.begin(async (transaction) => {
+      for (const statement of cleanupStatements)
+        await transaction.unsafe(statement, [["org_1", "org_2", "org_empty"]]);
+      await transaction.unsafe(`DELETE FROM "user" WHERE id='user_1'`);
+    });
 
   beforeAll(async () => {
     await migrate(database.db, {
@@ -33,9 +42,14 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
         new URL("../../../../../packages/database/migrations", import.meta.url),
       ),
     });
+    cleanupStatements = (
+      await readFile(new URL("../../../../../tests/reporting-cleanup.sql", import.meta.url), "utf8")
+    ).split("--> statement-breakpoint");
   }, 30_000);
   beforeEach(async () => {
+    await cleanup();
     await query("BEGIN");
+    fixtureTransaction = true;
     await query(
       `INSERT INTO organization (id, name, slug) VALUES ('org_1', 'Test', 'test'), ('org_2', 'Other', 'other')`,
     );
@@ -46,7 +60,8 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
       ('env_other', 'project_2', 'Other', 'other', 'custom')`);
   });
   afterEach(async () => {
-    await query("ROLLBACK");
+    if (fixtureTransaction) await query("ROLLBACK");
+    await cleanup();
   });
   afterAll(async () => {
     await database.close();
@@ -108,7 +123,7 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
     getOrganizationUsage(database.db, "org_1", { range: "7d", limit, offset }, now);
   const extraProjects = async () => {
     await query(`INSERT INTO project (id, organization_id, name, slug, status) VALUES
-      ('project_3', 'org_1', 'Three', 'three', 'suspended'), ('project_empty', 'org_1', 'Empty', 'empty', 'active')`);
+      ('project_3', 'org_1', 'Three', 'three', 'active'), ('project_empty', 'org_1', 'Empty', 'empty', 'active')`);
     await query(`INSERT INTO environment (id, project_id, name, slug, type) VALUES
       ('env_3', 'project_3', 'Three', 'three', 'custom'), ('env_empty', 'project_empty', 'Empty', 'empty', 'custom')`);
   };
@@ -286,7 +301,11 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
       now,
     );
     expect(empty.summary.participantSeconds).toBe(0);
-    expect(result.dataQuality).toEqual({ sessionHistory: "complete", messageHistory: "complete" });
+    expect(result.dataQuality).toEqual({
+      sessionHistory: "complete",
+      messageHistory: "complete",
+      turnTraffic: "unavailable",
+    });
     await query(`INSERT INTO organization (id, name, slug) VALUES ('org_empty', 'Empty', 'empty')`);
     const noProjects = await getOrganizationUsage(
       database.db,
@@ -318,6 +337,7 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
       ('e1', 'org_1', 'project_1', 'env_1', 'sfuIngressBytes', 100, '2026-10-02T12:00:00Z'),
       ('e3', 'org_1', 'project_3', 'env_3', 'sfuIngressBytes', 200, '2026-10-02T12:00:00Z'),
       ('other', 'org_2', 'project_2', 'env_other', 'sfuIngressBytes', 9999, '2026-10-02T12:00:00Z')`);
+    await query("UPDATE project SET status='suspended' WHERE id='project_3'");
     const result = await organizationUsage();
     expect(result.summary.participantSeconds).toBe(1200);
     expect(result.summary.sfuIngressBytes).toBe(300);
@@ -351,6 +371,7 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
     await session("s1", "p1", "2026-10-08T11:59:00Z");
     await session("s3", "p3", "2026-10-08T11:59:00Z", "room_3");
     await session("s2", "p2", "2026-10-08T11:59:00Z", "room_env2");
+    await query("UPDATE project SET status='suspended' WHERE id='project_3'");
     const result = await organizationUsage();
     expect(result.summary.participantSeconds).toBe(180);
     expect(result.summary.peakConcurrentParticipants).toBe(3);
@@ -367,8 +388,13 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
     await query(
       `UPDATE participant_session SET metering_started_at = '2026-10-03T00:00:00Z' WHERE id = 's3'`,
     );
+    await query("UPDATE project SET status='suspended' WHERE id='project_3'");
     const first = await organizationUsage(1, 0);
-    expect(first.dataQuality).toEqual({ sessionHistory: "partial", messageHistory: "partial" });
+    expect(first.dataQuality).toEqual({
+      sessionHistory: "partial",
+      messageHistory: "partial",
+      turnTraffic: "unavailable",
+    });
     expect(first.projects[0]?.dataQuality.sessionHistory).toBe("complete");
     expect((await organizationUsage(1, 1)).projects[0]?.dataQuality.sessionHistory).toBe("partial");
   });
@@ -388,6 +414,7 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
       expect(result.dataQuality).toEqual({
         sessionHistory: "complete",
         messageHistory: "complete",
+        turnTraffic: "unavailable",
       });
     },
   );
@@ -509,6 +536,9 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
     );
   });
   it("serves the real usage calculation through Fastify after checking database membership", async () => {
+    // The route owns its read-only transactions; publish the fixture before making requests.
+    await query("COMMIT");
+    fixtureTransaction = false;
     await query(
       `INSERT INTO "user" (id, name, email, updated_at) VALUES ('user_1', 'Test', 'test@example.com', now())`,
     );
@@ -612,42 +642,57 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
     ).toBe(30 * 86400);
   });
   it("backfills legacy sessions without inventing reconnect or message history", async () => {
-    await query("DROP TRIGGER zz_retained_usage_session ON participant_session");
-    await query("DROP TRIGGER participant_session_usage_history ON participant_session");
-    await query("DROP FUNCTION record_participant_session_usage()");
-    await query("DROP TABLE participant_connection_interval");
-    await query("ALTER TABLE participant_session DROP COLUMN metering_started_at");
-    await room();
-    await query(
-      `INSERT INTO participant (id, room_id, name, joined_at) VALUES ('p1', 'room_1', 'Test', '2026-10-02T10:00:00Z')`,
+    const admin = createDatabase(databaseUrl ?? "postgresql://localhost/relayrtc_usage_test");
+    const databaseName = "relayrtc_session_" + randomUUID().replaceAll("-", "");
+    const legacyUrl = new URL(databaseUrl ?? "postgresql://localhost/relayrtc_usage_test");
+    legacyUrl.pathname = "/" + databaseName;
+    const folder = fileURLToPath(
+      new URL("../../../../../packages/database/migrations", import.meta.url),
     );
-    await query(`INSERT INTO participant_session (id, participant_id, signaling_node_id, joined_at,
-      reconnected_at, disconnected_at, connection_state, connection_seconds, messages_in)
-      VALUES ('legacy', 'p1', 'node', '2026-10-02T10:00:00Z', '2026-10-02T10:20:00Z',
-        '2026-10-02T10:30:00Z', 'disconnected', 1200, 10)`);
-    const migration = await readFile(
-      new URL(
-        "../../../../../packages/database/migrations/0012_session_usage_history.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    for (const statement of migration.split("--> statement-breakpoint")) await query(statement);
-    await query(`INSERT INTO usage_history_session
-      SELECT s.id, s.participant_id, p.room_id, s.country, s.connection_state, s.joined_at,
-        s.disconnected_at, s.metering_started_at, p.left_at, NULL
-      FROM participant_session s JOIN participant p ON p.id = s.participant_id;
-      INSERT INTO usage_history_interval SELECT id, session_id, started_at, ended_at FROM participant_connection_interval;`);
-    const result = await getProjectUsage(database.db, scope, "7d", now);
-    expect(result.summary.participantSeconds).toBe(600);
-    expect(result.summary.messagesIn).toBe(0);
-    expect(result.dataQuality).toEqual({ sessionHistory: "partial", messageHistory: "partial" });
-    expect(
-      (
-        await query(
-          "SELECT connection_seconds, messages_in FROM participant_session WHERE id = 'legacy'",
-        )
-      )[0],
-    ).toMatchObject({ connection_seconds: 1200, messages_in: 10 });
-  });
+    let legacy: ReturnType<typeof createDatabase> | undefined;
+    let created = false;
+    try {
+      await admin.client.unsafe(`CREATE DATABASE ${databaseName}`);
+      created = true;
+      legacy = createDatabase(legacyUrl.toString(), { maxConnections: 1 });
+      const journal = JSON.parse(await readFile(`${folder}/meta/_journal.json`, "utf8")) as {
+        entries: { idx: number; tag: string }[];
+      };
+      for (const entry of journal.entries.filter((entry) => entry.idx < 12))
+        await legacy.client.unsafe(await readFile(`${folder}/${entry.tag}.sql`, "utf8"));
+      await legacy.client.unsafe(`
+        INSERT INTO organization(id,name,slug) VALUES('org_1','Legacy','legacy');
+        INSERT INTO project(id,organization_id,name,slug) VALUES('project_1','org_1','Legacy','legacy');
+        INSERT INTO environment(id,project_id,name,slug,type) VALUES('env_1','project_1','Legacy','legacy','custom');
+        INSERT INTO room(id,project_id,environment_id,name,max_participants,status,started_at)
+          VALUES('room_1','project_1','env_1','Legacy',4,'active','2026-10-02T10:00:00Z');
+        INSERT INTO participant(id,room_id,name,joined_at) VALUES('p1','room_1','Test','2026-10-02T10:00:00Z');
+        INSERT INTO participant_session(id,participant_id,signaling_node_id,joined_at,reconnected_at,disconnected_at,
+          connection_state,connection_seconds,messages_in)
+          VALUES('legacy','p1','node','2026-10-02T10:00:00Z','2026-10-02T10:20:00Z','2026-10-02T10:30:00Z','disconnected',1200,10);
+      `);
+      // Migrate the actual old schema forward instead of tearing columns out of the current one.
+      for (const entry of journal.entries.filter((entry) => entry.idx >= 12))
+        await legacy.client.unsafe(await readFile(`${folder}/${entry.tag}.sql`, "utf8"));
+      const result = await getProjectUsage(legacy.db, scope, "7d", now);
+      expect(result.summary.participantSeconds).toBe(600);
+      expect(result.summary.messagesIn).toBe(0);
+      expect(result.dataQuality).toEqual({
+        sessionHistory: "partial",
+        messageHistory: "partial",
+        turnTraffic: "unavailable",
+      });
+      expect(
+        (
+          await legacy.client.unsafe(
+            "SELECT connection_seconds,messages_in FROM participant_session WHERE id='legacy'",
+          )
+        )[0],
+      ).toMatchObject({ connection_seconds: 1200, messages_in: 10 });
+    } finally {
+      await legacy?.close();
+      if (created) await admin.client.unsafe(`DROP DATABASE ${databaseName}`);
+      await admin.close();
+    }
+  }, 30_000);
 });

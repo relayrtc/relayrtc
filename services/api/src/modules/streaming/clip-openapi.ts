@@ -4,7 +4,15 @@ import {
   clipResourceSchema,
   clipWindowSchema,
   rollingBufferPolicySchema,
+  streamScopeSchema,
+  streamingIdSchema,
 } from "@relayrtc/validation";
+import {
+  streamingOpenApiBase,
+  streamingIdempotencyParameter,
+  streamingPathParameter,
+  streamingQueryParameters,
+} from "./streaming-openapi.js";
 
 /** OpenAPI for the clip slice, derived from the same validators used by the API and console. */
 export function clipOpenApi() {
@@ -15,52 +23,43 @@ export function clipOpenApi() {
       content: { "application/json": { schema } },
     },
   });
-  const body = (schema: unknown) => ({
-    required: true,
+  const body = (schema: unknown, required = true) => ({
+    required,
     content: { "application/json": { schema } },
   });
-  const scope = ["projectId", "environmentId"].map((name) => ({
-    in: "query",
-    name,
-    required: false,
-    schema: { type: "string" },
-    description: "Console scope; secret-key scope is derived from the credential.",
-  }));
-  const path = (name: string) => ({
-    in: "path",
-    name,
-    required: true,
-    schema: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" },
-  });
-  const mutation = {
-    in: "header",
-    name: "Idempotency-Key",
-    required: false,
-    schema: { type: "string", maxLength: 128 },
-    description: "Reuse for the same command body when retrying an uncertain result.",
+  const scope = streamingQueryParameters(streamScopeSchema);
+  const path = streamingPathParameter;
+  const mutation = streamingIdempotencyParameter;
+  const base = streamingOpenApiBase(
+    "RelayRTC clips and rolling buffers",
+    "clips and rolling buffers",
+  );
+  const list = {
+    summary: "List clips",
+    parameters: streamingQueryParameters(
+      z.object({
+        cursor: streamingIdSchema.optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(30),
+      }),
+    ),
+    responses: response(ref("ClipPage")),
   };
   const clip = { parameters: [...scope, path("clipId")] },
     stream = { parameters: [...scope, path("streamId")] };
   return {
-    openapi: "3.1.0",
-    info: { title: "RelayRTC clips and rolling buffers", version: "0.6.0" },
-    servers: [{ url: "/v1" }],
-    security: [{ bearerAuth: [] }],
+    ...base,
     paths: {
+      "/clips": {
+        parameters: scope,
+        get: {
+          ...list,
+          description:
+            "Console sessions must select projectId and environmentId. Secret-key scope is derived from the credential unless supplied and matching.",
+        },
+      },
       "/streams/{streamId}/clips": {
         ...stream,
-        get: {
-          summary: "List clips",
-          parameters: [
-            { in: "query", name: "cursor", schema: { type: "string" } },
-            {
-              in: "query",
-              name: "limit",
-              schema: { type: "integer", minimum: 1, maximum: 100, default: 30 },
-            },
-          ],
-          responses: response(ref("ClipPage")),
-        },
+        get: list,
         post: {
           summary: "Request a retained interval",
           parameters: [mutation],
@@ -106,13 +105,13 @@ export function clipOpenApi() {
         post: {
           summary: "Permit application-authorized viewer grants for a ready clip",
           parameters: [mutation],
-          requestBody: body({ type: "object", additionalProperties: false }),
+          requestBody: body({ type: "object", additionalProperties: false }, false),
           responses: response(ref("Clip")),
         },
       },
     },
     components: {
-      securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+      ...base.components,
       schemas: {
         CreateClip: z.toJSONSchema(createClipSchema, { io: "input" }),
         Clip: z.toJSONSchema(clipResourceSchema),

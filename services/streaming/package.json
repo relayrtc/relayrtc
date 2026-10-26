@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "start": "node --enable-source-maps dist/server.js",
     "start:recordings": "node --enable-source-maps dist/recording-server.js",
-    "start:outputs": "node --enable-source-maps dist/output-server.js"
+    "start:outputs": "node --enable-source-maps dist/output-server.js",
+    "test": "vitest run --pool=threads --exclude dist/**"
   },
   "dependencies": {
     "@relayrtc/protocol": "workspace:*",

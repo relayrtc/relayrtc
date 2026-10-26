@@ -5,53 +5,62 @@ import {
   dvrPolicyResourceSchema,
   dvrPlaybackSchema,
   playbackGrantSchema,
+  dvrPlaybackQuerySchema,
+  streamScopeSchema,
 } from "@relayrtc/validation";
+import {
+  streamingOpenApiBase,
+  streamingIdempotencyParameter,
+  streamingPathParameter,
+  streamingQueryParameters,
+} from "./streaming-openapi.js";
 export function dvrOpenApi() {
-  const json = (schema: z.ZodType) => ({
-    "application/json": { schema: z.toJSONSchema(schema) },
+  const json = (schema: z.ZodType, io: "input" | "output" = "output") => ({
+    "application/json": { schema: z.toJSONSchema(schema, { io }) },
   });
   const responses = (schema: z.ZodType, code = "200") => ({
     [code]: { description: "Success", content: json(schema) },
   });
+  const parameters = [
+    streamingPathParameter("streamId"),
+    ...streamingQueryParameters(dvrPlaybackQuerySchema),
+  ];
   return {
-    openapi: "3.1.0",
-    info: { title: "RelayRTC live DVR", version: "0.8.0" },
-    servers: [{ url: "/v1" }],
-    security: [{ bearerAuth: [] }],
-    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },
+    ...streamingOpenApiBase(
+      "RelayRTC live DVR",
+      "DVR policies, playback metadata and shared playback grants",
+    ),
     paths: {
       "/streams/{streamId}/dvr-policy": {
-        parameters: [{ in: "path", name: "streamId", required: true, schema: { type: "string" } }],
+        parameters,
         get: { responses: responses(dvrPolicyResourceSchema) },
         post: {
-          parameters: [
-            { in: "header", name: "Idempotency-Key", schema: { type: "string", maxLength: 128 } },
-          ],
-          requestBody: { required: true, content: json(configureDvrSchema) },
+          parameters: [streamingIdempotencyParameter],
+          requestBody: { required: true, content: json(configureDvrSchema, "input") },
           responses: responses(dvrPolicyResourceSchema, "201"),
         },
         patch: {
-          parameters: [
-            { in: "header", name: "Idempotency-Key", schema: { type: "string", maxLength: 128 } },
-          ],
-          requestBody: { required: true, content: json(updateDvrSchema) },
+          parameters: [streamingIdempotencyParameter],
+          requestBody: { required: true, content: json(updateDvrSchema, "input") },
           responses: responses(dvrPolicyResourceSchema),
         },
       },
       "/streams/{streamId}/playback-grants": {
-        parameters: [{ in: "path", name: "streamId", required: true, schema: { type: "string" } }],
+        parameters: [
+          streamingPathParameter("streamId"),
+          ...streamingQueryParameters(streamScopeSchema),
+        ],
         post: {
-          requestBody: { required: true, content: json(playbackGrantSchema) },
+          description:
+            "Issue a live or DVR viewer grant. Set mode to dvr for DVR playback. This operation does not use Idempotency-Key.",
+          requestBody: { required: false, content: json(playbackGrantSchema, "input") },
           responses: responses(
             z.object({ url: z.string(), token: z.string(), expiresAt: z.string() }),
           ),
         },
       },
       "/streams/{streamId}/dvr-playback": {
-        parameters: [
-          { in: "path", name: "streamId", required: true, schema: { type: "string" } },
-          { in: "query", name: "broadcastId", schema: { type: "string" } },
-        ],
+        parameters,
         get: { responses: responses(dvrPlaybackSchema) },
       },
     },

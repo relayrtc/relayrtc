@@ -1,4 +1,7 @@
+import type { StreamPlaybackReadiness, StreamSession } from "@relayrtc/types";
 import { StreamingBackoff } from "./streaming-request-error.js";
+
+export type { StreamPlaybackReadiness } from "@relayrtc/types";
 
 /** Application-authorized playback. These callbacks must never use a management key in a browser. */
 export interface StreamPlaybackMetadata {
@@ -14,6 +17,10 @@ export interface StreamPlaybackMetadata {
     | "ended"
     | "failed"
     | "unavailable";
+  /** Raw source lifecycle, when supplied by the playback endpoint. */
+  sourceState?: StreamSession["state"] | "ready";
+  /** Delivery readiness is independent of publisher and source connectivity. */
+  readiness?: StreamPlaybackReadiness;
   startSeconds?: number | null;
   endSeconds?: number | null;
   wallEnd?: string | null;

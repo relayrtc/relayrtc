@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"],
+    "typeRoots": ["../services/api/node_modules/@types"],
+    "paths": { "@relayrtc/types": ["../packages/types/src/index.ts"] }
+  },
+  "include": ["public-sdk-contracts.test.mts"]
+}

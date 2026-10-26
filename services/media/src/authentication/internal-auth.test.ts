@@ -91,6 +91,7 @@ const createEngine = () =>
       .mockResolvedValue(undefined),
     setTrackPriority: vi.fn<MediaEngine["setTrackPriority"]>().mockResolvedValue(undefined),
     removeTrack: vi.fn<MediaEngine["removeTrack"]>().mockResolvedValue(undefined),
+    controlTrack: vi.fn<MediaEngine["controlTrack"]>().mockResolvedValue(undefined),
     removeParticipant: vi.fn<MediaEngine["removeParticipant"]>().mockResolvedValue(undefined),
   }) satisfies MediaEngine;
 
@@ -212,6 +213,12 @@ const routes: RouteCase[] = [
     authority: participant,
     status: 204,
   },
+  ...(["pause", "resume"] as const).map((action) => ({
+    method: "PATCH" as const,
+    path: `/rooms/room_1/participants/participant_1/tracks/track_1/${action}`,
+    authority: participant,
+    status: 204,
+  })),
   {
     method: "DELETE",
     path: "/rooms/room_1/participants/participant_1",
