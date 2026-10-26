@@ -4,21 +4,31 @@
 
 RelayRTC is open-source realtime communication infrastructure for developers. It is designed to provide stable APIs and SDKs for voice, video, rooms, screen sharing, messaging, presence. Built on top of WebRTC.
 
-## Prerequisites
+## Development prerequisites
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - pnpm 10 or newer
 - Go 1.24 or newer
+- Docker with the Compose plugin
 
 ## Getting started
 
-Start the complete local stack with Docker
+To install a published release using prebuilt images, follow [Install RelayRTC](https://docs.relayrtc.com/self-hosting). That path requires Docker and does not require Node.js, Go or pnpm on the host.
+
+To build from this source checkout, install dependencies and prepare your settings:
+
+```bash
+pnpm install
+pnpm env:configure
+```
+
+The preparation command generates the call and streaming credentials and private monitoring files. Open the generated `.env` and fill in the GitHub, Google and Resend settings using [sign-in and email setup](https://docs.relayrtc.com/guides/self-hosting-authentication). Keep the generated keys. Then build and start the complete local stack:
 
 ```bash
 pnpm docker:up
 ```
 
-Make sure to copy .env.example to .env!
+This starts calls and streaming together, including the workers, ingest gateway and private storage. Open the console at `http://localhost:3002`. The default API base is `http://localhost:8080/v1`, and signaling is `ws://localhost:8081/v1/connect`.
 
 Use `pnpm docker:logs`, `pnpm docker:status`, and `pnpm docker:down` to operate the stack.
 

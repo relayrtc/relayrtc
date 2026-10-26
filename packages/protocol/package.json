@@ -1,12 +1,15 @@
 {
   "name": "@relayrtc/protocol",
-  "version": "0.0.0",
+  "version": "0.1.2",
   "description": "Versioned realtime wire contracts for RelayRTC.",
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "exports": {
     "./egress-security": {
@@ -49,7 +52,8 @@
     "clean": "rimraf dist coverage",
     "lint": "eslint .",
     "test": "vitest run --pool=threads --exclude dist/**",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@relayrtc/types": "workspace:*",
@@ -61,5 +65,12 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.1"
-  }
+  },
+  "homepage": "https://docs.relayrtc.com/reference/api/v1/overview",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/relayrtc/relayrtc.git",
+    "directory": "packages/protocol"
+  },
+  "bugs": "https://github.com/relayrtc/relayrtc/issues"
 }

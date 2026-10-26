@@ -1,12 +1,15 @@
 {
   "name": "@relayrtc/types",
-  "version": "0.0.0",
+  "version": "0.1.2",
   "description": "Shared domain contracts for RelayRTC.",
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -21,9 +24,17 @@
     "clean": "rimraf dist coverage",
     "lint": "eslint .",
     "test": "vitest run --pool=threads --exclude dist/**",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "prepack": "pnpm run build"
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "homepage": "https://docs.relayrtc.com/reference/api/v1/overview",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/relayrtc/relayrtc.git",
+    "directory": "packages/types"
+  },
+  "bugs": "https://github.com/relayrtc/relayrtc/issues"
 }

@@ -1,103 +1,52 @@
-# infrastructure
+# Docker deployment
 
-### Configure
+Use [Install RelayRTC](https://docs.relayrtc.com/self-hosting) for the standard release installation. Calls, streaming workers, the ingest gateway and private storage are included together.
 
-The complete stack can configure itself on its first run:
+## Configuration
 
-```bash
+From a full source checkout with Node.js 22 or newer:
+
+```sh
+pnpm env:configure
+```
+
+This prepares `.env`, generates missing call/streaming secrets and writes the private `.streaming` monitoring files. Fill the provider credentials and review public addresses before startup. See [environment configuration](../configuration/README.md).
+
+## Source builds
+
+```sh
 pnpm docker:up
 ```
 
-When `.env` does not exist, this command copies the environment template and replaces the local
-PostgreSQL, Better Auth, TURN, and Grafana secrets with cryptographically random values. OAuth
-credentials remain placeholders until you add real GitHub and Google application credentials.
+This single command prepares configuration, builds the complete stack, runs database/storage initialization and waits for service health. It includes streaming automatically.
 
-To configure values manually instead, copy the environment template before starting the stack:
+The management commands select the same complete configuration:
 
-```bash
-cp .env.example .env
-```
-
-Replace every `replace-with-...` value. Generate independent random values for the PostgreSQL password, TURN shared secret, and Grafana password. A 32-byte hexadecimal value is suitable for local secrets:
-
-```bash
-openssl rand -hex 32
-```
-
-Set `DATABASE_URL` to the same PostgreSQL user, password, port, and database configured by the other PostgreSQL variables.
-
-`TURN_PUBLIC_IP=127.0.0.1` supports browser clients running on the same host. Use the host's reachable LAN address for testing from other devices. A public deployment requires its public IP and one-to-one forwarding for ports `3478/UDP`, `3478/TCP`, `5349/TCP`, and the configured UDP relay range.
-
-The coturn container generates a self-signed `relayrtc.local` certificate for local TLS testing. Public deployments must bind-mount a certificate and private key trusted for the public TURN hostname, then set `TURN_TLS_CERT_FILE` and `TURN_TLS_PRIVATE_KEY_FILE` to their container paths. The coturn process runs as `nobody`, so both mounted files must be readable by UID `65534` while the private key remains inaccessible to other users.
-
-Supported ICE server URLs are:
-
-```text
-stun:turn.example.com:3478
-turn:turn.example.com:3478?transport=udp
-turn:turn.example.com:3478?transport=tcp
-turns:turn.example.com:5349?transport=tcp
-```
-
-TURN allocations require credentials. Phase 5.2 provides short-lived credentials derived from `TURN_SHARED_SECRET`; unauthenticated STUN discovery remains available.
-
-### Start and inspect
-
-```bash
-pnpm docker:up
+```sh
+pnpm docker:config
 pnpm docker:status
 pnpm docker:logs
-```
-
-`docker:up` builds the application images, waits for PostgreSQL, applies all committed Drizzle
-migrations, starts the console, API, media and signaling services, and waits for service health checks.
-Migration failure prevents the application containers from starting.
-
-Use `pnpm infra:up` when you only need PostgreSQL, TURN, Prometheus, and Grafana for host-based
-development.
-
-Local endpoints:
-
-| Service    | Endpoint                          |
-| ---------- | --------------------------------- |
-| Console    | `http://localhost:3002`           |
-| Signaling  | `ws://localhost:8081/v1/connect`  |
-| PostgreSQL | `localhost:5433`                  |
-| STUN       | `localhost:3478` over UDP         |
-| TURN UDP   | `localhost:3478` over UDP         |
-| TURN TCP   | `localhost:3478` over TCP         |
-| TURN TLS   | `localhost:5349` over TLS/TCP     |
-| Prometheus | `http://localhost:9090`           |
-| Grafana    | `http://localhost:3000`           |
-
-Grafana provisions a `TURN Metrics` dashboard with active allocations, active relay sessions,
-ingress bytes, egress bytes, relay throughput, allocation transport, and relay seconds for the
-selected time range. Prometheus records these RelayRTC metrics from coturn's native exporter:
-
-```text
-relayrtc_turn_allocations
-relayrtc_turn_sessions
-relayrtc_turn_ingress_bytes_total
-relayrtc_turn_egress_bytes_total
-relayrtc_turn_relay_seconds_per_second
-```
-
-### Validate configuration
-
-```bash
-pnpm docker:config
-docker compose exec prometheus promtool check config /etc/prometheus/prometheus.yml
-docker compose exec prometheus promtool check rules /etc/prometheus/relayrtc.rules.yml
-```
-
-Stop containers while retaining local data:
-
-```bash
 pnpm docker:down
 ```
 
-Delete containers and all PostgreSQL, Prometheus, and Grafana data:
+The starter exposes console 3002, API 8080, signaling 8081, media readiness 8083, host PostgreSQL 5433 and RTMP ingest 1935. Browser media, TURN and WHIP also need their configured TCP/UDP ranges. Local TURN TLS uses a self-signed certificate and is not advertised by default.
 
-```bash
-docker compose down --volumes
+## Release images
+
+Follow the [installation guide](https://docs.relayrtc.com/self-hosting#4-create-your-settings-file) to prepare settings without host Node.js. Run these commands individually after filling provider credentials:
+
+```sh
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.streaming.yml -f docker-compose.release.yml -f docker-compose.streaming.release.yml config --quiet
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.streaming.yml -f docker-compose.release.yml -f docker-compose.streaming.release.yml pull
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.streaming.yml -f docker-compose.release.yml -f docker-compose.streaming.release.yml up -d --no-build --wait
 ```
+
+All four files are part of the standard installation. The release overrides select images while retaining the service commands and limits. Verify the tag and registry availability first.
+
+## Maintenance
+
+Drain calls, broadcasts and streaming work before shutdown. Use the same Compose files as startup. Keep database, storage and control services available while cleanup runs. A migration failure must leave application services stopped; returning to an older image does not undo migrations.
+
+Normal shutdown preserves named volumes. Source checkouts use `pnpm docker:down`; release installations use the four-file configuration with `down`. Do not remove volumes during routine maintenance.
+
+Service health is not media acceptance. Verify calls, TURN, ingest/playback, recording, access control and recovery before admitting production traffic.

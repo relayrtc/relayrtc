@@ -1,0 +1,15 @@
+# Apply after the base, streaming and base release files. Each worker role uses
+# the same streaming image; its command/resources remain in the streaming file.
+services:
+  streaming-worker:
+    image: ghcr.io/relayrtc/streaming:${RELAYRTC_VERSION:-0.1.2}
+  streaming-outputs:
+    image: ghcr.io/relayrtc/streaming:${RELAYRTC_VERSION:-0.1.2}
+  streaming-sources:
+    image: ghcr.io/relayrtc/streaming:${RELAYRTC_VERSION:-0.1.2}
+  streaming-recordings:
+    image: ghcr.io/relayrtc/streaming:${RELAYRTC_VERSION:-0.1.2}
+  streaming-storage:
+    image: ghcr.io/relayrtc/streaming-storage:${RELAYRTC_VERSION:-0.1.2}
+  streaming-storage-init:
+    image: ghcr.io/relayrtc/streaming-storage-init:${RELAYRTC_VERSION:-0.1.2}
