@@ -16,7 +16,7 @@ From the repository root, with Node.js 22 or newer:
 pnpm env:configure
 ```
 
-The equivalent command is `node scripts/configure-env.mjs`. For an installation requiring only Docker on the host, use the container command in the [installation guide](https://docs.relayrtc.com/self-hosting#4-create-your-settings-file).
+The equivalent command is `node scripts/configure-env.mjs`. For a Docker-only release installation, use the [setup image](https://docs.relayrtc.com/self-hosting). It prepares persistent configuration and starts all services without a source checkout.
 
 Preparation creates or completes `.env` and prepares `.streaming/worker-key`, `.streaming/gateway-key` and the certificate mount directory. It starts no services and applies no migrations. `pnpm docker:up` performs the same preparation before building and starting all services.
 
@@ -24,7 +24,7 @@ Existing release versions, URLs, credentials and unknown settings are preserved.
 
 The setup generates PostgreSQL, authentication, participant-signing, internal-control, TURN, Grafana, webhook-encryption, streaming signing/control, destination-encryption and storage credentials. Encryption keys are standard base64-encoded 32-byte values. Gateway/worker secrets use URL-safe encoding. Keep original encryption keys with your backups.
 
-Fill GitHub/Google OAuth credentials and Resend settings yourself using [sign-in and email setup](https://docs.relayrtc.com/guides/self-hosting-authentication). Email verification is enabled by default.
+GitHub and Google OAuth providers are optional. Configure a complete credential pair for each enabled provider. Resend is optional for localhost startup; without a sender, local email/password signup skips email verification and email-dependent actions are unavailable. A public console requires email delivery. With a sender configured and no explicit verification override, verification is enabled. See [sign-in and email setup](https://docs.relayrtc.com/guides/self-hosting-authentication).
 
 Keep `.env` and `.streaming` private. On Windows, restrict their permissions to your account and Docker. Do not replace an existing `.env` with a template. Copy only individual advanced overrides you need.
 

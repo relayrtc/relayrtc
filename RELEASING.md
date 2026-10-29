@@ -27,11 +27,27 @@ The React lockfile may reference candidate tarball integrity before publication.
 
 ## Images and installation
 
-The image workflow builds eleven families: API, signaling, media, console, migrator, coturn, Prometheus, Grafana, streaming, streaming-storage and streaming-storage-init. The four streaming worker roles share the streaming image but retain distinct commands.
+The application-image job builds eleven families: API, signaling, media, console, migrator, coturn, Prometheus, Grafana, streaming, streaming-storage and streaming-storage-init. The four streaming worker roles share the streaming image but retain distinct commands. The setup image is a twelfth family, built only after all application-image jobs succeed. Application and setup jobs publish Linux AMD64/ARM64 manifests using Buildx; the version build argument pins setup to that exact release. The initial installer candidate is 0.1.3. Do not republish the historical 0.1.2 tag to add installer-only behavior.
 
 The standard installation includes calls and streaming. Source commands use `docker-compose.yml` plus `docker-compose.streaming.yml`; release commands also apply `docker-compose.release.yml` and `docker-compose.streaming.release.yml`, in that order. Configuration preparation generates all credentials and monitoring bind files by default.
 
 Run `node scripts/check-release-config.mjs` with the Docker CLI. It renders both standard source/release combinations using generated temporary values and checks all 16 services, enabled streaming and image coverage. It does not start containers, pull images or establish image availability.
+
+## Docker-only installer
+
+`infrastructure/docker/setup.Dockerfile` bundles Node, Docker CLI, Compose, the existing configuration generator and the four canonical Compose definitions. `infrastructure/setup/cli.mjs` resolves one private, image-only deployment manifest and replaces repository bind mounts with isolated read-only named-volume subdirectories. Configuration is persisted in the operator-mounted named volume; services never receive its entire secret-bearing root.
+
+Build the candidate locally without publishing:
+
+```sh
+docker build --file infrastructure/docker/setup.Dockerfile --build-arg RELAYRTC_VERSION=0.1.3 --tag relayrtc/setup:local .
+```
+
+The image build alone does not install RelayRTC or run the application. A local setup image still needs matching application images. Publish only after approval and review the installed image manifests for both target architectures. Never present the registry setup command as available before the installer and its corresponding services have been published.
+
+The default command installs/resumes the same release. Cross-version changes require `upgrade`, with operator-controlled draining and coordinated backups. Original configuration must be imported before adopting a source/ZIP deployment or existing project data volumes. Normal commands neither remove volumes nor rotate initialized infrastructure credentials.
+
+Local localhost signup needs no external providers. Public origins require working email; GitHub and Google remain optional. No generated account, password or provider secret is baked into the image.
 
 ## Acceptance gates
 

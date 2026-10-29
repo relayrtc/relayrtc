@@ -13,7 +13,13 @@ RelayRTC is open-source realtime communication infrastructure for developers. It
 
 ## Getting started
 
-To install a published release using prebuilt images, follow [Install RelayRTC](https://docs.relayrtc.com/self-hosting). That path requires Docker and does not require Node.js, Go or pnpm on the host.
+The Docker-only installer starts rooms, streaming, storage and monitoring together. Once the `0.1.3` installer and matching service images are published, run:
+
+```sh
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v relayrtc-config:/setup/state ghcr.io/relayrtc/setup:0.1.3
+```
+
+Open `http://localhost:3002` and create your account. Local startup generates secrets automatically and needs no OAuth/email credentials or host Node.js, pnpm, npm, Bun, Go or Git. This installer is a local release candidate, not a claim of registry availability. See [Install RelayRTC](https://docs.relayrtc.com/self-hosting) for platform requirements, operations and public hosting.
 
 To build from this source checkout, install dependencies and prepare your settings:
 
@@ -22,7 +28,7 @@ pnpm install
 pnpm env:configure
 ```
 
-The preparation command generates the call and streaming credentials and private monitoring files. Open the generated `.env` and fill in the GitHub, Google and Resend settings using [sign-in and email setup](https://docs.relayrtc.com/guides/self-hosting-authentication). Keep the generated keys. Then build and start the complete local stack:
+The preparation command generates the call and streaming credentials and private monitoring files. Local email/password signup works without external providers. Configure optional GitHub/Google sign-in and email delivery using [sign-in and email setup](https://docs.relayrtc.com/guides/self-hosting-authentication). Public console addresses require email delivery. Keep the generated keys. Then build and start the complete local stack:
 
 ```bash
 pnpm docker:up
