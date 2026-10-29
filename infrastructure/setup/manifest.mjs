@@ -84,6 +84,18 @@ export async function createManifest({
     ],
     { capture: true, environment: await composeEnvironment(directory), signal },
   );
+  const model = JSON.parse(output);
+  for (const [name, service] of Object.entries(model.services ?? {})) {
+    if (!Array.isArray(service.environment)) continue;
+    service.environment = Object.fromEntries(
+      service.environment.map((entry) => {
+        const separator = typeof entry === "string" ? entry.indexOf("=") : -1;
+        if (separator < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(entry.slice(0, separator)))
+          throw new Error(`Service ${name} has an unsupported environment entry`);
+        return [entry.slice(0, separator), entry.slice(separator + 1)];
+      }),
+    );
+  }
   const values = parseEnv(await readFile(join(directory, ".env"), "utf8"));
   const resolveValue = (value) => {
     if (Array.isArray(value)) return value.map(resolveValue);
@@ -106,8 +118,8 @@ export async function createManifest({
       },
     );
   };
-  const resolved = resolveValue(JSON.parse(output));
-  const manifest = layout === "folder" ? JSON.parse(output) : resolved;
+  const resolved = resolveValue(model);
+  const manifest = layout === "folder" ? model : resolved;
   if (Object.keys(manifest.services ?? {}).length !== 16)
     throw new Error("The bundled release must contain the complete rooms and streaming stack");
   manifest.name = project;
@@ -173,7 +185,7 @@ export async function createManifest({
     if (service.env_file || service.configs || service.secrets)
       throw new Error(`Service ${name} requires an unsupported external configuration source`);
   }
-  if (resolved.services.api.environment.RELAYRTC_STREAMING_ENABLED !== "true")
+  if (resolved.services.api?.environment?.RELAYRTC_STREAMING_ENABLED !== "true")
     throw new Error("Streaming must be enabled in the standard installation");
   return manifest;
 }
