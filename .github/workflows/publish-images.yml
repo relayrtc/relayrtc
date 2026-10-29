@@ -37,10 +37,6 @@ jobs:
             context: ./services/signaling
             dockerfile: services/signaling/Dockerfile
             target: ""
-          - name: media
-            context: .
-            dockerfile: infrastructure/docker/media.Dockerfile
-            target: runner
           - name: streaming
             context: .
             dockerfile: infrastructure/docker/streaming.Dockerfile
@@ -118,9 +114,89 @@ jobs:
             --push \
             "$BUILD_CONTEXT"
 
+  media:
+    name: Publishing media (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checking out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Preparing image builder
+        uses: docker/setup-buildx-action@v4
+      - name: Signing into Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Selecting the matching release
+        id: release
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_VERSION:-${GITHUB_REF_NAME#v}}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Building and publishing the native media image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infrastructure/docker/media.Dockerfile
+          target: runner
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: relayrtc/media:${{ steps.release.outputs.version }}-${{ matrix.arch }}-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+
+  media-manifest:
+    name: Publishing media multi-platform manifest
+    needs: media
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Preparing image builder
+        uses: docker/setup-buildx-action@v4
+      - name: Signing into Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Combining the native images
+        env:
+          RELEASE_VERSION: ${{ needs.media.outputs.version }}
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            exit 1
+          fi
+          docker buildx imagetools create \
+            --tag "relayrtc/media:${RELEASE_VERSION}" \
+            "relayrtc/media:${RELEASE_VERSION}-amd64-${SOURCE_REVISION}" \
+            "relayrtc/media:${RELEASE_VERSION}-arm64-${SOURCE_REVISION}"
+
   setup:
     name: Publishing setup after all application images
-    needs: publish
+    needs: [publish, media-manifest]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
