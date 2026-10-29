@@ -1,5 +1,7 @@
 export interface AccountOverview {
   emailVerificationRequired: boolean;
+  emailDeliveryEnabled?: boolean;
+  socialProviders?: string[];
   user: { id: string; name: string; email: string; image: string | null; emailVerified: boolean; twoFactorEnabled: boolean };
   accounts: { id: string; providerId: string; accountId: string; createdAt: string }[];
   ownedOrganizations: { id: string; name: string }[];

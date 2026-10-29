@@ -55,7 +55,8 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
     database: options.database, baseUrl: environment.baseUrl, secret: environment.secret,
     oauthProviders: environment.oauthProviders, trustedOrigins: environment.trustedOrigins,
     skipEmailVerification: environment.skipEmailVerification ?? false,
-    sendInvitationEmail: createResendInvitationSender({ ...environment.email, baseUrl: environment.baseUrl }),
+    emailDeliveryEnabled: Boolean(environment.email),
+    ...(environment.email ? { sendInvitationEmail: createResendInvitationSender({ ...environment.email, baseUrl: environment.baseUrl }) } : {}),
   };
   const auth = createRelayKitAuth(authOptions);
   app.setErrorHandler((error, request, reply) => {
@@ -138,6 +139,9 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
 
   app.route({ method: ["GET", "POST"], url: "/api/auth/*", handler: async (request, reply) => {
     const path = (request.url.split("?")[0] ?? "").replace(/^\/api\/auth/, "");
+    if (!environment.email && (sendingPaths.has(path) || path.startsWith("/email-otp/") || path === "/organization/invite-member")) {
+      throw new ApiError(503, "EMAIL_NOT_CONFIGURED", "Email delivery is not configured for this installation.");
+    }
     // Use the ownership-aware confirmation endpoint and the two-address OTP flow.
     if (["/delete-user", "/delete-user/callback", "/change-email", "/sign-in/email-otp"].includes(path)) {
       throw new ApiError(403, "USE_ACCOUNT_WORKFLOW", "Use the account settings workflow for this operation.");
@@ -194,7 +198,7 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
       }
       if (response.ok && actor.type === "USER" && ["/change-password", "/email-otp/change-email", "/unlink-account", "/two-factor/disable", "/two-factor/generate-backup-codes"].includes(path)) {
         const session = await current(request);
-        await createQueuedAccountEmailSender(transaction, environment.secret)({ to: session.user.email,
+        if (environment.email) await createQueuedAccountEmailSender(transaction, environment.secret)({ to: session.user.email,
           subject: "RelayRTC account security change", text: "A security setting on your RelayRTC account was changed. Review your account audit log. If this was not you, recover your account immediately." });
         if (path === "/email-otp/change-email") {
           const [updated] = await transaction.select({ email: schema.user.email }).from(schema.user).where(eq(schema.user.id, session.user.id));
@@ -210,7 +214,11 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
     return sendResponse(reply, response);
   } });
 
-  app.get("/api/account/verification-policy", () => Promise.resolve({ emailVerificationRequired: !environment.skipEmailVerification }));
+  app.get("/api/account/verification-policy", () => Promise.resolve({
+    emailVerificationRequired: !environment.skipEmailVerification,
+    emailDeliveryEnabled: Boolean(environment.email),
+    socialProviders: Object.keys(environment.oauthProviders),
+  }));
   app.get("/api/account", async (request) => {
     const session = await current(request);
     const accounts = await options.database.select({ id: schema.account.id, providerId: schema.account.providerId,
@@ -220,6 +228,7 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
     return { user: { id: session.user.id, name: session.user.name, email: session.user.email, image: session.user.image,
       emailVerified: session.user.emailVerified, twoFactorEnabled: session.user.twoFactorEnabled },
       accounts, emailVerificationRequired: !environment.skipEmailVerification,
+      emailDeliveryEnabled: Boolean(environment.email), socialProviders: Object.keys(environment.oauthProviders),
       ownedOrganizations: owned.filter((item) => item.role.split(",").some((role) => role.trim() === "owner")) };
   });
   app.get("/api/account/sessions", async (request) => {
@@ -243,7 +252,7 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
     const session = await current(request);
     return sendResponse(reply, await mutate(request, async (database, scopedAuth) => {
       const response = await scopedAuth.api.setPassword({ body, headers: headersFor(request), asResponse: true });
-      if (response.ok) {
+      if (response.ok && environment.email) {
         await createQueuedAccountEmailSender(database, environment.secret)({ to: session.user.email, subject: "RelayRTC password added", text: "A password login method was added to your account. Review your security settings if this was not you." });
       }
       return response;
@@ -301,7 +310,7 @@ export const accountRoutes: FastifyPluginCallback<Options> = (app, options, done
   const tick = () => {
     if (stopped || running) return;
     running = (async () => {
-      await deliverAccountEmails(options.database, environment.secret, createAccountEmailSender(environment.email));
+      if (environment.email) await deliverAccountEmails(options.database, environment.secret, createAccountEmailSender(environment.email));
       if (Date.now() - lastRetention > 3600000) {
         await options.database.execute(sql`SELECT expire_account_security_history()`);
         lastRetention = Date.now();

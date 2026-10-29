@@ -33,6 +33,7 @@ export interface RelayKitAuthOptions {
   secret: string;
   sendInvitationEmail?: OrganizationInvitationSender;
   sendAccountEmail?: AccountEmailSender;
+  emailDeliveryEnabled?: boolean;
   trustedOrigins?: string[];
   skipEmailVerification?: boolean;
 }
@@ -45,7 +46,9 @@ export interface RelayKitAuthEnvironmentResult {
 }
 
 export const createRelayKitAuth = (options: RelayKitAuthOptions) => {
-  const sendAccountEmail = options.sendAccountEmail ?? createQueuedAccountEmailSender(options.database, options.secret);
+  const sendAccountEmail: AccountEmailSender = options.emailDeliveryEnabled === false
+    ? () => Promise.reject(APIError.from("SERVICE_UNAVAILABLE", { code: "EMAIL_NOT_CONFIGURED", message: "Email delivery is not configured for this installation" }))
+    : options.sendAccountEmail ?? createQueuedAccountEmailSender(options.database, options.secret);
   const mfa = twoFactor({ issuer: "RelayRTC", allowPasswordless: true, skipVerificationOnEnable: false,
     backupCodeOptions: { amount: 10, length: 12, storeBackupCodes: "encrypted" },
     accountLockout: { enabled: true, maxFailedAttempts: 5, durationSeconds: 900 },
@@ -114,7 +117,7 @@ export const createRelayKitAuth = (options: RelayKitAuthOptions) => {
           await options.database.delete(schema.verification).where(or(eq(schema.verification.value, user.id),
             inArray(schema.verification.identifier, ["email-verification", "forget-password", "sign-in"].map((type) => `${type}-otp-${user.email.toLowerCase()}`)),
             sql`left(${schema.verification.identifier}, length(${`change-email-otp-${user.email.toLowerCase()}-`})) = ${`change-email-otp-${user.email.toLowerCase()}-`}`));
-          await sendAccountEmail({ to: user.email, subjectUserId: user.id, subject: "Your RelayRTC account was deleted", text: "Your account and login credentials have been deleted. Retained organization accounting and audit history follow our retention policy." });
+          if (options.emailDeliveryEnabled !== false) await sendAccountEmail({ to: user.email, subjectUserId: user.id, subject: "Your RelayRTC account was deleted", text: "Your account and login credentials have been deleted. Retained organization accounting and audit history follow our retention policy." });
         },
       },
     },
@@ -180,15 +183,8 @@ export const createRelayKitAuth = (options: RelayKitAuthOptions) => {
     ],
     session: relayKitSessionPolicy,
     socialProviders: {
-      github: {
-        clientId: options.oauthProviders.github.clientId,
-        clientSecret: options.oauthProviders.github.clientSecret,
-      },
-      google: {
-        clientId: options.oauthProviders.google.clientId,
-        clientSecret: options.oauthProviders.google.clientSecret,
-        prompt: "select_account",
-      },
+      ...(options.oauthProviders.github ? { github: { ...options.oauthProviders.github } } : {}),
+      ...(options.oauthProviders.google ? { google: { ...options.oauthProviders.google, prompt: "select_account" } } : {}),
     },
     secret: options.secret,
     trustedOrigins: options.trustedOrigins ?? [options.baseUrl],
@@ -276,11 +272,10 @@ export const createRelayKitAuthFromEnvironment = (
     oauthProviders: environment.oauthProviders,
     secret: environment.secret,
     skipEmailVerification: environment.skipEmailVerification ?? false,
-    sendInvitationEmail: createResendInvitationSender({
-      apiKey: environment.email.apiKey,
-      baseUrl: environment.baseUrl,
-      from: environment.email.from,
-    }),
+    emailDeliveryEnabled: Boolean(environment.email),
+    ...(environment.email ? { sendInvitationEmail: createResendInvitationSender({
+      ...environment.email, baseUrl: environment.baseUrl,
+    }) } : {}),
     trustedOrigins: environment.trustedOrigins,
   });
 

@@ -29,9 +29,18 @@ export function AuthFlow({ mode, params = {} }: { mode: AuthMode; params?: AuthP
   const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState(query.get("error") ? "Sign-in could not be completed. Please try again." : "");
   const [notice, setNotice] = useState("");
+  const [policy, setPolicy] = useState<{ socialProviders?: string[]; emailDeliveryEnabled?: boolean } | null>(null);
+  const [policyError, setPolicyError] = useState("");
   const lock = useRef(false);
   const token = query.get("token");
   const href = (path: string, extras?: Record<string, string>) => authHref(path, destination, extras);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void accountRequest<{ socialProviders?: string[]; emailDeliveryEnabled?: boolean }>("/api/account/verification-policy", undefined, controller.signal)
+      .then(setPolicy).catch((cause: unknown) => { if (!controller.signal.aborted) setPolicyError(errorMessage(cause)); });
+    return () => { controller.abort(); };
+  }, []);
 
   useEffect(() => {
     if (!cooldown) return;
@@ -131,8 +140,8 @@ export function AuthFlow({ mode, params = {} }: { mode: AuthMode; params?: AuthP
     void run(async () => complete(await accountRequest<AuthResult>(recoveryCode ? "/api/auth/two-factor/verify-backup-code" : "/api/auth/two-factor/verify-totp", { code: String(data.get("code")).trim(), trustDevice: false })));
   }
 
-  const providers = <><div className="login-divider" role="separator" aria-label="Or continue with"><span>or</span></div><div className="login-providers" aria-label="Other sign-in options">{(["google", "github"] as const).map(provider => <Button key={provider} type="button" className="login-provider-button" onClick={() => void social(provider)} disabled={pending}><ProviderIcon provider={provider} /><span>Continue with {provider === "google" ? "Google" : "GitHub"}</span></Button>)}</div></>;
-  const feedback = <FormFeedback error={error} notice={notice} />;
+  const providers = policy?.socialProviders?.length ? <><div className="login-divider" role="separator" aria-label="Or continue with"><span>or</span></div><div className="login-providers" aria-label="Other sign-in options">{(["google", "github"] as const).filter(provider => policy.socialProviders?.includes(provider)).map(provider => <Button key={provider} type="button" className="login-provider-button" onClick={() => void social(provider)} disabled={pending}><ProviderIcon provider={provider} /><span>Continue with {provider === "google" ? "Google" : "GitHub"}</span></Button>)}</div></> : null;
+  const feedback = <FormFeedback error={error || policyError} notice={notice} />;
   const back = <Link className="auth-text-button auth-back" href={href("/auth/login")}><Icon name="chevronLeft" size={14.175} />Back to login</Link>;
   const submit = (label: string) => <Button type="submit" variant="primary" className="onboarding-continue" disabled={pending}>{pending ? "Please wait…" : label}</Button>;
 
@@ -140,7 +149,7 @@ export function AuthFlow({ mode, params = {} }: { mode: AuthMode; params?: AuthP
     <form className="login-form auth-form" onSubmit={signIn}>
       <fieldset disabled={pending}>
         <div className="login-input-wrap"><input className="input login-input" name="email" type="email" aria-label="Email Address" placeholder="Email Address" value={email} onChange={event => setEmail(event.target.value)} readOnly={passwordStep} autoComplete="email" autoFocus spellCheck={false} required maxLength={254} />{!passwordStep && email.trim() && <button className="login-submit" type="submit" aria-label="Continue with email"><Icon name="chevronRight" size={20.96325} /></button>}</div>
-        {passwordStep && <><PasswordInput key="login-password" className="login-input" name="password" aria-label="Password" placeholder="Password" autoComplete="current-password" autoFocus required /><div className="auth-form-links"><button type="button" onClick={() => { setPasswordStep(false); setError(""); }}>Change email</button><Link href={href("/auth/forgot-password", { email })}>Forgot password?</Link></div></>}
+        {passwordStep && <><PasswordInput key="login-password" className="login-input" name="password" aria-label="Password" placeholder="Password" autoComplete="current-password" autoFocus required /><div className="auth-form-links"><button type="button" onClick={() => { setPasswordStep(false); setError(""); }}>Change email</button>{policy?.emailDeliveryEnabled && <Link href={href("/auth/forgot-password", { email })}>Forgot password?</Link>}</div></>}
         {feedback}{passwordStep && submit("Log in")}
       </fieldset>
     </form>
@@ -169,6 +178,8 @@ export function AuthFlow({ mode, params = {} }: { mode: AuthMode; params?: AuthP
   if (mode === "two-factor") return <AuthFrame title={recoveryCode ? "Use a recovery code" : "Two-factor authentication"} description={recoveryCode ? "Enter one of your saved recovery codes." : "Enter the six-digit code from your authenticator."}>
     <form className="login-form auth-form" onSubmit={verifyMfa}><fieldset disabled={pending}><Field label={recoveryCode ? "Recovery code" : "Authenticator code"}><CodeInput key={String(recoveryCode)} className="login-input" recovery={recoveryCode} autoFocus /></Field>{feedback}{submit("Verify and continue")}<button className="auth-text-button" type="button" onClick={() => { setRecoveryCode(value => !value); setError(""); }}>{recoveryCode ? "Use authenticator instead" : "Use a recovery code"}</button></fieldset></form>{back}
   </AuthFrame>;
+
+  if (mode === "forgot-password" && policy?.emailDeliveryEnabled === false) return <AuthFrame title="Password recovery unavailable" description="This installation has no email delivery configured."><p className="account-note">Ask your instance operator to configure email before requesting a reset.</p>{back}</AuthFrame>;
 
   if (mode === "forgot-password") return <AuthFrame title="Forgot your password?" description="We’ll help you get back into your account.">
     <form className="login-form auth-form" onSubmit={requestReset}><fieldset disabled={pending}>

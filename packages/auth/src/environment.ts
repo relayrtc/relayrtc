@@ -8,14 +8,14 @@ export interface OAuthClientCredentials {
 }
 
 export interface OAuthProviderCredentials {
-  github: OAuthClientCredentials;
-  google: OAuthClientCredentials;
+  github?: OAuthClientCredentials;
+  google?: OAuthClientCredentials;
 }
 
 export interface AuthEnvironment {
   baseUrl: string;
   databaseUrl: string;
-  email: {
+  email?: {
     apiKey: string;
     from: string;
   };
@@ -55,6 +55,14 @@ const parseHttpOrigin = (value: string, name: string): string => {
   return url.origin;
 };
 
+const readOAuthProvider = (source: AuthEnvironmentSource, prefix: string): OAuthClientCredentials | undefined => {
+  const clientId = source[`${prefix}_CLIENT_ID`]?.trim();
+  const clientSecret = source[`${prefix}_CLIENT_SECRET`]?.trim();
+  if (!clientId && !clientSecret) return undefined;
+  if (!clientId || !clientSecret) throw new Error(`${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET must be configured together`);
+  return { clientId, clientSecret };
+};
+
 export const readAuthEnvironment = (source: AuthEnvironmentSource): AuthEnvironment => {
   enforceCredentialPolicy(source, [
     "DATABASE_URL",
@@ -81,7 +89,17 @@ export const readAuthEnvironment = (source: AuthEnvironmentSource): AuthEnvironm
   }
 
   const baseUrl = parseHttpOrigin(readRequired(source, "BETTER_AUTH_URL"), "BETTER_AUTH_URL");
-  const skipEmailVerification = source.SKIP_EMAIL_VERIFICATION?.trim().toLowerCase() ?? "false";
+  const github = readOAuthProvider(source, "GITHUB");
+  const google = readOAuthProvider(source, "GOOGLE");
+  const apiKey = source.RESEND_API_KEY?.trim();
+  const from = source.RESEND_FROM_EMAIL?.trim();
+  const email = apiKey ? { apiKey, from: readRequired(source, "RESEND_FROM_EMAIL") } : undefined;
+  if (!apiKey && from && from !== "RelayRTC <noreply@example.com>") throw new Error("RESEND_API_KEY is required when RESEND_FROM_EMAIL is configured");
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(new URL(baseUrl).hostname);
+  if (!email && !local) throw new Error("Configure email delivery before exposing the console on a public address");
+  const requestedVerification = source.SKIP_EMAIL_VERIFICATION?.trim().toLowerCase();
+  const skipEmailVerification = requestedVerification === undefined || requestedVerification === "" ? (email ? "false" : "true") : requestedVerification;
+  if (!email && skipEmailVerification !== "true") throw new Error("Email verification requires email delivery; local installations may use SKIP_EMAIL_VERIFICATION=true");
   if (!["true", "false"].includes(skipEmailVerification)) throw new Error("SKIP_EMAIL_VERIFICATION must be true or false");
   const trustedOrigins = (source.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
     .split(",")
@@ -92,19 +110,10 @@ export const readAuthEnvironment = (source: AuthEnvironmentSource): AuthEnvironm
   return {
     baseUrl,
     databaseUrl,
-    email: {
-      apiKey: readRequired(source, "RESEND_API_KEY"),
-      from: readRequired(source, "RESEND_FROM_EMAIL"),
-    },
+    ...(email ? { email } : {}),
     oauthProviders: {
-      github: {
-        clientId: readRequired(source, "GITHUB_CLIENT_ID"),
-        clientSecret: readRequired(source, "GITHUB_CLIENT_SECRET"),
-      },
-      google: {
-        clientId: readRequired(source, "GOOGLE_CLIENT_ID"),
-        clientSecret: readRequired(source, "GOOGLE_CLIENT_SECRET"),
-      },
+      ...(github ? { github } : {}),
+      ...(google ? { google } : {}),
     },
     secret,
     skipEmailVerification: skipEmailVerification === "true",
