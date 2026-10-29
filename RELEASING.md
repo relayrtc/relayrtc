@@ -27,27 +27,29 @@ The React lockfile may reference candidate tarball integrity before publication.
 
 ## Images and installation
 
-The application-image job builds eleven families: API, signaling, media, console, migrator, coturn, Prometheus, Grafana, streaming, streaming-storage and streaming-storage-init. The four streaming worker roles share the streaming image but retain distinct commands. The setup image is a twelfth family, built only after all application-image jobs succeed. Application and setup jobs publish Linux AMD64/ARM64 manifests using Buildx; the version build argument pins setup to that exact release. The initial installer candidate is 0.1.3. Do not republish the historical 0.1.2 tag to add installer-only behavior.
+The application-image job publishes eleven Docker Hub image families under `relayrtc`: API, signaling, media, console, migrator, coturn, Prometheus, Grafana, streaming, streaming-storage and streaming-storage-init. The four streaming worker roles share the streaming image with role-specific commands. After every application-image job succeeds, the installer job publishes `relayrtc/relayrtc:<version>` and the `latest` alias. Both jobs target Linux AMD64 and ARM64. New images are not published to GitHub Packages by this workflow.
 
-The standard installation includes calls and streaming. Source commands use `docker-compose.yml` plus `docker-compose.streaming.yml`; release commands also apply `docker-compose.release.yml` and `docker-compose.streaming.release.yml`, in that order. Configuration preparation generates all credentials and monitoring bind files by default.
+Configure GitHub Actions secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. The Docker Hub account/token must have push access to the `relayrtc` namespace and the intended public repositories. Configure those repositories and their visibility before publication. Workflow edits do not create accounts, credentials or public visibility automatically.
 
-Run `node scripts/check-release-config.mjs` with the Docker CLI. It renders both standard source/release combinations using generated temporary values and checks all 16 services, enabled streaming and image coverage. It does not start containers, pull images or establish image availability.
+The standard installation includes calls and streaming. Canonical source composition remains `docker-compose.yml` plus `docker-compose.streaming.yml`. Advanced GHCR/manual composition from previous releases remains separate from the Docker Hub wizard. The wizard resolves those definitions into one portable generated Compose file and rewrites RelayRTC images to matching versioned Docker Hub repositories.
 
-## Docker-only installer
+## Browser installer
 
-`infrastructure/docker/setup.Dockerfile` bundles Node, Docker CLI, Compose, the existing configuration generator and the four canonical Compose definitions. `infrastructure/setup/cli.mjs` resolves one private, image-only deployment manifest and replaces repository bind mounts with isolated read-only named-volume subdirectories. Configuration is persisted in the operator-mounted named volume; services never receive its entire secret-bearing root.
+`infrastructure/docker/setup.Dockerfile` bundles Node, Docker CLI, Compose, the existing configuration generator and static wizard assets. The UI serves the console's existing stylesheet, fonts and logo. `install` is the default entrypoint and also works with `--entrypoint install`.
 
-Build the candidate locally without publishing:
+The wizard runs on port 9095, writes `./relayrtc` below the mounted parent directory and starts no application containers. Its generated `.env` and `docker-compose.yml` are private. Gateway and monitoring mount scoped runtime folders. Host Compose reads the generated environment so ordinary settings can be edited before recreating services.
+
+Build locally without publishing or installing:
 
 ```sh
-docker build --file infrastructure/docker/setup.Dockerfile --build-arg RELAYRTC_VERSION=0.1.3 --tag relayrtc/setup:local .
+docker build --platform linux/amd64,linux/arm64 --file infrastructure/docker/setup.Dockerfile --build-arg RELAYRTC_VERSION=0.1.3 --tag relayrtc/relayrtc:local .
 ```
 
-The image build alone does not install RelayRTC or run the application. A local setup image still needs matching application images. Publish only after approval and review the installed image manifests for both target architectures. Never present the registry setup command as available before the installer and its corresponding services have been published.
+A local installer image still needs matching application images in Docker Hub before the generated stack can start. Keep documentation and bundled `release.json` aligned with the actual release. The candidate remains 0.1.3 as requested. This change does not remove or recreate an existing tag and does not publish artifacts.
 
-The default command installs/resumes the same release. Cross-version changes require `upgrade`, with operator-controlled draining and coordinated backups. Original configuration must be imported before adopting a source/ZIP deployment or existing project data volumes. Normal commands neither remove volumes nor rotate initialized infrastructure credentials.
+`latest` is an installer convenience alias. Generated application images use the installer's bundled release number. Publish the alias only for the intended current release. Existing deployments retain their pinned image versions. The wizard supports initial installation and same-version configuration, not automatic cross-version migration.
 
-Local localhost signup needs no external providers. Public origins require working email; GitHub and Google remain optional. No generated account, password or provider secret is baked into the image.
+Local and public installations can skip email and OAuth. No administrator bootstrap account or password is created. Existing named-volume deployments and source installations need a controlled migration preserving their original keys and data. Do not point new generated credentials at existing volumes.
 
 ## Acceptance gates
 

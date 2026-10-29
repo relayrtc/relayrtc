@@ -73,10 +73,8 @@ function validateSettings(values) {
     values.RESEND_FROM_EMAIL !== "RelayRTC <noreply@example.com>"
   )
     throw new Error("RESEND_API_KEY is required when a sender is configured");
-  if (!local && (!email || origin.protocol !== "https:"))
-    throw new Error(
-      "Public hosting requires an HTTPS console origin and configured email delivery",
-    );
+  if (!local && origin.protocol !== "https:")
+    throw new Error("Public hosting requires an HTTPS console origin");
   if (!email && values.SKIP_EMAIL_VERIFICATION && values.SKIP_EMAIL_VERIFICATION !== "true")
     throw new Error(
       "Local startup without email requires SKIP_EMAIL_VERIFICATION=true or an empty automatic setting",

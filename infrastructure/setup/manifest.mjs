@@ -13,7 +13,7 @@ const files = [
 const configurationTarget = "/run/relayrtc-monitoring";
 const gatewayTarget = "/etc/relayrtc-streaming";
 
-export async function composeEnvironment() {
+export async function composeEnvironment(directory = stateDirectory) {
   const text = await Promise.all(
     [
       ".env.example",
@@ -21,7 +21,7 @@ export async function composeEnvironment() {
       "infrastructure/configuration/advanced.env.example",
     ].map((file) => readFile(join(assetDirectory, file), "utf8")),
   );
-  const current = await readFile(join(stateDirectory, ".env"), "utf8");
+  const current = await readFile(join(directory, ".env"), "utf8");
   const excluded = new Set(Object.keys(parseEnv(`${text.join("\n")}\n${current}`)));
   return Object.fromEntries(
     Object.entries(process.env).filter(
@@ -30,14 +30,14 @@ export async function composeEnvironment() {
   );
 }
 
-export async function prepareRuntimeFiles() {
-  const monitoring = join(stateDirectory, "runtime/monitoring");
-  const streaming = join(stateDirectory, "runtime/streaming");
+export async function prepareRuntimeFiles(directory = stateDirectory) {
+  const monitoring = join(directory, "runtime/monitoring");
+  const streaming = join(directory, "runtime/streaming");
   for (const path of [monitoring, streaming, join(streaming, "certs")]) {
     await mkdir(path, { recursive: true, mode: 0o755 });
     await chmod(path, 0o755);
   }
-  const values = parseEnv(await readFile(join(stateDirectory, ".env"), "utf8"));
+  const values = parseEnv(await readFile(join(directory, ".env"), "utf8"));
   const configuration = (
     await readFile(join(assetDirectory, "infrastructure/prometheus/streaming.yml"), "utf8")
   )
@@ -58,14 +58,22 @@ export async function prepareRuntimeFiles() {
   await atomicWrite(join(streaming, "mediamtx.yml"), gateway, 0o644);
 }
 
-export async function createManifest({ volume, version, project, signal }) {
+export async function createManifest({
+  volume,
+  version,
+  project,
+  signal,
+  layout = "volume",
+  registry = "ghcr.io/relayrtc",
+  directory = stateDirectory,
+}) {
   const output = await docker(
     [
       "compose",
       "--project-directory",
       assetDirectory,
       "--env-file",
-      join(stateDirectory, ".env"),
+      join(directory, ".env"),
       "--project-name",
       project,
       ...files.flatMap((file) => ["-f", join(assetDirectory, file)]),
@@ -74,9 +82,9 @@ export async function createManifest({ volume, version, project, signal }) {
       "--format",
       "json",
     ],
-    { capture: true, environment: await composeEnvironment(), signal },
+    { capture: true, environment: await composeEnvironment(directory), signal },
   );
-  const values = parseEnv(await readFile(join(stateDirectory, ".env"), "utf8"));
+  const values = parseEnv(await readFile(join(directory, ".env"), "utf8"));
   const resolveValue = (value) => {
     if (Array.isArray(value)) return value.map(resolveValue);
     if (value && typeof value === "object")
@@ -98,36 +106,51 @@ export async function createManifest({ volume, version, project, signal }) {
       },
     );
   };
-  const manifest = resolveValue(JSON.parse(output));
+  const resolved = resolveValue(JSON.parse(output));
+  const manifest = layout === "folder" ? JSON.parse(output) : resolved;
   if (Object.keys(manifest.services ?? {}).length !== 16)
     throw new Error("The bundled release must contain the complete rooms and streaming stack");
   manifest.name = project;
-  manifest.volumes["installation-config"] = { external: true, name: volume };
+  if (layout === "volume")
+    manifest.volumes["installation-config"] = { external: true, name: volume };
   for (const [name, service] of Object.entries(manifest.services)) {
     if (
-      !service.image ||
-      (service.image.startsWith("ghcr.io/relayrtc/") && !service.image.endsWith(`:${version}`))
+      !resolved.services[name].image ||
+      (service.image?.startsWith("ghcr.io/relayrtc/") &&
+        !resolved.services[name].image.endsWith(`:${version}`))
     ) {
       throw new Error(`The bundled image for ${name} does not match the installer release`);
     }
     delete service.build;
+    if (service.image.startsWith("ghcr.io/relayrtc/"))
+      service.image = resolved.services[name].image.replace("ghcr.io/relayrtc", registry);
     service.labels = {
       ...service.labels,
-      "io.relayrtc.installation.config-volume": volume,
+      ...(layout === "volume" ? { "io.relayrtc.installation.config-volume": volume } : {}),
       "io.relayrtc.installation.version": version,
     };
     if (name === "streaming-gateway" || name === "prometheus") {
       service.volumes = (service.volumes ?? []).filter((item) => item.type !== "bind");
-      service.volumes.push({
-        type: "volume",
-        source: "installation-config",
-        read_only: true,
-        target: name === "prometheus" ? configurationTarget : gatewayTarget,
-        volume: {
-          nocopy: true,
-          subpath: `runtime/${name === "prometheus" ? "monitoring" : "streaming"}`,
-        },
-      });
+      service.volumes.push(
+        layout === "folder"
+          ? {
+              type: "bind",
+              source: `./runtime/${name === "prometheus" ? "monitoring" : "streaming"}`,
+              target: name === "prometheus" ? configurationTarget : gatewayTarget,
+              read_only: true,
+              bind: { create_host_path: false },
+            }
+          : {
+              type: "volume",
+              source: "installation-config",
+              read_only: true,
+              target: name === "prometheus" ? configurationTarget : gatewayTarget,
+              volume: {
+                nocopy: true,
+                subpath: `runtime/${name === "prometheus" ? "monitoring" : "streaming"}`,
+              },
+            },
+      );
       if (name === "prometheus")
         service.command = service.command.map((argument) =>
           argument.startsWith("--config.file=")
@@ -136,12 +159,21 @@ export async function createManifest({ volume, version, project, signal }) {
         );
       else service.command = [`${gatewayTarget}/mediamtx.yml`];
     }
-    if ((service.volumes ?? []).some((item) => item.type === "bind"))
+    if (
+      (service.volumes ?? []).some(
+        (item) =>
+          item.type === "bind" &&
+          !(
+            layout === "folder" &&
+            ["./runtime/monitoring", "./runtime/streaming"].includes(item.source)
+          ),
+      )
+    )
       throw new Error(`Service ${name} still requires a host configuration path`);
     if (service.env_file || service.configs || service.secrets)
       throw new Error(`Service ${name} requires an unsupported external configuration source`);
   }
-  if (manifest.services.api.environment.RELAYRTC_STREAMING_ENABLED !== "true")
+  if (resolved.services.api.environment.RELAYRTC_STREAMING_ENABLED !== "true")
     throw new Error("Streaming must be enabled in the standard installation");
   return manifest;
 }

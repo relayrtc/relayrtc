@@ -12,7 +12,7 @@ BETTER_AUTH_URL=http://localhost:3002
 
 The service also requires its internal credentials and addresses through the shared credential policy. The Docker setup generates these values automatically. Keep original secrets with deployment backups.
 
-Localhost email/password signup works without OAuth or email-provider credentials. Without an email sender, verification is skipped locally and email-dependent recovery, email changes and invitations are unavailable. Public console origins require working email delivery.
+Email/password signup works without OAuth or email-provider credentials on local and public deployments. Without an email sender, verification is skipped and email-dependent recovery, email changes and invitations are unavailable. The wizard explicitly enables verification when email is configured and disables it when email is skipped.
 
 ## Optional providers
 

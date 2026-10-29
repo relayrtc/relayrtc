@@ -1,0 +1,126 @@
+.setup-center {
+  width: min(100%, 464.625px);
+}
+.setup-steps {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 24px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.setup-steps span {
+  flex: 1;
+  padding: 10px 0;
+  border-bottom: 2px solid var(--border);
+}
+.setup-steps [aria-current="step"] {
+  color: var(--primary-ink);
+  border-color: var(--primary);
+}
+.setup-center > .form-feedback {
+  margin-top: 16px;
+}
+.setup-center .login-form {
+  text-align: left;
+}
+.setup-center .field-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+.setup-center select.input {
+  width: 100%;
+  padding: 12px 15px;
+  min-height: 46px;
+  border: 1px solid var(--border);
+  border-radius: 12.387375px;
+  background: var(--input);
+}
+.setup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+}
+.setup-actions .button {
+  flex: 1;
+}
+.setup-center fieldset {
+  gap: 16px;
+}
+.setup-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.setup-summary {
+  border: 1px solid var(--border);
+  border-radius: 15.75px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  text-align: left;
+}
+.setup-summary div {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.setup-summary dt {
+  color: var(--muted);
+}
+.setup-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.setup-complete {
+  margin-top: 24px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+}
+.setup-complete pre {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  background: var(--input);
+  border-radius: 12.387375px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.setup-center details {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.setup-center summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.setup-center details > div {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+.setup-center [hidden] {
+  display: none !important;
+}
+.setup-center input {
+  width: 100%;
+}
+.setup-center .account-note {
+  line-height: 1.7;
+}
+@media (max-width: 480px) {
+  .setup-summary div {
+    grid-template-columns: 90px 1fr;
+  }
+  .setup-steps {
+    font-size: 11px;
+  }
+}
