@@ -95,11 +95,9 @@ export const readAuthEnvironment = (source: AuthEnvironmentSource): AuthEnvironm
   const from = source.RESEND_FROM_EMAIL?.trim();
   const email = apiKey ? { apiKey, from: readRequired(source, "RESEND_FROM_EMAIL") } : undefined;
   if (!apiKey && from && from !== "RelayRTC <noreply@example.com>") throw new Error("RESEND_API_KEY is required when RESEND_FROM_EMAIL is configured");
-  const local = ["localhost", "127.0.0.1", "[::1]"].includes(new URL(baseUrl).hostname);
-  if (!email && !local) throw new Error("Configure email delivery before exposing the console on a public address");
   const requestedVerification = source.SKIP_EMAIL_VERIFICATION?.trim().toLowerCase();
   const skipEmailVerification = requestedVerification === undefined || requestedVerification === "" ? (email ? "false" : "true") : requestedVerification;
-  if (!email && skipEmailVerification !== "true") throw new Error("Email verification requires email delivery; local installations may use SKIP_EMAIL_VERIFICATION=true");
+  if (!email && skipEmailVerification !== "true") throw new Error("Email verification requires email delivery. Configure a sender or use SKIP_EMAIL_VERIFICATION=true");
   if (!["true", "false"].includes(skipEmailVerification)) throw new Error("SKIP_EMAIL_VERIFICATION must be true or false");
   const trustedOrigins = (source.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
     .split(",")

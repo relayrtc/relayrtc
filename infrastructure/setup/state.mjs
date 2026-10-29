@@ -26,19 +26,24 @@ export async function atomicWrite(path, value, mode = 0o600) {
   await rename(temporary, path);
 }
 
-export async function lockState(signal) {
+export async function lockState(signal, { allowBind = false } = {}) {
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
-  await chmod(stateDirectory, 0o700);
   const identity = process.env.HOSTNAME;
   if (!identity || !/^[a-f0-9]{12,64}$/.test(identity))
     throw new Error("Use the default Docker container hostname for setup");
   const self = await inspectContainer(identity, { signal });
   const mount = self.Mounts?.find((item) => item.Destination === stateDirectory);
-  if (mount?.Type !== "volume" || !mount.Name || !mount.RW) {
+  if (
+    !mount?.RW ||
+    !((mount.Type === "volume" && mount.Name) || (allowBind && mount.Type === "bind"))
+  ) {
     throw new Error(
-      "Mount a writable named volume at /setup/state, for example -v relayrtc-config:/setup/state",
+      allowBind
+        ? "Mount your installation parent folder at /setup/state"
+        : "Mount a writable named volume at /setup/state, for example -v relayrtc-config:/setup/state",
     );
   }
+  if (mount.Type === "volume") await chmod(stateDirectory, 0o700);
   const directory = join(stateDirectory, ".setup-lock");
   const ownerPath = join(directory, "owner");
   try {
@@ -82,7 +87,11 @@ export async function lockState(signal) {
     }
   }
   await writeFile(ownerPath, self.Id, { mode: 0o600 });
-  return { volume: mount.Name, release: () => rm(directory, { recursive: true }) };
+  return {
+    volume: mount.Name,
+    kind: mount.Type,
+    release: () => rm(directory, { recursive: true }),
+  };
 }
 
 export function updateEnvironment(text, values) {

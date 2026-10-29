@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Set up RelayRTC</title>
+    <link rel="icon" href="/relayrtc-logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/console.css" />
+    <link rel="stylesheet" href="/wizard.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="login-page" id="main-content">
+      <section class="login-center setup-center" aria-labelledby="title">
+        <img
+          src="/relayrtc-logo.svg"
+          class="login-logo relayrtc-logo"
+          width="55"
+          height="51"
+          alt="RelayRTC"
+        />
+        <h1 id="title" tabindex="-1">Set up RelayRTC</h1>
+        <p class="login-subheading" id="description">Your rooms and streaming, in one place.</p>
+        <nav id="steps" class="setup-steps" aria-label="Setup progress"></nav>
+        <p id="error" class="form-feedback form-feedback-error" role="alert" hidden></p>
+        <p id="loading" class="account-note" role="status">Opening your private setup session...</p>
+        <form id="setup" class="login-form auth-form" hidden autocomplete="off">
+          <fieldset id="fields"></fieldset>
+          <div class="setup-actions">
+            <button type="button" id="back" class="button button-secondary">Back</button>
+            <button type="submit" id="next" class="button button-primary onboarding-continue">
+              Continue
+            </button>
+          </div>
+        </form>
+        <section id="complete" class="setup-complete" hidden aria-live="polite">
+          <div class="form-feedback">
+            Your configuration is saved. Start the stack from your terminal.
+          </div>
+          <pre><code>cd relayrtc
+docker compose up -d --remove-orphans</code></pre>
+          <button id="copy" class="button button-secondary" type="button">Copy commands</button>
+          <p id="result" class="account-note"></p>
+          <p class="account-note">
+            Keep the relayrtc folder and its .env file private. Your generated secrets are stored
+            there.
+          </p>
+          <button id="finish" class="button button-primary" type="button">Finish setup</button>
+        </section>
+      </section>
+      <footer class="login-footer">
+        <div class="footer-links">
+          <a href="https://docs.relayrtc.com/self-hosting" target="_blank" rel="noreferrer"
+            >Documentation</a
+          ><span>RelayRTC self-hosting</span>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>
