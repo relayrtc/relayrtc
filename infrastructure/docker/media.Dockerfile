@@ -1,6 +1,10 @@
 FROM node:24-bookworm-slim AS dependencies
 
 WORKDIR /workspace
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+ENV PYTHON=python3
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY services/media/package.json services/media/package.json
@@ -8,7 +12,8 @@ COPY packages/database/package.json packages/database/package.json
 COPY packages/types/package.json packages/types/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/validation/package.json packages/validation/package.json
-RUN pnpm install --frozen-lockfile --filter @relayrtc/media...
+ARG MEDIASOUP_BUILD_CORES=2
+RUN MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=true python3 -c "import os, subprocess; cores = max(1, int(os.environ['MEDIASOUP_BUILD_CORES'])); os.sched_setaffinity(0, sorted(os.sched_getaffinity(0))[:cores]); subprocess.run(['pnpm', 'install', '--frozen-lockfile', '--filter', '@relayrtc/media...'], check=True)"
 
 FROM dependencies AS builder
 
