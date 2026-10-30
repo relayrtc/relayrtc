@@ -8,6 +8,25 @@ on:
         required: true
         default: "0.1.3"
         type: string
+      image:
+        description: Image to publish. Use all for a complete release
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - setup
+          - api
+          - signaling
+          - media
+          - streaming
+          - streaming-storage
+          - streaming-storage-init
+          - console
+          - migrate
+          - coturn
+          - prometheus
+          - grafana
   push:
     tags:
       - "v*.*.*"
@@ -20,55 +39,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  select:
+    name: Selecting images to publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.images.outputs.image }}
+      matrix: ${{ steps.images.outputs.matrix }}
+    steps:
+      - name: Selecting the service build matrix
+        id: images
+        env:
+          REQUESTED_IMAGE: ${{ inputs.image }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const images = [
+            { name: 'api', context: '.', dockerfile: 'infrastructure/docker/api.Dockerfile', target: 'runner' },
+            { name: 'signaling', context: './services/signaling', dockerfile: 'services/signaling/Dockerfile', target: '' },
+            { name: 'streaming', context: '.', dockerfile: 'infrastructure/docker/streaming.Dockerfile', target: 'runner' },
+            { name: 'streaming-storage', context: '.', dockerfile: 'infrastructure/docker/streaming-storage.Dockerfile', target: 'runner' },
+            { name: 'streaming-storage-init', context: '.', dockerfile: 'infrastructure/docker/streaming-storage.Dockerfile', target: 'storage-init' },
+            { name: 'console', context: '.', dockerfile: 'infrastructure/docker/console.Dockerfile', target: 'runner' },
+            { name: 'migrate', context: '.', dockerfile: 'infrastructure/docker/migrate.Dockerfile', target: 'migrator' },
+            { name: 'coturn', context: '.', dockerfile: 'infrastructure/docker/coturn.Dockerfile', target: '' },
+            { name: 'prometheus', context: '.', dockerfile: 'infrastructure/docker/prometheus.Dockerfile', target: '' },
+            { name: 'grafana', context: '.', dockerfile: 'infrastructure/docker/grafana.Dockerfile', target: '' },
+          ];
+          const image = process.env.EVENT_NAME === 'push' ? 'all' : (process.env.REQUESTED_IMAGE || 'all');
+          if (!['all', 'setup', 'media', ...images.map(item => item.name)].includes(image)) {
+            throw new Error('Select a supported image to publish');
+          }
+          const include = images.filter(item => image === 'all' || item.name === image);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `image=${image}\nmatrix=${JSON.stringify({ include })}\n`);
+          NODE
+
   publish:
     name: Publishing ${{ matrix.name }}
+    needs: select
+    if: needs.select.outputs.image != 'setup' && needs.select.outputs.image != 'media'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix:
-        include:
-          - name: api
-            context: .
-            dockerfile: infrastructure/docker/api.Dockerfile
-            target: runner
-          - name: signaling
-            context: ./services/signaling
-            dockerfile: services/signaling/Dockerfile
-            target: ""
-          - name: streaming
-            context: .
-            dockerfile: infrastructure/docker/streaming.Dockerfile
-            target: runner
-          - name: streaming-storage
-            context: .
-            dockerfile: infrastructure/docker/streaming-storage.Dockerfile
-            target: runner
-          - name: streaming-storage-init
-            context: .
-            dockerfile: infrastructure/docker/streaming-storage.Dockerfile
-            target: storage-init
-          - name: console
-            context: .
-            dockerfile: infrastructure/docker/console.Dockerfile
-            target: runner
-          - name: migrate
-            context: .
-            dockerfile: infrastructure/docker/migrate.Dockerfile
-            target: migrator
-          - name: coturn
-            context: .
-            dockerfile: infrastructure/docker/coturn.Dockerfile
-            target: ""
-          - name: prometheus
-            context: .
-            dockerfile: infrastructure/docker/prometheus.Dockerfile
-            target: ""
-          - name: grafana
-            context: .
-            dockerfile: infrastructure/docker/grafana.Dockerfile
-            target: ""
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     steps:
       - name: Checking out source
         uses: actions/checkout@v6
@@ -116,6 +132,8 @@ jobs:
 
   media:
     name: Publishing media (${{ matrix.arch }})
+    needs: select
+    if: needs.select.outputs.image == 'all' || needs.select.outputs.image == 'media'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     outputs:
@@ -195,8 +213,13 @@ jobs:
             "relayrtc/media:${RELEASE_VERSION}-arm64-${SOURCE_REVISION}"
 
   setup:
-    name: Publishing setup after all application images
-    needs: [publish, media-manifest]
+    name: Publishing setup
+    needs: [select, publish, media-manifest]
+    if: >-
+      always() && !cancelled() && needs.select.result == 'success' &&
+      (needs.select.outputs.image == 'setup' ||
+      (needs.select.outputs.image == 'all' &&
+      needs.publish.result == 'success' && needs.media-manifest.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
