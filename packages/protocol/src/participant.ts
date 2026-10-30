@@ -1,3 +1,5 @@
+import type { RoomCapabilities } from "@relayrtc/types";
+import { roomCapabilitiesSchema } from "@relayrtc/validation";
 import type {
   IsoDateTime,
   Participant,
@@ -31,6 +33,7 @@ export interface ParticipantJoinRequestPayload {
 }
 
 export interface ParticipantJoinAcceptedPayload {
+  readonly capabilities?: RoomCapabilities | undefined;
   readonly room: Room;
   readonly localParticipant: Participant;
   readonly session: ParticipantSession;
@@ -127,6 +130,7 @@ const participantJoinAcceptedPayloadSchema = z
     session: participantSessionSchema,
     participants: z.array(participantSchema).readonly(),
     tracks: z.array(trackSchema).readonly(),
+    capabilities: roomCapabilitiesSchema.optional(),
   })
   .strict();
 

@@ -8,6 +8,7 @@ export interface ParticipantRecord {
   id: string;
   joinedAt: Date;
   leftAt: Date | null;
+  removedAt?: Date | null;
   metadata: Metadata;
   name: string;
   role: string;
@@ -35,7 +36,14 @@ export interface ParticipantRepository {
 type DatabaseParticipant = typeof schema.participant.$inferSelect;
 
 const toRecord = (participant: DatabaseParticipant): ParticipantRecord => ({
-  ...participant,
+  id: participant.id,
+  roomId: participant.roomId,
+  externalId: participant.externalId,
+  name: participant.name,
+  role: participant.role,
+  joinedAt: participant.joinedAt,
+  leftAt: participant.leftAt,
+  removedAt: participant.removedAt,
   metadata: participant.metadata as Metadata,
 });
 

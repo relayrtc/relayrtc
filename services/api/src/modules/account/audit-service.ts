@@ -6,7 +6,7 @@ import { ApiError } from "../../http/errors/api-error.js";
 export const auditQuery = z.object({
   cursor: z.string().max(512).optional(),
   action: z.string().trim().max(160).optional(),
-  actorType: z.enum(["USER", "SYSTEM", "API_KEY", "ANONYMOUS"]).optional(),
+  actorType: z.enum(["USER", "SYSTEM", "API_KEY", "ANONYMOUS", "PARTICIPANT"]).optional(),
   outcome: z.enum(["SUCCESS", "FAILURE", "ATTEMPT"]).optional(),
   from: z.iso.datetime().optional(), to: z.iso.datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),

@@ -38,6 +38,10 @@ func (adapter *Adapter) Handle(ctx context.Context, claims auth.Claims, sessionI
 		if err := room.Joined(ctx, claims, sessionID); err != nil {
 			return err
 		}
+		claims, err = effectiveClaims(ctx, room, claims)
+		if err != nil {
+			return err
+		}
 		if state.Closing || (state.MediaNodeID != "" && state.MediaNodeID != adapter.nodeID) {
 			return ErrUnavailable
 		}
@@ -87,6 +91,9 @@ func (adapter *Adapter) Handle(ctx context.Context, claims auth.Claims, sessionI
 			session = state.Sessions[sessionID]
 		}
 		if err := adapter.expireSubscriptions(ctx, room, scope, state); err != nil {
+			return err
+		}
+		if err := adapter.revokePublications(ctx, room, scope, state); err != nil {
 			return err
 		}
 		fingerprint, err := RequestFingerprint(scope, request)

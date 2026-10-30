@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 
 export type AuditDatabase = Pick<RelayKitDatabase, "insert" | "execute">;
 export interface AuditActor {
-  type: "USER" | "SYSTEM" | "API_KEY" | "ANONYMOUS";
+  type: "USER" | "SYSTEM" | "API_KEY" | "ANONYMOUS" | "PARTICIPANT";
   id?: string | null | undefined;
   name: string;
 }
@@ -12,6 +12,7 @@ export interface AuditRecord {
   actor: AuditActor;
   action: string;
   outcome: "SUCCESS" | "FAILURE" | "ATTEMPT";
+  roomId?: string | null | undefined;
   resourceType: string;
   resourceId?: string | null | undefined;
   organizationId?: string | null | undefined;
@@ -27,6 +28,7 @@ export async function recordAudit(database: AuditDatabase, record: AuditRecord) 
     actorId: record.actor.id ?? null, actorName: record.actor.name.slice(0, 200),
     subjectUserId: record.subjectUserId ?? null, organizationId: record.organizationId ?? null,
     action: record.action.slice(0, 160), outcome: record.outcome,
+    roomId: record.roomId ?? null,
     resourceType: record.resourceType, resourceId: record.resourceId ?? null,
     correlationId: record.correlationId ?? null, metadata: record.metadata ?? {},
   });
