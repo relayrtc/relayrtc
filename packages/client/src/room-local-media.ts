@@ -17,6 +17,7 @@ interface MediaContext {
   readonly rtc: RoomRtc;
   manager(): MediaManager;
   assertActive(): void;
+  assertPermission(permission: string): void;
   report(error: RoomError): void;
 }
 
@@ -140,6 +141,7 @@ class RoomInput extends MediaControl<RoomInputSnapshot> implements RoomInputCont
 
   enable(constraints: MediaTrackConstraints = {}): Promise<MediaStreamTrack> {
     return this.execute(async (revision) => {
+      this.context.assertPermission(this.source === "microphone" ? "audio:publish" : "video:publish");
       const capture = this.#controller();
       if (this.#publication && capture.current.track) return capture.current.track;
       let publication: LocalPublication | undefined;
@@ -181,6 +183,7 @@ class RoomInput extends MediaControl<RoomInputSnapshot> implements RoomInputCont
 
   switchDevice(deviceId: string): Promise<MediaStreamTrack | null> {
     return this.execute(async (revision) => {
+      this.context.assertPermission(this.source === "microphone" ? "audio:publish" : "video:publish");
       const capture = this.#controller();
       const previous = capture.current.track;
       const publication = this.#publication;
@@ -269,6 +272,7 @@ class RoomScreen extends MediaControl<RoomScreenSnapshot> implements RoomScreenC
 
   start(options: DisplayMediaStreamOptions = { video: true }): Promise<RoomScreenSnapshot> {
     return this.execute(async (revision) => {
+      this.context.assertPermission("screen:publish");
       if (this.current.active) return this.current;
       const capture = this.#controller();
       let video: LocalPublication | undefined;
@@ -391,6 +395,7 @@ export class LocalRoomMedia implements RoomLocalMedia {
   readonly screen: RoomScreen;
   readonly devices: RoomLocalMedia["devices"];
   readonly permissions: RoomLocalMedia["permissions"];
+  #allowed: readonly string[] | undefined;
   #manager: MediaManager | undefined;
   #closed = false;
   readonly #deviceSubscriptions = new Set<() => void>();
@@ -402,7 +407,9 @@ export class LocalRoomMedia implements RoomLocalMedia {
       this.#manager ??= new MediaManager();
       return this.#manager;
     };
-    const context: MediaContext = { rtc, manager, assertActive, report };
+    const context: MediaContext = { rtc, manager, assertActive, report, assertPermission: permission => {
+      if (this.#allowed && !this.#allowed.includes(permission)) throw new RoomError("PERMISSION_DENIED", "The room policy does not allow this publication");
+    } };
     this.microphone = new RoomInput("microphone", context);
     this.camera = new RoomInput("camera", context);
     this.screen = new RoomScreen(context);
@@ -450,6 +457,13 @@ export class LocalRoomMedia implements RoomLocalMedia {
         }
       },
     };
+  }
+
+  restrict(permissions: readonly string[]): void {
+    this.#allowed = permissions;
+    if (!permissions.includes("audio:publish")) void this.microphone.disable().catch(() => undefined);
+    if (!permissions.includes("video:publish")) void this.camera.disable().catch(() => undefined);
+    if (!permissions.includes("screen:publish")) void this.screen.stop().catch(() => undefined);
   }
 
   dispose(): void {
