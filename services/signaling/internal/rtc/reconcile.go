@@ -78,6 +78,9 @@ func (adapter *Adapter) Reconcile(ctx context.Context) error {
 					return err
 				}
 			}
+			if err := adapter.revokePublications(ctx, room, scope, state); err != nil {
+				return err
+			}
 			if state.Ready {
 				if err := adapter.syncTracks(ctx, room, scope, state); err != nil {
 					return err
