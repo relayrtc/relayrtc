@@ -147,7 +147,10 @@ export async function createManifest({
       "io.relayrtc.installation.version": version,
     };
     if (name === "streaming-gateway" || name === "prometheus") {
-      service.volumes = (service.volumes ?? []).filter((item) => item.type !== "bind");
+      service.volumes = (service.volumes ?? []).filter(
+        (item) =>
+          item.type !== "bind" && !(name === "streaming-gateway" && item.target === "/certs"),
+      );
       service.volumes.push(
         layout === "folder"
           ? {
@@ -189,6 +192,15 @@ export async function createManifest({
       throw new Error(`Service ${name} still requires a host configuration path`);
     if (service.env_file || service.configs || service.secrets)
       throw new Error(`Service ${name} requires an unsupported external configuration source`);
+    if (
+      (service.volumes ?? []).some(
+        (item) =>
+          item.type === "volume" &&
+          item.source &&
+          !Object.hasOwn(manifest.volumes ?? {}, item.source),
+      )
+    )
+      throw new Error(`Service ${name} refers to an undefined installation volume`);
   }
   if (resolved.services.api?.environment?.RELAYRTC_STREAMING_ENABLED !== "true")
     throw new Error("Streaming must be enabled in the standard installation");
