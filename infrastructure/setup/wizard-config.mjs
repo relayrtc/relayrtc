@@ -265,7 +265,7 @@ export async function generateInstallation(input, signal) {
           "--filter",
           "label=com.docker.compose.project=relayrtc",
         ],
-        { capture: true, signal },
+        { capture: true, signal, operation: `Checking existing RelayRTC ${kind}s` },
       );
       if (ids.trim())
         throw new Error(
@@ -344,7 +344,12 @@ export async function generateInstallation(input, signal) {
         "config",
         "--quiet",
       ],
-      { capture: true, environment: await composeEnvironment(folderDirectory), signal },
+      {
+        capture: true,
+        environment: await composeEnvironment(folderDirectory),
+        signal,
+        operation: "Validating the generated Compose configuration",
+      },
     );
     await atomicWrite(composePath, await readFile(pending));
     await atomicWrite(
