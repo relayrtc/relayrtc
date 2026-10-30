@@ -82,7 +82,12 @@ export async function createManifest({
       "--format",
       "json",
     ],
-    { capture: true, environment: await composeEnvironment(directory), signal },
+    {
+      capture: true,
+      environment: await composeEnvironment(directory),
+      signal,
+      operation: "Loading the bundled Compose configuration",
+    },
   );
   const model = JSON.parse(output);
   for (const [name, service] of Object.entries(model.services ?? {})) {
