@@ -4,6 +4,9 @@ export class RoomEventEmitter {
   readonly #listeners: {
     [Event in keyof RoomEvents]: Set<(value: RoomEvents[Event]) => void>;
   } = {
+    activityChanged:new Set(),
+    lifecycleChanged: new Set(),
+    capabilitiesChanged: new Set(),
     connectionQualityChanged: new Set(),
     connectionDegraded: new Set(),
     connectionRecovered: new Set(),
