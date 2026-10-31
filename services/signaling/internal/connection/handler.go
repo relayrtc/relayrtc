@@ -70,6 +70,7 @@ type SessionStore interface {
 }
 
 type Handler struct {
+	activitySnapshots  sync.Map
 	limiter            *resourceLimiter
 	trustedProxyCIDRs  []netip.Prefix
 	storeParticipantIP bool
@@ -95,8 +96,13 @@ type Handler struct {
 }
 
 type joinedSession struct {
-	participant session.Participant
-	session     session.ParticipantSession
+	activityKey       string
+	activityUpdatedAt time.Time
+	activitySentAt    time.Time
+	lifecycleKey      string
+	accessKey         string
+	participant       session.Participant
+	session           session.ParticipantSession
 }
 
 func NewHandler(options Options) *Handler {
@@ -291,6 +297,8 @@ func (handler *Handler) serve(client *client, claims auth.Claims, rawToken, clie
 	defer heartbeat.Stop()
 	usage := time.NewTicker(2 * time.Second)
 	defer usage.Stop()
+	activity := time.NewTicker(250 * time.Millisecond)
+	defer activity.Stop()
 	expires := time.NewTimer(time.Until(claims.ExpiresAt.Time))
 	defer expires.Stop()
 	var joined *joinedSession
@@ -343,6 +351,10 @@ func (handler *Handler) serve(client *client, claims auth.Claims, rawToken, clie
 				}
 				return nil, claims
 			}
+		case <-activity.C:
+			if joined != nil {
+				_ = handler.refreshActivity(client, claims, joined)
+			}
 		case <-usage.C:
 			if joined != nil && !handler.guestAuthorized(claims) {
 				ctx, cancel := context.WithTimeout(handler.shutdown, 2*time.Second)
@@ -351,6 +363,10 @@ func (handler *Handler) serve(client *client, claims auth.Claims, rawToken, clie
 				return joined, claims
 			}
 			if joined != nil {
+				if _, err := handler.refreshAccess(client, claims, joined); err != nil {
+					client.close(4003, "Room access unavailable; reconnect")
+					return joined, claims
+				}
 				handler.flushClientUsage(client, joined.session.ID)
 			}
 		case now := <-heartbeat.C:
@@ -454,6 +470,16 @@ func (handler *Handler) handleMessage(client *client, claims auth.Claims, rawTok
 			return true, joined
 		}
 	}
+	if joined != nil {
+		capabilities, err := handler.refreshAccess(client, claims, joined)
+		if err != nil {
+			client.protocolError("", "internal_error", "Room access is unavailable")
+			return false, nil
+		}
+		if capabilities.ParticipantID != "" {
+			claims.Permissions = capabilities.Permissions
+		}
+	}
 	request := requestEnvelope{}
 	if err := json.Unmarshal(data, &request); err != nil || request.Version != 1 || request.ID == "" {
 		client.protocolError(request.ID, "invalid_message", "The protocol message is invalid")
@@ -461,6 +487,14 @@ func (handler *Handler) handleMessage(client *client, claims auth.Claims, rawTok
 	}
 
 	switch request.Type {
+	case "room.activity.get", "participant.activity.update":
+		handler.handleActivity(client, claims, joined, request)
+	case "room.lifecycle.get", "room.lifecycle.update":
+		handler.handleLifecycle(client, claims, joined, request)
+	case "participant.access.get":
+		handler.handleAccessGet(client, claims, joined, request)
+	case "participant.access.update":
+		handler.handleAccessUpdate(client, claims, joined, request)
 	case "heartbeat.ping":
 		payload := heartbeatPayload{}
 		if json.Unmarshal(request.Payload, &payload) != nil || payload.Nonce == "" {

@@ -1,3 +1,10 @@
+import { updateParticipantAccessSchema, roomAuditQuerySchema } from "@relayrtc/validation";
+import { createRoomActivityStream } from "./room-activity-stream.js";
+import {roomActivityPolicySchema} from "@relayrtc/validation";
+import {readRoomActivity,readRoomActivityPolicy,updateRoomActivityPolicy} from "../rooms/room-activity.service.js";
+import { createRoomInvitationSchema,redeemRoomInvitationSchema,updateRoomLifecycleSchema } from "@relayrtc/validation";
+import { requireTokenAdmission,readRoomLifecycle,updateRoomLifecycle,createRoomInvitation,listRoomInvitations,revokeRoomInvitation,redeemRoomInvitation } from "../rooms/room-lifecycle.service.js";
+import { readParticipantAccess, updateParticipantAccess, readRoomAudit } from "../rooms/room-access.service.js";
 import { getRuntimeOperation, type RuntimeOperationView } from "@relayrtc/auth";
 import { recordAudit } from "@relayrtc/auth/server";
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
@@ -37,6 +44,7 @@ const databaseFor = (transaction: RtcTransaction) => transaction as unknown as R
 // Uses the existing room/participant services, token signer, database outbox,
 // and runtime worker. No API key is generated or stored for console access.
 export function registerRoomsRoutes(app: FastifyInstance, options: Options) {
+  const streamRoomActivity = createRoomActivityStream(app);
   async function withProject<T>(request: FastifyRequest, projectId: string, writing: boolean,
     task: (transaction: RtcTransaction, access: Awaited<ReturnType<typeof authorizeRtcProject>>, user: { id: string; name?: string }) => Promise<T>) {
     const { user } = await options.current(request);
@@ -118,6 +126,31 @@ export function registerRoomsRoutes(app: FastifyInstance, options: Options) {
     return withRoom(request, { projectId: reference.projectId, roomId }, false, overview);
   });
   app.get(`${root}/rooms/:roomId`, async request => withRoom(request, validate(roomParams, request.params), false, overview));
+  app.get(`${root}/rooms/:roomId/activity`,async request=>withRoom(request,validate(roomParams,request.params),false,(transaction,context)=>readRoomActivity(databaseFor(transaction),context.room.id)));
+  app.get(`${root}/rooms/:roomId/activity/events`, async (request, reply) => {
+    const params = validate(roomParams, request.params);
+    const { user } = await options.current(request);
+    return streamRoomActivity(reply, user.id, () => withRoom(request, params, false,
+      (transaction, context) => readRoomActivity(databaseFor(transaction), context.room.id)));
+  });
+  app.get(`${root}/rooms/:roomId/activity-policy`,async request=>withRoom(request,validate(roomParams,request.params),false,(transaction,context)=>readRoomActivityPolicy(databaseFor(transaction),context.room.id)));
+  app.put(`${root}/rooms/:roomId/activity-policy`,async request=>withRoom(request,validate(roomParams,request.params),true,(transaction,context)=>updateRoomActivityPolicy(databaseFor(transaction),context.room.id,validate(roomActivityPolicySchema,request.body))));
+  app.get(`${root}/rooms/:roomId/lifecycle`,async request=>withRoom(request,validate(roomParams,request.params),false,(transaction,context)=>readRoomLifecycle(databaseFor(transaction),context.room.id)));
+  app.put(`${root}/rooms/:roomId/lifecycle`,async request=>withRoom(request,validate(roomParams,request.params),true,(transaction,context)=>updateRoomLifecycle(databaseFor(transaction),context.room.id,validate(updateRoomLifecycleSchema,request.body))));
+  app.get(`${root}/rooms/:roomId/invitations`,async request=>withRoom(request,validate(roomParams,request.params),false,(transaction,context)=>{
+    const {cursor}=validate(z.object({cursor:z.string().regex(/^rinv_[a-f0-9]{32}$/).optional()}).strict(),request.query);
+    return listRoomInvitations(databaseFor(transaction),context.room.id,cursor);
+  }));
+  app.post(`${root}/rooms/:roomId/invitations`,async(request,reply)=>reply.header("cache-control","no-store").code(201).send(await withRoom(request,validate(roomParams,request.params),true,(transaction,context)=>createRoomInvitation(databaseFor(transaction),context.room.id,validate(createRoomInvitationSchema,request.body)))));
+  app.delete(`${root}/rooms/:roomId/invitations/:invitationId`,async request=>{
+    const params=validate(roomParams.extend({invitationId:z.string().regex(/^rinv_[a-f0-9]{32}$/)}),request.params);
+    return withRoom(request,params,true,(transaction,context)=>revokeRoomInvitation(databaseFor(transaction),context.room.id,params.invitationId));
+  });
+  app.post(`${root}/rooms/:roomId/invitations/redeem`,async(request,reply)=>{
+    if(!options.signer) throw new ApiError(503,"TOKEN_SIGNING_UNAVAILABLE","Participant token signing is unavailable");
+    const signer=options.signer;
+    return reply.header("cache-control","no-store").code(201).send(await withRoom(request,validate(roomParams,request.params),true,(transaction,context)=>redeemRoomInvitation(databaseFor(transaction),context.scope,context.room.id,validate(redeemRoomInvitationSchema,request.body),signer)));
+  });
   app.post(`${root}/rooms/:roomId/end`, async (request, reply) => {
     const params = validate(roomParams, request.params);
     const { confirmationName } = validate(z.object({ confirmationName: z.string().min(1).max(120) }).strict(), request.body);
@@ -127,7 +160,7 @@ export function registerRoomsRoutes(app: FastifyInstance, options: Options) {
     });
     const operation = publicOperation(await getRuntimeOperation(options.database, `room.end:${params.roomId}`));
     if (!operation) throw new ApiError(503, "RUNTIME_OPERATION_UNAVAILABLE", "The room state changed, but cleanup progress is temporarily unavailable. Refresh the room to try again.");
-    return reply.code(operation?.status === "completed" ? 200 : 202).send({ operation });
+    return reply.code(operation.status === "completed" ? 200 : 202).send({ operation });
   });
   app.get(`${root}/rooms/:roomId/runtime-operation`, async request => withRoom(request, validate(roomParams, request.params), false, async (transaction, context) => ({ operation: publicOperation(await getRuntimeOperation(databaseFor(transaction), `room.end:${context.room.id}`)) })));
   app.get(`${root}/rooms/:roomId/sessions`, async request => {
@@ -152,7 +185,22 @@ export function registerRoomsRoutes(app: FastifyInstance, options: Options) {
     });
     const operation = publicOperation(await getRuntimeOperation(options.database, `participant.remove:${params.participantId}`));
     if (!operation) throw new ApiError(503, "RUNTIME_OPERATION_UNAVAILABLE", "The participant was removed, but cleanup progress is temporarily unavailable. Refresh the connection to try again.");
-    return reply.code(operation?.status === "completed" ? 200 : 202).send({ operation });
+    return reply.code(operation.status === "completed" ? 200 : 202).send({ operation });
+  });
+  app.get(`${root}/rooms/:roomId/participants/:participantId/access`, async request => {
+    const params = validate(participantParams, request.params);
+    return withRoom(request, params, false, transaction => readParticipantAccess(transaction, params.roomId, params.participantId));
+  });
+  app.put(`${root}/rooms/:roomId/participants/:participantId/access`, async request => {
+    const params = validate(participantParams, request.params);
+    const input = validate(updateParticipantAccessSchema, request.body);
+    return withRoom(request, params, true, (transaction, context, user) => updateParticipantAccess(transaction, context.scope,
+      params.roomId, params.participantId, input, { type: "USER", id: user.id, name: user.name ?? "User" }, request.id));
+  });
+  app.get(`${root}/rooms/:roomId/audit`, async request => {
+    const params = validate(roomParams, request.params);
+    const query = validate(roomAuditQuerySchema, request.query);
+    return withRoom(request, params, false, (transaction, context) => readRoomAudit(transaction, context.scope, params.roomId, query));
   });
   app.post(`${root}/rooms/:roomId/tokens`, async (request, reply) => {
     const params = validate(roomParams, request.params);
@@ -161,7 +209,7 @@ export function registerRoomsRoutes(app: FastifyInstance, options: Options) {
     if (!signer) throw new ApiError(503, "TOKEN_SIGNING_UNAVAILABLE", "Participant token signing is unavailable.");
     const result = await withRoom(request, params, true, async (transaction, context, user) => {
       const database = databaseFor(transaction);
-      const token = await createParticipantTokenService({ roomRepository: createRoomRepository(database), signer, isProjectActive: async () => true }).create(context.scope, params.roomId, body);
+      const token = await createParticipantTokenService({ roomRepository: createRoomRepository(database), signer, requireAdmission:roomId=>requireTokenAdmission(database,roomId), isProjectActive: () => Promise.resolve(true) }).create(context.scope, params.roomId, body);
       await recordAudit(database, { actor: { type: "USER", id: user.id, name: user.name ?? "User" }, action: "room.token_created", outcome: "SUCCESS", resourceType: "participant_token", resourceId: token.tokenId, organizationId: context.project.organizationId, subjectUserId: user.id, correlationId: request.id });
       return token;
     });
