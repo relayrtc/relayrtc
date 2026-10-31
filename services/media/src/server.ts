@@ -33,6 +33,17 @@ const start = async (): Promise<void> => {
   };
   const qualityOutbox = new QualityEventOutbox(database.db, publisher, qualityError);
   const engine = new MediasoupWorkerPool(config, createMediasoupWorker, {
+    speakerStore:createSpeakerStore(database.db,config.nodeId),
+    onSpeakerError: (error) => {
+      const cause = error instanceof Error ? error.cause ?? error : error;
+      console.error(
+        "Speaker observation persistence failed; observations will retry",
+        cause instanceof Error ? cause.name : "UnknownError",
+        typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
+          ? cause.code
+          : "UNKNOWN",
+      );
+    },
     roomRuntimeStore,
     onWorkerError: () => {
       console.error("Media worker recovery or room failure persistence will retry");
@@ -152,3 +163,4 @@ const start = async (): Promise<void> => {
 };
 
 void start();
+import {createSpeakerStore} from "./activity/speaker-store.js";
