@@ -26,7 +26,7 @@ const fixture = `
   INSERT INTO project (id, organization_id, name, slug) VALUES ('project_retained', 'org_retained', 'Private project name', 'retained');
   INSERT INTO environment (id, project_id, name, slug, type) VALUES ('env_retained', 'project_retained', 'Private environment name', 'retained', 'custom');
   INSERT INTO room (id, project_id, environment_id, name, max_participants, status, created_at, started_at, ended_at)
-    VALUES ('room_retained', 'project_retained', 'env_retained', 'Private room name', 10, 'ended', now() - interval '1 hour', now() - interval '1 hour', now() - interval '2 minutes');
+    VALUES ('room_retained', 'project_retained', 'env_retained', 'Private room name', 10, 'active', now() - interval '1 hour', now() - interval '1 hour', NULL);
   INSERT INTO participant (id, room_id, name, external_id, metadata, joined_at, left_at)
     VALUES ('participant_retained', 'room_retained', 'Private participant name', 'private@example.com', '{"private":"secret"}', now() - interval '10 minutes', now() - interval '2 minutes');
   INSERT INTO participant_session (id, participant_id, signaling_node_id, client_ip, country, joined_at, metering_started_at)
@@ -34,6 +34,7 @@ const fixture = `
   UPDATE participant_session SET connection_state = 'reconnecting', disconnected_at = now() - interval '9 minutes', messages_in = 3, messages_out = 5 WHERE id = 'session_retained';
   UPDATE participant_session SET connection_state = 'connected', disconnected_at = NULL, reconnected_at = now() - interval '8 minutes' WHERE id = 'session_retained';
   UPDATE participant_session SET connection_state = 'disconnected', disconnected_at = now() - interval '7 minutes' WHERE id = 'session_retained';
+  UPDATE room SET status = 'ended', ended_at = now() - interval '2 minutes' WHERE id = 'room_retained';
   INSERT INTO usage_event (id, organization_id, project_id, environment_id, room_id, metric, value, occurred_at)
     VALUES ('event_retained', 'org_retained', 'project_retained', 'env_retained', 'room_retained', 'sfuIngressBytes', 1.25, now() - interval '1 minute');
 `;
