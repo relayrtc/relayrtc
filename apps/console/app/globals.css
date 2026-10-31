@@ -308,6 +308,8 @@ body:has(.login-page) .toast { left: 50%; }
 .connection-ongoing { color: #aaa; }
 .participant-timezone { margin: -4.725px 0 18.9px; text-align: center; font-size: 10.2375px; line-height: 17.325px; color: #999; }
 .participant-details .connection-timestamp { font-size: inherit; line-height: 17.325px; }
+.room-activity-person-status { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4.725px; vertical-align: middle; }
+.room-last-spoke { display: inline-flex; align-items: baseline; gap: 3.15px; font-size: 10.2375px; font-weight: 400; line-height: 15.75px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 768px) {
   .room-card { gap: 10px; padding-inline: 12px; }
