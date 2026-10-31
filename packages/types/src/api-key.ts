@@ -7,9 +7,11 @@ export type ApiKeyType = (typeof apiKeyTypes)[number];
 export const apiKeyScopes = [
   "rooms:create",
   "rooms:read",
+  "rooms:write",
   "rooms:end",
   "participants:read",
   "participants:remove",
+  "participants:write",
   "tokens:create",
   "recordings:create",
   "recordings:read",

@@ -12,3 +12,7 @@ export * from "./session.js";
 export * from "./track.js";
 export * from "./version.js";
 export * from "./quality-stats.js";
+
+export * from "./room-access.js";
+export * from "./room-lifecycle.js";
+export * from "./room-activity.js";
