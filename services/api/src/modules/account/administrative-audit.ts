@@ -1,6 +1,6 @@
 import { recordAudit, type AuditActor } from "@relayrtc/auth/server";
 import { schema, type RelayKitDatabase } from "@relayrtc/database";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
 declare module "fastify" {
@@ -35,7 +35,14 @@ export function registerAdministrativeAudit(app: FastifyInstance, database: Rela
     if (!request.url.startsWith("/v1/") || ["GET", "HEAD", "OPTIONS"].includes(request.method) || request.administrativeAuditRecorded) return payload;
     request.administrativeAuditRecorded = true;
     const scope = await context(request);
-    await recordAudit(database, { ...scope, resourceType: "api_request", action: `${request.method} ${request.routeOptions.url ?? "unknown"}`,
+    const params = request.params as { roomId?: string; participantId?: string };
+    let roomId: string | null = null;
+    if (request.apiKey && params.roomId) {
+      const [room] = await database.select({ id: schema.room.id }).from(schema.room).where(and(
+        eq(schema.room.id, params.roomId), eq(schema.room.projectId, request.apiKey.projectId), eq(schema.room.environmentId, request.apiKey.environmentId)));
+      roomId = room?.id ?? null;
+    }
+    await recordAudit(database, { ...scope, roomId, resourceId: roomId ? params.participantId ?? roomId : null, resourceType: "api_request", action: `${request.method} ${request.routeOptions.url ?? "unknown"}`,
       outcome: reply.statusCode < 400 ? "SUCCESS" : "FAILURE", correlationId: request.id,
       metadata: { status: reply.statusCode, method: request.method } });
     return payload;

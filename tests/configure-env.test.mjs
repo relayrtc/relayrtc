@@ -48,7 +48,7 @@ test("fresh setup generates distinct secrets and leaves provider credentials for
   assert.equal(new Set(keys.map((key) => values[key])).size, keys.length);
   for (const key of keys) assert.match(values[key], /^[a-f0-9]{64}$/u);
   assert.equal(Buffer.from(values.WEBHOOK_SIGNING_ENCRYPTION_KEY, "base64").length, 32);
-  assert.equal(values.RELAYRTC_VERSION, "0.1.2");
+  assert.equal(values.RELAYRTC_VERSION, "0.1.4");
   assert.equal(values.SKIP_EMAIL_VERIFICATION, "");
   assert.equal(values.GITHUB_CLIENT_SECRET, "");
   assert.equal(values.GOOGLE_CLIENT_SECRET, "");

@@ -1,3 +1,5 @@
+import type { RoomCapabilities } from "@relayrtc/types";
+import { roomCapabilitiesSchema } from "@relayrtc/validation";
 import type { Participant, ParticipantSession, RoomId, SessionId, Track } from "@relayrtc/types";
 import {
   participantSchema,
@@ -19,6 +21,7 @@ export interface SessionResumeRequestPayload {
 }
 
 export interface SessionResumeAcceptedPayload {
+  readonly capabilities?: RoomCapabilities | undefined;
   readonly roomId: RoomId;
   readonly session: ParticipantSession;
   readonly participants: readonly Participant[];
@@ -50,6 +53,7 @@ export const sessionResumeAcceptedResponseSchema = protocolResponseSchema(
       session: participantSessionSchema,
       participants: z.array(participantSchema).readonly(),
       tracks: z.array(trackSchema).readonly(),
+      capabilities: roomCapabilitiesSchema.optional(),
     })
     .strict(),
 ) satisfies z.ZodType<SessionResumeAcceptedResponse>;

@@ -142,6 +142,9 @@ func Plan(request SignalRequest, claims auth.Claims, scope Scope, resources Reso
 		switch valueString(payload, "action") {
 		case "pause", "resume":
 			action := valueString(payload, "action")
+			if action == "resume" && !permitted(claims.Permissions, publicationPermission(track.Type)) {
+				return Command{}, ErrForbidden
+			}
 			command.Method, command.Path, command.ResponseType = "PATCH", base+"/participants/"+url.PathEscape(scope.MediaParticipantID)+"/tracks/"+url.PathEscape(track.MediaID)+"/"+action, "rtc.track.control.accepted"
 			command.Request = Operation{Operation: "track." + action}
 			return command, nil

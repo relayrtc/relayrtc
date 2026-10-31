@@ -12,6 +12,7 @@ export async function proxyAccountRequest(request: Request): Promise<Response> {
   const incoming = new URL(request.url);
   const path = incoming.pathname;
   if ((!path.startsWith("/api/auth/") && path !== "/api/account" && !path.startsWith("/api/account/")) || /%2f|%5c|\\/i.test(path)) return Response.json({ message: "Invalid account API path." }, { status: 400 });
+  const streaming = request.method === "GET" && /^\/api\/account\/realtime\/projects\/[^/]+\/rooms\/[^/]+\/activity\/events$/.test(path);
   const headers = new Headers();
   for (const name of ["cookie", "origin", "content-type", "accept", "user-agent", "sec-fetch-site"]) {
     const value = request.headers.get(name);
@@ -19,11 +20,11 @@ export async function proxyAccountRequest(request: Request): Promise<Response> {
   }
   try {
     const response = await fetch(new URL(`${path}${incoming.search}`, accountOrigin()), {
-      method: request.method, headers, redirect: "manual", cache: "no-store", signal: AbortSignal.timeout(25000),
+      method: request.method, headers, redirect: "manual", cache: "no-store", signal: streaming ? AbortSignal.any([request.signal, AbortSignal.timeout(125000)]) : AbortSignal.timeout(25000),
       ...(["GET", "HEAD"].includes(request.method) ? {} : { body: await request.text() }),
     });
-    const output = new Headers({ "cache-control": "private, no-store", "referrer-policy": "no-referrer" });
-    for (const name of ["content-type", "location", "retry-after", "x-request-id", "content-disposition"]) {
+    const output = new Headers({ "cache-control": streaming ? "private, no-store, no-transform" : "private, no-store", "referrer-policy": "no-referrer" });
+    for (const name of ["content-type", "location", "retry-after", "x-request-id", "content-disposition", "x-accel-buffering"]) {
       const value = response.headers.get(name);
       if (value) output.set(name, value);
     }

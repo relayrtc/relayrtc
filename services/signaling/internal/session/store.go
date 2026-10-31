@@ -180,6 +180,13 @@ func (store *Store) Join(ctx context.Context, claims auth.Claims, sessionID, nod
 		}
 	}
 	var active int
+	var admissionOpen bool
+	if err := tx.QueryRow(ctx, `SELECT NOT locked AND (ends_at IS NULL OR ends_at>clock_timestamp()) FROM room_lifecycle WHERE room_id=$1`, room.ID).Scan(&admissionOpen); err != nil {
+		return JoinResult{}, err
+	}
+	if !admissionOpen {
+		return JoinResult{}, ErrRoomNotJoinable
+	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM participant WHERE room_id = $1 AND left_at IS NULL`, room.ID).Scan(&active); err != nil {
 		return JoinResult{}, fmt.Errorf("count active participants: %w", err)
 	}
@@ -204,6 +211,12 @@ func (store *Store) Join(ctx context.Context, claims auth.Claims, sessionID, nod
 	if err != nil {
 		if pgxErr := new(pgconn.PgError); errors.As(err, &pgxErr) && pgxErr.Code == "23505" {
 			return JoinResult{}, ErrParticipantConflict
+		}
+		if strings.Contains(err.Error(), "ROOM_FULL") {
+			return JoinResult{}, ErrRoomFull
+		}
+		if strings.Contains(err.Error(), "ROOM_LOCKED") || strings.Contains(err.Error(), "ROOM_NOT_JOINABLE") || strings.Contains(err.Error(), "ROOM_INVITATION_UNAVAILABLE") {
+			return JoinResult{}, ErrRoomNotJoinable
 		}
 		return JoinResult{}, fmt.Errorf("insert participant: %w", err)
 	}
@@ -302,6 +315,8 @@ func (store *Store) Resume(
 		WHERE s.id = $1 AND s.participant_id = $2 AND p.room_id = $3
 		  AND r.project_id = $4 AND r.environment_id = $5
 		  AND r.status IN ('created', 'active')
+		  AND EXISTS(SELECT 1 FROM room_lifecycle l WHERE l.room_id=r.id AND (l.ends_at IS NULL OR l.ends_at>clock_timestamp()))
+		  AND p.removed_at IS NULL
 		  AND p.left_at IS NULL AND s.connection_state = 'reconnecting'
 		  AND s.disconnected_at >= $6
 		FOR UPDATE`,

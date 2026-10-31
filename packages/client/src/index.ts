@@ -65,3 +65,9 @@ export { StreamingRequestError } from "./streaming-request-error.js";
 
 export * from "./stream-guest-client.js";
 export type {GuestMedia,GuestRole,GuestDelegation,GuestResource,GuestStage,GuestRoster,GuestJoinGrant} from "@relayrtc/types";
+
+export * from "./room-access.js";
+export * from "./room-lifecycle.js";
+export * from "./room-invitations.js";
+export type {RoomActivityControl,RoomActivityPolicy,RoomActivitySnapshot,ParticipantActivityPreferences,ParticipantActivityState} from "./room-activity.js";
+export * from "./push-to-talk.js";

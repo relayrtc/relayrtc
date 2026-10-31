@@ -121,3 +121,13 @@ connection.rtc.subscribe(({ state, iceConnectionState }) => {
 const restartOffer = await connection.rtc.restartIce();
 sendOfferThroughSignaling(restartOffer);
 ```
+
+## Room access
+
+`room.access.current` exposes effective capabilities; `room.access.get` and `room.access.update` manage versioned participant policies through signaling. Observe `capabilitiesChanged` and unsubscribe on disposal. See [room policy](https://docs.relayrtc.com/guides/room-roles-and-permissions) for compatibility and enforcement timing.
+## Room admission and lifecycle
+
+Version 0.1.4 adds `room.lifecycle.current`, `room.lifecycle.get()`, `room.lifecycle.update({ version, locked, endsAt })` and `lifecycleChanged`. Hosts and moderators manage policy through their joined session. Invitation operations use your authenticated application backend through the exported `RoomInvitationBackend` contract. See [room admission](https://docs.relayrtc.com/guides/room-admission-and-lifecycle) for lock, reconnect, invitation and deadline behavior. These additions require compatible services and migration `0046_room_lifecycle`.
+## Speakers, activity and push-to-talk
+
+Version 0.1.4 adds `room.activity.current/get/configure`, `activityChanged`, initial `RelayClientOptions.activity` privacy preferences and `createPushToTalk(room)`. Presence activity is separate from connection state and microphone observation. Dispose the single push-to-talk controller owning a microphone when its view closes. These features require migration `0047_room_activity` and coordinated services/SDK builds. See [speaker and activity behavior](https://docs.relayrtc.com/guides/speakers-activity-and-push-to-talk).

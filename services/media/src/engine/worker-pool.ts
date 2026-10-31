@@ -1,4 +1,6 @@
 import { persistUsageSample } from "../usage/usage-sample-batch.js";
+import { RoomSpeakerObserver } from "../activity/speaker-observer.js";
+import type { SpeakerStore } from "../activity/speaker-store.js";
 import { StreamingExports, type StreamingExportRequest } from "./streaming-export.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { RoomRuntimeStore } from "./room-runtime-store.js";
@@ -89,6 +91,7 @@ interface WorkerSlot {
 }
 
 interface RoomState {
+  speakers: RoomSpeakerObserver | undefined;
   closing: boolean;
   reservations: { transports: number; producers: number; consumers: number };
   closingParticipants: Set<string>;
@@ -117,6 +120,8 @@ interface RoomState {
 }
 
 export interface MediaQualityOptions {
+  speakerStore?: SpeakerStore;
+  onSpeakerError?: (error: unknown) => void;
   roomRuntimeStore?: RoomRuntimeStore;
   onWorkerError?: (error: unknown) => void;
   onWorkerExhausted?: () => void;
@@ -364,7 +369,33 @@ export class MediasoupWorkerPool implements MediaEngine {
       void this.#flushFailures();
       throw new MediaEngineError("NOT_READY", "The media worker closed during room allocation");
     }
+    const allocationAvailable = () => !router.closed && this.#slotAvailable(slot);
+    let speakers: RoomSpeakerObserver | undefined;
+    try {
+      if (this.#quality.speakerStore)
+        speakers = await RoomSpeakerObserver.create(
+          request.roomId,
+          router,
+          this.#quality.speakerStore,
+          (error) => this.#quality.onSpeakerError?.(error),
+        );
+    } catch (error) {
+      router.close();
+      slot.rooms = Math.max(0, slot.rooms - 1);
+      this.#failedRooms.set(request.roomId, {});
+      void this.#flushFailures();
+      throw error;
+    }
+    if (!allocationAvailable()) {
+      await speakers?.close();
+      router.close();
+      slot.rooms = Math.max(0, slot.rooms - 1);
+      this.#failedRooms.set(request.roomId, {});
+      void this.#flushFailures();
+      throw new MediaEngineError("NOT_READY", "The media worker closed during speaker observer allocation");
+    }
     const state: RoomState = {
+      speakers,
       closing: false,
       reservations: { transports: 0, producers: 0, consumers: 0 },
       closingParticipants: new Set(),
@@ -392,6 +423,7 @@ export class MediasoupWorkerPool implements MediaEngine {
     };
     this.#rooms.set(request.roomId, state);
     router.observer.once("close", () => {
+      void state.speakers?.close();
       if (slot.worker.closed && !this.#closed) this.#handleWorkerDeath(slot);
       if (this.#rooms.get(request.roomId) !== state) return;
       this.#rooms.delete(request.roomId);
@@ -407,6 +439,7 @@ export class MediasoupWorkerPool implements MediaEngine {
     const room = this.#rooms.get(request.roomId);
     if (!room) return;
     room.closing = true;
+    await room.speakers?.close();
     await Promise.all([
       ...[...room.consumers.values()].map((state) =>
         this.#recordConsumerUsage(
@@ -632,6 +665,15 @@ export class MediasoupWorkerPool implements MediaEngine {
       release();
     }
     room.producers.set(producer.id, producer);
+    if (request.trackType === "audio") {
+      try {
+        await room.speakers?.add(producer);
+      } catch (error) {
+        room.producers.delete(producer.id);
+        producer.close();
+        throw error;
+      }
+    }
     if (
       transport.dtlsState === "connected" &&
       (transport.iceState === "connected" || transport.iceState === "completed")

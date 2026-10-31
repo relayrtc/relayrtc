@@ -43,7 +43,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <footer className="sidebar-footer"><FooterLinks /></footer>
     </aside>
     <div className="main-column">
-      <header className="page-header"><WorkspaceSwitcher mobile /><h1>{title ?? (pathname.startsWith("/rooms/") ? "Room Overview" : pathname.startsWith("/streams/") ? "Stream Overview" : titles[pathname] ?? "Account")}</h1></header>
+      <header className="page-header"><WorkspaceSwitcher mobile /><h1>{title ?? (pathname.startsWith("/rooms/") ? pathname.endsWith("/audit") ? "Room Audit Log" : pathname.endsWith("/invitations") ? "Room Invitations" : "Room Overview" : pathname.startsWith("/streams/") ? "Stream Overview" : titles[pathname] ?? "Account")}</h1></header>
       <main id="main-content">{workspacePage ? <WorkspaceGate>{children}</WorkspaceGate> : children}</main>
     </div>
     <nav className="bottom-nav" aria-label="Mobile navigation">{navigation.filter(item => !["/usage", "/activity", "/account"].includes(item.href)).map(item => <Link key={item.href} href={item.href} aria-label={item.label} aria-current={isActive(item.href) ? "page" : undefined} className="bottom-nav-link"><Icon name={item.icon} size={25.2} /></Link>)}<Link href="/account" aria-label="Account settings" aria-current={isAccount ? "page" : undefined} className={`bottom-account ${isAccount ? "bottom-account-active" : ""}`}><AccountAvatar size={25.2} name={account.user.name} image={account.user.image} /></Link></nav>

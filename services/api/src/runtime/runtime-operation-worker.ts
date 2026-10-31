@@ -5,6 +5,7 @@ import {
 } from "@relayrtc/auth";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import type { FastifyInstance } from "fastify";
+import { sql } from "drizzle-orm";
 
 export function registerRuntimeOperationWorker(
   app: FastifyInstance,
@@ -17,6 +18,17 @@ export function registerRuntimeOperationWorker(
   let reconciledAt = 0;
   const run = async () => {
     try {
+      await database.execute(sql`DELETE FROM room_speaker_snapshot WHERE room_id IN(
+        SELECT room_id FROM room_speaker_snapshot WHERE observed_at<now()-interval '30 seconds' ORDER BY observed_at LIMIT 1000)`);
+      await database.transaction(async transaction => {
+        await transaction.execute(sql`SET LOCAL lock_timeout='2s'`);
+        await transaction.execute(sql`SET LOCAL statement_timeout='5s'`);
+        await transaction.execute(sql`WITH due AS MATERIALIZED (
+          SELECT r.id FROM room r JOIN room_lifecycle l ON l.room_id=r.id
+          WHERE r.status IN ('created','active') AND l.ends_at<=now() AND l.settled_at IS NULL
+          ORDER BY l.ends_at LIMIT 25 FOR UPDATE OF r SKIP LOCKED
+        ) UPDATE room SET status='ended',ended_at=now() WHERE id IN(SELECT id FROM due)`);
+      });
       if (Date.now() - reconciledAt >= 30_000) {
         await reconcileRuntimeOperations(database);
         reconciledAt = Date.now();

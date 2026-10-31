@@ -6,7 +6,7 @@ on:
       version:
         description: Image version to publish from the selected branch
         required: true
-        default: "0.1.3"
+        default: "0.1.4"
         type: string
       image:
         description: Image to publish. Use all for a complete release
@@ -110,7 +110,7 @@ jobs:
           set -euo pipefail
           version="${RELEASE_VERSION:-${GITHUB_REF_NAME#v}}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            printf 'Expected a release tag such as v0.1.2\n' >&2
+            printf 'Expected a release tag such as v0.1.4\n' >&2
             exit 1
           fi
           image="relayrtc/${IMAGE_NAME}:${version}"

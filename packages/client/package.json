@@ -1,6 +1,6 @@
 {
   "name": "@relayrtc/client",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Browser RTC client for RelayRTC.",
   "license": "Apache-2.0",
   "type": "module",

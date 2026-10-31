@@ -24,3 +24,7 @@ export * from "./dvr.js";
 
 export * from "./guest.js";
 export * from "./service-usage.js";
+
+export * from "./room-access.js";
+export * from "./room-lifecycle.js";
+export * from "./room-activity.js";

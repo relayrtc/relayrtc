@@ -1,14 +1,8 @@
+import { roomParticipantPermissions } from "@relayrtc/types";
 import { metadataSchema, nameSchema, sessionIdSchema } from "@relayrtc/validation";
 import { z } from "zod";
 
-export const participantPermissions = [
-  "room:join",
-  "audio:publish",
-  "video:publish",
-  "screen:publish",
-  "messages:send",
-  "metadata:update",
-] as const;
+export const participantPermissions = roomParticipantPermissions;
 
 export const participantPermissionSchema = z.enum(participantPermissions);
 

@@ -1,6 +1,9 @@
+import { updateParticipantAccessSchema } from "@relayrtc/validation";
+import { readParticipantAccess, updateParticipantAccess } from "../rooms/room-access.service.js";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import {
   getRuntimeOperation,
+  setAuditContext,
   processRuntimeOperation,
   type RoomTerminationConfig,
 } from "@relayrtc/auth";
@@ -19,6 +22,12 @@ interface ParticipantRoutesOptions {
   database: RelayKitDatabase;
   runtimeConfig: RoomTerminationConfig;
 }
+
+const requestActor = (request: FastifyRequest) => {
+  const principal = request.apiKey;
+  if (!principal) throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Provide a valid API key");
+  return { type: "API_KEY" as const, id: principal.keyId, name: "API key" };
+};
 
 const requestScope = (request: FastifyRequest) => {
   const principal = request.apiKey;
@@ -75,12 +84,15 @@ export const participantRoutes: FastifyPluginCallback<ParticipantRoutesOptions> 
     { preHandler: requireApiKeyScope("participants:remove") },
     async (request, reply) => {
       const params = validate(participantParamsSchema, request.params);
-      const operation = await service.remove(
-        requestScope(request),
-        params.roomId,
-        params.participantId,
-      );
-      if (operation && operation.status !== "completed") return reply.status(202).send(operation);
+      await options.database.transaction(async transaction => {
+        await setAuditContext(transaction, requestActor(request), request.id);
+        const database = transaction as unknown as RelayKitDatabase;
+        await createParticipantService({ participantRepository: createParticipantRepository(database), roomRepository: createRoomRepository(database) })
+          .remove(requestScope(request), params.roomId, params.participantId);
+      });
+      const operation = await processRuntimeOperation(options.database, options.runtimeConfig, `participant.remove:${params.participantId}`);
+      if (!operation) throw new Error("Participant removal was not persisted");
+      if (operation.status !== "completed") return reply.status(202).send(operation);
       return reply.status(204).send();
     },
   );
@@ -106,6 +118,22 @@ export const participantRoutes: FastifyPluginCallback<ParticipantRoutesOptions> 
       return operation;
     },
   );
+
+  app.get("/rooms/:roomId/participants/:participantId/access", { preHandler: requireApiKeyScope("participants:read") }, async request => {
+    const params = validate(participantParamsSchema, request.params);
+    await service.get(requestScope(request), params.roomId, params.participantId);
+    return readParticipantAccess(options.database, params.roomId, params.participantId);
+  });
+
+  app.put("/rooms/:roomId/participants/:participantId/access", { preHandler: requireApiKeyScope("participants:write") }, async request => {
+    const params = validate(participantParamsSchema, request.params);
+    const input = validate(updateParticipantAccessSchema, request.body);
+    const actor = requestActor(request);
+    return options.database.transaction(async transaction => {
+      return updateParticipantAccess(transaction, requestScope(request), params.roomId, params.participantId, input,
+        actor, request.id);
+    });
+  });
 
   done();
 };

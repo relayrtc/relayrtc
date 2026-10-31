@@ -1,4 +1,6 @@
-import { getRuntimeOperation } from "@relayrtc/auth";
+import { roomAuditQuerySchema } from "@relayrtc/validation";
+import { readRoomAudit } from "./room-access.service.js";
+import { getRuntimeOperation, setAuditContext } from "@relayrtc/auth";
 import type { RelayKitDatabase } from "@relayrtc/database";
 import type { FastifyPluginCallback, FastifyRequest } from "fastify";
 
@@ -14,6 +16,12 @@ interface RoomRoutesOptions {
   database: RelayKitDatabase;
   roomRuntime: RoomRuntimeService;
 }
+
+const requestActor = (request: FastifyRequest) => {
+  const principal = request.apiKey;
+  if (!principal) throw new ApiError(401, "AUTHENTICATION_REQUIRED", "Provide a valid API key");
+  return { type: "API_KEY" as const, id: principal.keyId, name: "API key" };
+};
 
 const requestScope = (request: FastifyRequest) => {
   const principal = request.apiKey;
@@ -32,7 +40,10 @@ export const roomRoutes: FastifyPluginCallback<RoomRoutesOptions> = (app, option
 
   app.post("/rooms", { preHandler: requireApiKeyScope("rooms:create") }, async (request, reply) => {
     const body = validate(createRoomBodySchema, request.body);
-    const room = await service.create(requestScope(request), body);
+    const room = await options.database.transaction(async transaction => {
+      await setAuditContext(transaction, requestActor(request), request.id);
+      return createRoomService(createRoomRepository(transaction as unknown as RelayKitDatabase)).create(requestScope(request), body);
+    });
     return reply.status(201).send(room);
   });
 
@@ -64,11 +75,22 @@ export const roomRoutes: FastifyPluginCallback<RoomRoutesOptions> = (app, option
     { preHandler: requireApiKeyScope("rooms:end") },
     async (request, reply) => {
       const params = validate(roomParamsSchema, request.params);
-      const operation = await service.end(requestScope(request), params.roomId);
+      await options.database.transaction(async transaction => {
+        await setAuditContext(transaction, requestActor(request), request.id);
+        await createRoomService(createRoomRepository(transaction as unknown as RelayKitDatabase)).end(requestScope(request), params.roomId);
+      });
+      const ended = await createRoomRepository(options.database).find(requestScope(request), params.roomId);
+      if (!ended) throw new ApiError(404, "ROOM_NOT_FOUND", "The room does not exist");
+      const operation = await options.roomRuntime.end(ended);
       if (operation && operation.status !== "completed") return reply.status(202).send(operation);
       return reply.status(204).send();
     },
   );
+
+  app.get("/rooms/:roomId/audit", { preHandler: requireApiKeyScope("rooms:read") }, async request => {
+    const { roomId } = validate(roomParamsSchema, request.params);
+    return readRoomAudit(options.database, requestScope(request), roomId, validate(roomAuditQuerySchema, request.query));
+  });
 
   done();
 };
