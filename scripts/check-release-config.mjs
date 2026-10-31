@@ -80,7 +80,7 @@ try {
   const imageNames = new Set();
   for (const [name, service] of Object.entries(full.services)) {
     assert.ok(service.image, `${name} has no release image`);
-    if (service.image.startsWith("ghcr.io/relayrtc/")) {
+    if (service.image.startsWith("relayrtc/")) {
       assert.ok(service.image.endsWith(`:${version}`), `${name} has a mismatched release tag`);
       imageNames.add(service.image.split("/").at(-1).split(":")[0]);
     }
@@ -90,10 +90,16 @@ try {
     join(root, ".github/workflows/publish-images.yml"),
     "utf8",
   ).replaceAll("\r\n", "\n");
-  const matrix = workflow.slice(workflow.indexOf("matrix:"), workflow.indexOf("    steps:"));
+  const definitions = workflow.match(/const images = \[([\s\S]*?)\n\s*\];/u)?.[1];
+  assert.ok(definitions, "The publication image definitions are missing");
+  const publishedImages = new Set(
+    [...definitions.matchAll(/\{\s*name:\s*['"]([^'"]+)['"]/gu)].map((match) => match[1]),
+  );
+  assert.ok(/outputs\.image == ['"]media['"]/u.test(workflow), "The native media publication job is missing");
+  publishedImages.add("media");
   for (const name of imageNames)
     assert.ok(
-      matrix.includes(`- name: ${name}\n`),
+      publishedImages.has(name),
       `Image ${name} is absent from the publication matrix`,
     );
   for (const [role, command] of [
