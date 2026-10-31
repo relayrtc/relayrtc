@@ -322,17 +322,17 @@ describe.skipIf(!databaseUrl)("project usage against PostgreSQL", () => {
     await room();
     await room("room_3", "env_3", "project_3");
     await room("room_other", "env_other", "project_2");
+    await session("s1", "p1", "2026-10-02T10:00:00Z");
+    await disconnect("s1", "2026-10-02T10:10:00Z");
+    await session("s3", "p3", "2026-10-02T10:10:00Z", "room_3");
+    await disconnect("s3", "2026-10-02T10:20:00Z");
+    await session("other", "other", "2026-10-02T00:00:00Z", "room_other");
     await query(
       `UPDATE room SET started_at = '2026-10-02T10:00:00Z', ended_at = '2026-10-02T10:10:00Z', status = 'ended' WHERE id = 'room_1'`,
     );
     await query(
       `UPDATE room SET started_at = '2026-10-02T10:10:00Z', ended_at = '2026-10-02T10:20:00Z', status = 'ended' WHERE id = 'room_3'`,
     );
-    await session("s1", "p1", "2026-10-02T10:00:00Z");
-    await disconnect("s1", "2026-10-02T10:10:00Z");
-    await session("s3", "p3", "2026-10-02T10:10:00Z", "room_3");
-    await disconnect("s3", "2026-10-02T10:20:00Z");
-    await session("other", "other", "2026-10-02T00:00:00Z", "room_other");
     await query(`INSERT INTO usage_event (id, organization_id, project_id, environment_id, metric, value, occurred_at) VALUES
       ('e1', 'org_1', 'project_1', 'env_1', 'sfuIngressBytes', 100, '2026-10-02T12:00:00Z'),
       ('e3', 'org_1', 'project_3', 'env_3', 'sfuIngressBytes', 200, '2026-10-02T12:00:00Z'),
