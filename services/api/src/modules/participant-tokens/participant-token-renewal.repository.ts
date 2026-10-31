@@ -18,6 +18,7 @@ export function createActiveRenewalSession(database: RelayKitDatabase) {
         and r.project_id = ${scope.projectId} and r.environment_id = ${scope.environmentId}
         and pr.status = 'active' and e.status = 'active' and o.status = 'active'
         and r.status = 'active' and r.ended_at is null and p.left_at is null and p.removed_at is null
+        and exists(select 1 from room_lifecycle l where l.room_id=r.id and (l.ends_at is null or l.ends_at>now()))
         and s.connection_state in ('connected', 'reconnecting')
         and (s.signaling_instance_id is null or exists (
           select 1 from signaling_node_lease l where l.node_id = s.signaling_node_id

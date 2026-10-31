@@ -16,6 +16,7 @@ import { createActiveRenewalSession } from "./participant-token-renewal.reposito
 import type { ParticipantTokenVerifier } from "./participant-token.verifier.js";
 import { createParticipantTokenService } from "./participant-token.service.js";
 import type { ParticipantTokenSigner } from "./participant-token.signer.js";
+import { requireTokenAdmission } from "../rooms/room-lifecycle.service.js";
 
 interface ParticipantTokenRoutesOptions {
   database: RelayKitDatabase;
@@ -46,6 +47,7 @@ export const participantTokenRoutes: FastifyPluginCallback<ParticipantTokenRoute
     withActiveSession: createActiveRenewalSession(options.database),
   });
   const service = createParticipantTokenService({
+    requireAdmission: roomId=>requireTokenAdmission(options.database,roomId),
     isProjectActive: async ({ projectId, environmentId }) => {
       const [project] = await options.database
         .select({ status: schema.project.status })
