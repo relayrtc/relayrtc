@@ -52,4 +52,4 @@ Managed TURN is a separate deployment configuration. The API supports `TURN_AUTH
 
 The older `env:configure:streaming` and `docker:up:streaming` names remain compatibility aliases for the standard commands. They are not separate installation paths.
 
-Release commands use these files in order: `docker-compose.yml`, `docker-compose.streaming.yml`, `docker-compose.release.yml`, `docker-compose.streaming.release.yml`. Use matching published images and `--no-build`. The templates target 0.1.2; a template version does not establish registry availability.
+Release commands use these files in order: `docker-compose.yml`, `docker-compose.streaming.yml`, `docker-compose.release.yml`, `docker-compose.streaming.release.yml`. Use matching published images and `--no-build`. The templates target Docker Hub images at 0.1.4; a template version does not establish registry availability.

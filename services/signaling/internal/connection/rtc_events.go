@@ -15,6 +15,15 @@ func (handler *Handler) acceptWithTracks(client *client, claims auth.Claims, ses
 	if !active {
 		return rtc.ErrForbidden
 	}
+	if store, ok := handler.sessionStore.(roomAccessStore); ok {
+		ctx, cancel := context.WithTimeout(handler.shutdown, 2*time.Second)
+		capabilities, err := store.Capabilities(ctx, claims)
+		cancel()
+		if err != nil {
+			return err
+		}
+		payload["capabilities"] = capabilities
+	}
 	payload["tracks"] = []any{}
 	var sequence uint64
 	if discovery, ok := handler.rtcService.(RTCTrackDiscovery); ok {
@@ -62,6 +71,12 @@ func (handler *Handler) startRTCEvents() {
 }
 
 func (handler *Handler) deliverRTCEvents(discovery RTCTrackDiscovery) {
+	handler.activitySnapshots.Range(func(key, value any) bool {
+		if roomID, ok := key.(string); ok && len(handler.registry.roomClients(roomID)) == 0 {
+			handler.activitySnapshots.Delete(key)
+		}
+		return true
+	})
 	handler.registry.mu.RLock()
 	rooms := make([]string, 0, len(handler.registry.rooms))
 	for roomID, clients := range handler.registry.rooms {
@@ -83,6 +98,16 @@ func (handler *Handler) deliverRTCEvents(discovery RTCTrackDiscovery) {
 		}
 		if !ready {
 			continue
+		}
+		if runtime, ok := handler.rtcService.(interface {
+			ReconcileAccess(context.Context, string) error
+		}); ok {
+			ctx, cancel := context.WithTimeout(handler.shutdown, 2*time.Second)
+			err := runtime.ReconcileAccess(ctx, roomID)
+			cancel()
+			if err != nil {
+				continue
+			}
 		}
 		ctx, cancel := context.WithTimeout(handler.shutdown, 2*time.Second)
 		events, sequence, err := discovery.Events(ctx, roomID, after)

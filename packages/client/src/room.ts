@@ -1,3 +1,6 @@
+import type { RoomAccessControl, RoomCapabilities } from "./room-access.js";
+import type {RoomActivityControl,RoomActivitySnapshot,ParticipantActivityPreferences} from "./room-activity.js";
+import type { RoomLifecycleControl,RoomLifecycle } from "./room-lifecycle.js";
 import type { ParticipantSession, Room as RoomInfo } from "@relayrtc/types";
 import type { RoomError } from "./room-errors.js";
 import type { RoomLocalMedia, RoomLocalParticipant } from "./room-media.js";
@@ -37,6 +40,9 @@ export interface MediaConnectionStats {
 }
 
 export interface RoomEvents {
+  readonly activityChanged:RoomActivitySnapshot;
+  readonly lifecycleChanged: RoomLifecycle;
+  readonly capabilitiesChanged: RoomCapabilities;
   readonly connectionQualityChanged: ConnectionQualityEvent;
   readonly connectionDegraded: ConnectionQualityEvent;
   readonly connectionRecovered: ConnectionQualityEvent;
@@ -72,6 +78,9 @@ export interface RoomEvents {
 }
 
 export interface Room extends RoomLocalMedia {
+  readonly activity:RoomActivityControl;
+  readonly lifecycle: RoomLifecycleControl;
+  readonly access: RoomAccessControl;
   readonly quality: ConnectionQuality | null;
   readonly qualityStats: RtcQualityStats | null;
   readonly participantQualities: ReadonlyMap<string, ConnectionQualityEvent>;
@@ -95,6 +104,7 @@ export interface Room extends RoomLocalMedia {
 }
 
 export interface RelayClientOptions extends RoomCredentialOptions {
+  readonly activity?:ParticipantActivityPreferences;
   readonly signalingUrl: string;
   readonly requestTimeoutMs?: number;
   readonly iceServers?: readonly RTCIceServer[];

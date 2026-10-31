@@ -7,7 +7,7 @@ The Docker Hub image `relayrtc/relayrtc` runs the `install` entrypoint and opens
 From the repository root:
 
 ```sh
-docker build --platform linux/amd64,linux/arm64 --file infrastructure/docker/setup.Dockerfile --build-arg RELAYRTC_VERSION=0.1.3 --tag relayrtc/relayrtc:local .
+docker build --platform linux/amd64,linux/arm64 --file infrastructure/docker/setup.Dockerfile --build-arg RELAYRTC_VERSION=0.1.4 --tag relayrtc/relayrtc:local .
 ```
 
 A successful installer build does not establish a published Docker Hub release or working deployment. Matching service images must exist in Docker Hub before the stack starts. Local builds publish nothing.

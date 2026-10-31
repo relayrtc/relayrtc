@@ -6,14 +6,18 @@ A version bump is a candidate, not publication. Keep source, SDK packages, image
 
 | Package                | Source                          | Candidate version |
 | ---------------------- | ------------------------------- | ----------------- |
-| `@relayrtc/types`      | `packages/types`                | 0.1.2             |
-| `@relayrtc/validation` | `packages/validation`           | 0.1.2             |
-| `@relayrtc/protocol`   | `packages/protocol`             | 0.1.2             |
-| `@relayrtc/client`     | `packages/client`               | 0.1.2             |
-| `@relayrtc/react`      | Separate `react-sdk` repository | 0.1.2             |
-| `@relayrtc/node`       | Separate `node-sdk` repository  | 0.1.2             |
+| `@relayrtc/types`      | `packages/types`                | 0.1.4             |
+| `@relayrtc/validation` | `packages/validation`           | 0.1.4             |
+| `@relayrtc/protocol`   | `packages/protocol`             | 0.1.4             |
+| `@relayrtc/client`     | `packages/client`               | 0.1.4             |
+| `@relayrtc/react`      | Separate `react-sdk` repository | 0.1.4             |
+| `@relayrtc/node`       | Separate `node-sdk` repository  | 0.1.4             |
 
-Build and publish the first five in dependency order. Node has no runtime package dependencies but still requires acceptance against the target API. React's browser-client peer is `^0.1.2`; React 18.3.1 and 19 remain supported. The wire protocol and REST contract remain version 1 independently of npm versions.
+Publish types, validation, protocol and client in dependency order, then React. Node has no runtime package dependencies but still requires acceptance against the target API. React's browser-client peer is `^0.1.4`; React 18.3.1 and 19 remain supported. The wire protocol and REST contract remain version 1 independently of npm versions.
+
+## React dependency lock
+
+The React manifest requires `@relayrtc/client` at `^0.1.4`. Its existing lockfile still records the previously published browser client. Publish the four core packages first, then run `pnpm install --no-frozen-lockfile --ignore-scripts` in `react-sdk` and commit the resulting lockfile before publishing React. Do not substitute made-up registry checksums or commit sibling development links. Local-source declaration checks do not replace this release dependency step.
 
 ## Prepare artifacts
 
@@ -23,7 +27,7 @@ Pack all six packages locally. Inspect their manifests, runtime/declaration entr
 
 Use isolated consumers with only the packed packages and public dependencies. Typecheck against React 18 and 19, bundle browser entry points without Node built-ins, import the Node package, and verify provider server rendering. Do not use source aliases or sibling SDK links as evidence of package acceptance.
 
-The React lockfile may reference candidate tarball integrity before publication. If any packed dependency changes, regenerate its integrity from the final artifacts and repeat the frozen-lockfile/consumer checks. After publication, verify the registry bytes and perform a normal registry install.
+Regenerate the React lockfile from the actual published core packages. Verify the resolved versions and registry integrity before building and publishing React. Do not infer registry availability from a source version bump.
 
 ## Images and installation
 
@@ -33,7 +37,7 @@ For a manual run, select the source branch, version and image in **Actions → P
 
 Configure GitHub Actions secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. The Docker Hub account/token must have push access to the `relayrtc` namespace and the intended public repositories. Configure those repositories and their visibility before publication. Workflow edits do not create accounts, credentials or public visibility automatically.
 
-The standard installation includes calls and streaming. Canonical source composition remains `docker-compose.yml` plus `docker-compose.streaming.yml`. Advanced GHCR/manual composition from previous releases remains separate from the Docker Hub wizard. The wizard resolves those definitions into one portable generated Compose file and rewrites RelayRTC images to matching versioned Docker Hub repositories.
+The standard installation includes calls and streaming. Canonical source composition remains `docker-compose.yml` plus `docker-compose.streaming.yml`. The manual release overrides also use versioned Docker Hub images. The wizard resolves those definitions into one portable generated Compose file and rewrites RelayRTC images to matching versioned Docker Hub repositories.
 
 ## Browser installer
 
@@ -44,10 +48,10 @@ The wizard runs on port 9095, writes `./relayrtc` below the mounted parent direc
 Build locally without publishing or installing:
 
 ```sh
-docker build --platform linux/amd64,linux/arm64 --file infrastructure/docker/setup.Dockerfile --build-arg RELAYRTC_VERSION=0.1.3 --tag relayrtc/relayrtc:local .
+docker build --platform linux/amd64,linux/arm64 --file infrastructure/docker/setup.Dockerfile --build-arg RELAYRTC_VERSION=0.1.4 --tag relayrtc/relayrtc:local .
 ```
 
-A local installer image still needs matching application images in Docker Hub before the generated stack can start. Keep documentation and bundled `release.json` aligned with the actual release. The candidate remains 0.1.3 as requested. This change does not remove or recreate an existing tag and does not publish artifacts.
+A local installer image still needs matching application images in Docker Hub before the generated stack can start. Keep documentation and bundled `release.json` aligned with the actual release. The release candidate is 0.1.4. This change does not remove or recreate an existing tag and does not publish artifacts.
 
 `latest` is an installer convenience alias. Generated application images use the installer's bundled release number. Publish the alias only for the intended current release. Existing deployments retain their pinned image versions. The wizard supports initial installation and same-version configuration, not automatic cross-version migration.
 

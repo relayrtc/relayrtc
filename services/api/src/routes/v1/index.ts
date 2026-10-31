@@ -9,6 +9,7 @@ import type { ParticipantTokenSigner } from "../../modules/participant-tokens/pa
 import type { ParticipantTokenVerifier } from "../../modules/participant-tokens/participant-token.verifier.js";
 import { participantRoutes } from "../../modules/participants/participant.routes.js";
 import { roomRoutes } from "../../modules/rooms/room.routes.js";
+import { roomLifecycleRoutes } from "../../modules/rooms/room-lifecycle.routes.js";
 import type { RoomRuntimeService } from "../../modules/rooms/room-runtime.service.js";
 import { turnCredentialRoutes } from "../../modules/turn-credentials/turn-credential.routes.js";
 import type { TurnCredentialIssuer } from "../../modules/turn-credentials/turn-credential.service.js";
@@ -41,6 +42,7 @@ const contextResponseSchema = {
 } as const;
 
 export const v1Routes: FastifyPluginCallback<V1RoutesOptions> = (app, options, done) => {
+  void app.register(roomLifecycleRoutes, {database:options.database,signer:options.participantTokenSigner});
   registerAuthentication(app, options.database);
 
   void app.register(roomRoutes, { database: options.database, roomRuntime: options.roomRuntime });

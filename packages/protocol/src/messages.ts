@@ -1,3 +1,5 @@
+import { participantAccessGetRequestSchema, participantAccessGetResponseSchema, participantAccessUpdateRequestSchema, participantAccessUpdateResponseSchema, roomCapabilitiesChangedSchema } from "./room-access.js";
+import type { ParticipantAccessGetRequest, ParticipantAccessGetResponse, ParticipantAccessUpdateRequest, ParticipantAccessUpdateResponse, RoomCapabilitiesChanged } from "./room-access.js";
 import { z } from "zod";
 import type {
   RtcSubscriptionQualityRequest,
@@ -128,6 +130,9 @@ import {
 } from "./track.js";
 
 export const protocolRequestTypes = [
+  "room.activity.get","participant.activity.update",
+  "room.lifecycle.get", "room.lifecycle.update",
+  "participant.access.get", "participant.access.update",
   "rtc.subscription.quality",
   "rtc.stats.report",
   "heartbeat.ping",
@@ -150,6 +155,9 @@ export const protocolRequestTypes = [
 ] as const;
 
 export const protocolResponseTypes = [
+  "room.activity","participant.activity.updated",
+  "room.lifecycle", "room.lifecycle.updated",
+  "participant.access", "participant.access.update.accepted",
   "rtc.subscription.quality.accepted",
   "rtc.stats.accepted",
   "heartbeat.pong",
@@ -172,6 +180,9 @@ export const protocolResponseTypes = [
 ] as const;
 
 export const protocolEventTypes = [
+  "room.activity.changed",
+  "room.lifecycle.changed",
+  "room.capabilities.changed",
   "connection.quality.changed",
   "room.ended",
   "message.received",
@@ -190,6 +201,9 @@ export const protocolEventTypes = [
 ] as const;
 
 export type ProtocolRequestMessage =
+  | RoomActivityGetRequest | ParticipantActivityUpdateRequest
+  | RoomLifecycleGetRequest | RoomLifecycleUpdateRequest
+  | ParticipantAccessGetRequest | ParticipantAccessUpdateRequest
   | RtcSubscriptionQualityRequest
   | RtcStatsReportRequest
   | HeartbeatPingRequest
@@ -211,6 +225,9 @@ export type ProtocolRequestMessage =
   | SessionRefreshRequest;
 
 export type ProtocolResponseMessage =
+  | RoomActivityResponse | ParticipantActivityUpdatedResponse
+  | RoomLifecycleResponse | RoomLifecycleUpdatedResponse
+  | ParticipantAccessGetResponse | ParticipantAccessUpdateResponse
   | RtcSubscriptionQualityAcceptedResponse
   | RtcStatsAcceptedResponse
   | HeartbeatPongResponse
@@ -232,6 +249,9 @@ export type ProtocolResponseMessage =
   | SessionRefreshAcceptedResponse;
 
 export type ProtocolEventMessage =
+  | RoomActivityChanged
+  | RoomLifecycleChanged
+  | RoomCapabilitiesChanged
   | ConnectionQualityChangedEvent
   | RoomEndedEvent
   | TextMessageReceivedEvent
@@ -266,6 +286,9 @@ export const protocolMessageTypes = [
 ] as const satisfies readonly ProtocolMessageType[];
 
 export const protocolMessageSchema: z.ZodType<ProtocolMessage> = z.discriminatedUnion("type", [
+  roomActivityGetRequestSchema,participantActivityUpdateRequestSchema,roomActivityResponseSchema,participantActivityUpdatedResponseSchema,roomActivityChangedSchema,
+  roomLifecycleGetRequestSchema,roomLifecycleUpdateRequestSchema,roomLifecycleResponseSchema,roomLifecycleUpdatedResponseSchema,roomLifecycleChangedSchema,
+  participantAccessGetRequestSchema, participantAccessGetResponseSchema, participantAccessUpdateRequestSchema, participantAccessUpdateResponseSchema, roomCapabilitiesChangedSchema,
   rtcSubscriptionQualityRequestSchema,
   rtcSubscriptionQualityAcceptedResponseSchema,
   rtcStatsReportRequestSchema,
@@ -338,3 +361,7 @@ export function deserializeProtocolMessage(serialized: string): ProtocolMessage 
   const input: unknown = JSON.parse(serialized);
   return parseProtocolMessage(input);
 }
+import { roomLifecycleGetRequestSchema,roomLifecycleUpdateRequestSchema,roomLifecycleResponseSchema,roomLifecycleUpdatedResponseSchema,roomLifecycleChangedSchema } from "./room-lifecycle.js";
+import type { RoomLifecycleGetRequest,RoomLifecycleUpdateRequest,RoomLifecycleResponse,RoomLifecycleUpdatedResponse,RoomLifecycleChanged } from "./room-lifecycle.js";
+import {roomActivityGetRequestSchema,participantActivityUpdateRequestSchema,roomActivityResponseSchema,participantActivityUpdatedResponseSchema,roomActivityChangedSchema} from "./room-activity.js";
+import type {RoomActivityGetRequest,ParticipantActivityUpdateRequest,RoomActivityResponse,ParticipantActivityUpdatedResponse,RoomActivityChanged} from "./room-activity.js";

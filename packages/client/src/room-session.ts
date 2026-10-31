@@ -1,3 +1,6 @@
+import type { RoomCapabilities, RoomAccessControl } from "./room-access.js";
+import {LocalRoomActivity} from "./room-activity.js";
+import type { RoomLifecycle,RoomLifecycleControl } from "./room-lifecycle.js";
 import type {
   ParticipantJoinAcceptedPayload,
   ServerProtocolMessage,
@@ -20,6 +23,11 @@ import { SessionRefresh } from "./session-refresh.js";
 import { duringRecovery, recoverable, recoveryOptions, recoverRoom } from "./room-recovery.js";
 
 export class RoomSession extends RoomEventEmitter implements Room {
+  readonly activity:LocalRoomActivity;
+  #lifecycle: RoomLifecycle | null=null;
+  readonly lifecycle: RoomLifecycleControl;
+  #capabilities: RoomCapabilities | null = null;
+  readonly access: RoomAccessControl;
   #state: RoomConnectionState = "connecting";
   #joined: ParticipantJoinAcceptedPayload | undefined;
   #ended = false;
@@ -51,6 +59,45 @@ export class RoomSession extends RoomEventEmitter implements Room {
     readonly onEnded: () => void,
   ) {
     super();
+    this.activity=new LocalRoomActivity(async()=>{
+      const joined=this.#requireJoined();
+      return this.#signaling.request("room.activity.get",{roomId:joined.room.id,sessionId:joined.session.id},"room.activity");
+    },async(preferences,visible,active)=>{
+      const joined=this.#requireJoined();
+      return this.#signaling.request("participant.activity.update",{...preferences,visible,active,roomId:joined.room.id,sessionId:joined.session.id},"participant.activity.updated");
+    },snapshot=>{this.emit("activityChanged",snapshot);this.clientEvents.emit("activityChanged",snapshot);},options.activity);
+    const lifecycle=()=>this.#lifecycle;
+    this.lifecycle={
+      get current(){return lifecycle();},
+      get:async()=>{
+        const joined=this.#requireJoined();
+        const result=await this.#signaling.request("room.lifecycle.get",{roomId:joined.room.id,sessionId:joined.session.id},"room.lifecycle");
+        this.#applyLifecycle(result);
+        return result;
+      },
+      update:async input=>{
+        const joined=this.#requireJoined();
+        const result=await this.#signaling.request("room.lifecycle.update",{...input,roomId:joined.room.id,sessionId:joined.session.id},"room.lifecycle.updated");
+        this.#applyLifecycle(result);
+        return result;
+      },
+    };
+    const capabilities = (): RoomCapabilities | null => this.#capabilities;
+    this.access = {
+      get current() { return capabilities(); },
+      get: async participantId => {
+        const joined = this.#requireJoined();
+        const result = await this.#signaling.request("participant.access.get", { roomId: joined.room.id, sessionId: joined.session.id, participantId }, "participant.access");
+        if (result.access.roomId !== joined.room.id || result.access.participantId !== participantId) throw new RoomError("PROTOCOL_ERROR", "The access response belongs to another participant");
+        return result.access;
+      },
+      update: async (participantId, input) => {
+        const joined = this.#requireJoined();
+        const result = await this.#signaling.request("participant.access.update", { ...input, roomId: joined.room.id, sessionId: joined.session.id, participantId }, "participant.access.update.accepted");
+        if (result.access.roomId !== joined.room.id || result.access.participantId !== participantId) throw new RoomError("PROTOCOL_ERROR", "The access response belongs to another participant");
+        return result.access;
+      },
+    };
     this.#quality = new RoomQuality(
       this.#rtc,
       () =>
@@ -255,6 +302,7 @@ export class RoomSession extends RoomEventEmitter implements Room {
         );
       }
       this.#joined = joined;
+      if (joined.capabilities) this.#applyCapabilities(joined.capabilities);
       this.#remote.reconcile(joined, {
         roomId: joined.room.id,
         participantId: joined.localParticipant.id,
@@ -608,8 +656,10 @@ export class RoomSession extends RoomEventEmitter implements Room {
   }
 
   #finish(state: RoomConnectionState, error?: RoomError, reportError = false): void {
+    this.activity.dispose();
     if (this.#ended) return;
     this.#ended = true;
+    this.#capabilities = null;
     this.#quality.lost();
     this.#quality.dispose();
     this.#stopRecovery();
@@ -632,6 +682,7 @@ export class RoomSession extends RoomEventEmitter implements Room {
   }
 
   #setState(state: RoomConnectionState): void {
+    this.activity.connection(state);
     this.#state = state;
     if (state === "reconnecting" || state === "failed" || state === "disconnected")
       this.#quality.lost();
@@ -647,6 +698,27 @@ export class RoomSession extends RoomEventEmitter implements Room {
   #requireJoined(): ParticipantJoinAcceptedPayload {
     if (!this.#joined) throw new RoomError("NOT_CONNECTED", "The room has not been joined");
     return this.#joined;
+  }
+
+  #applyCapabilities(capabilities: RoomCapabilities): void {
+    const joined = this.#joined;
+    if (!joined) return;
+    if (capabilities.roomId !== joined.room.id || capabilities.participantId !== joined.localParticipant.id) return;
+    if (capabilities.version < (this.#capabilities?.version ?? 0)) return;
+    if (JSON.stringify(this.#capabilities) === JSON.stringify(capabilities)) return;
+    this.#capabilities = Object.freeze({ ...capabilities, permissions: Object.freeze([...capabilities.permissions]) });
+    this.#updateLocalParticipant({ ...joined.localParticipant, role: capabilities.role });
+    this.#localMedia.restrict(capabilities.permissions);
+    this.emit("capabilitiesChanged", this.#capabilities);
+    this.clientEvents.emit("capabilitiesChanged", this.#capabilities);
+  }
+
+  #applyLifecycle(policy: RoomLifecycle): void {
+    if(this.#ended||this.#exiting)return;
+    if(policy.roomId!==this.#joined?.room.id || policy.version<(this.#lifecycle?.version??0)) return;
+    this.#lifecycle=Object.freeze({...policy});
+    this.emit("lifecycleChanged",this.#lifecycle);
+    this.clientEvents.emit("lifecycleChanged",this.#lifecycle);
   }
 
   #updateLocalParticipant(participant: Participant): void {
@@ -683,6 +755,7 @@ export class RoomSession extends RoomEventEmitter implements Room {
   }
 
   #applyResume(payload: SessionResumeAcceptedPayload): void {
+    if (payload.capabilities) this.#applyCapabilities(payload.capabilities);
     const joined = this.#requireJoined();
     if (
       payload.roomId !== joined.room.id ||
@@ -723,6 +796,9 @@ export class RoomSession extends RoomEventEmitter implements Room {
     if (this.#ended || this.#exiting) return;
     try {
       this.#quality.handle(message);
+      if (message.type === "room.capabilities.changed") this.#applyCapabilities(message.payload);
+      if(message.type==="room.activity.changed"&&message.payload.roomId===this.#joined?.room.id)this.activity.apply(message.payload);
+      if (message.type === "room.lifecycle.changed") this.#applyLifecycle(message.payload);
       if (
         message.type === "rtc.subscription.closed" &&
         message.payload.reason === "runtime_reset" &&

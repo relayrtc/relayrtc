@@ -1,17 +1,17 @@
 services:
   api:
-    image: ghcr.io/relayrtc/api:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/api:${RELAYRTC_VERSION:-0.1.4}
   signaling:
-    image: ghcr.io/relayrtc/signaling:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/signaling:${RELAYRTC_VERSION:-0.1.4}
   media:
-    image: ghcr.io/relayrtc/media:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/media:${RELAYRTC_VERSION:-0.1.4}
   console:
-    image: ghcr.io/relayrtc/console:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/console:${RELAYRTC_VERSION:-0.1.4}
   migrate:
-    image: ghcr.io/relayrtc/migrate:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/migrate:${RELAYRTC_VERSION:-0.1.4}
   coturn:
-    image: ghcr.io/relayrtc/coturn:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/coturn:${RELAYRTC_VERSION:-0.1.4}
   prometheus:
-    image: ghcr.io/relayrtc/prometheus:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/prometheus:${RELAYRTC_VERSION:-0.1.4}
   grafana:
-    image: ghcr.io/relayrtc/grafana:${RELAYRTC_VERSION:-0.1.2}
+    image: relayrtc/grafana:${RELAYRTC_VERSION:-0.1.4}
