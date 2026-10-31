@@ -5,7 +5,7 @@ RUN apk add --no-cache ca-certificates
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 WORKDIR /opt/relayrtc
-ARG RELAYRTC_VERSION=0.1.3
+ARG RELAYRTC_VERSION=0.1.4
 ENV RELAYRTC_SETUP_VERSION=${RELAYRTC_VERSION}
 COPY scripts/configure-env.mjs scripts/prepare-streaming.mjs ./scripts/
 COPY infrastructure/setup ./infrastructure/setup/
