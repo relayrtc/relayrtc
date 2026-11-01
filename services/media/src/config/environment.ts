@@ -17,6 +17,7 @@ const environmentSchema = z
       }, "Database URL must use PostgreSQL"),
     MEDIA_HOST: z.string().trim().min(1).default("0.0.0.0"),
     MEDIA_LOG_LEVEL: z.enum(logLevels).default("info"),
+    MEDIA_USAGE_DIAGNOSTICS: z.enum(["true", "false"]).default("false"),
     MEDIA_MAX_ROOMS_PER_WORKER: z.coerce.number().int().min(1).max(10_000).default(100),
     MEDIA_MAX_TRANSPORTS_PER_ROOM: z.coerce.number().int().min(1).max(10_000).default(200),
     MEDIA_MAX_PRODUCERS_PER_ROOM: z.coerce.number().int().min(1).max(10000).default(100),
@@ -57,6 +58,7 @@ const environmentSchema = z
   });
 
 export interface MediaConfig {
+  usageDiagnosticsEnabled?: boolean;
   databaseUrl: string;
   host: string;
   logLevel: (typeof logLevels)[number];
@@ -91,6 +93,7 @@ export const readMediaEnvironment = (source: MediaEnvironmentSource): MediaConfi
     DATABASE_URL: source.DATABASE_URL,
     MEDIA_HOST: source.MEDIA_HOST,
     MEDIA_LOG_LEVEL: source.MEDIA_LOG_LEVEL,
+    MEDIA_USAGE_DIAGNOSTICS: source.MEDIA_USAGE_DIAGNOSTICS,
     MEDIA_MAX_ROOMS_PER_WORKER: source.MEDIA_MAX_ROOMS_PER_WORKER,
     MEDIA_MAX_TRANSPORTS_PER_ROOM: source.MEDIA_MAX_TRANSPORTS_PER_ROOM,
     MEDIA_MAX_PRODUCERS_PER_ROOM: source.MEDIA_MAX_PRODUCERS_PER_ROOM,
@@ -119,6 +122,7 @@ export const readMediaEnvironment = (source: MediaEnvironmentSource): MediaConfi
   }
 
   return {
+    usageDiagnosticsEnabled: parsed.data.MEDIA_USAGE_DIAGNOSTICS === "true",
     databaseUrl: parsed.data.DATABASE_URL,
     host: parsed.data.MEDIA_HOST,
     logLevel: parsed.data.MEDIA_LOG_LEVEL,
