@@ -8,7 +8,7 @@ export interface SpeakerFrame {
 }
 export interface SpeakerStore {
   publish(roomId: string, frame: SpeakerFrame): Promise<void>;
-  clear(roomId: string): Promise<void>;
+  clear(roomId: string, through?: Date): Promise<void>;
 }
 
 export function createSpeakerStore(database: RelayKitDatabase, nodeId: string): SpeakerStore {
@@ -31,11 +31,12 @@ export function createSpeakerStore(database: RelayKitDatabase, nodeId: string): 
           WHERE room_speaker_snapshot.observed_at<EXCLUDED.observed_at`);
       });
     },
-    async clear(roomId) {
+    async clear(roomId, through = new Date()) {
       await database.transaction(async (tx) => {
         await tx.execute(sql`SET LOCAL statement_timeout='2s'`);
         await tx.execute(
-          sql`DELETE FROM room_speaker_snapshot WHERE room_id=${roomId} AND node_id=${nodeId}`,
+          sql`DELETE FROM room_speaker_snapshot WHERE room_id=${roomId} AND node_id=${nodeId}
+            AND observed_at <= ${through.toISOString()}::timestamptz`,
         );
       });
     },

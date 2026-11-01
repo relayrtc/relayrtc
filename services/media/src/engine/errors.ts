@@ -2,6 +2,7 @@ export class MediaEngineError extends Error {
   constructor(
     readonly code:
       | "CAPACITY_EXCEEDED"
+      | "CONFLICT"
       | "FORBIDDEN"
       | "INVALID_REQUEST"
       | "NOT_FOUND"

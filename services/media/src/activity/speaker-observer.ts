@@ -124,13 +124,14 @@ export class RoomSpeakerObserver {
   }
   async close() {
     if (this.#closed) return;
+    const closedAt = new Date();
     this.#closed = true;
     clearInterval(this.#timer);
     this.observer.close();
     this.#samples.clear();
     this.#producers.clear();
     await this.#pending;
-    await this.store.clear(this.roomId).catch(this.report);
+    await this.store.clear(this.roomId, closedAt).catch(this.report);
   }
   #available() {
     return !this.#closed;
