@@ -11,6 +11,8 @@ export interface VideoLayer {
   bitrate: number;
   spatialLayer: number;
   temporalLayer: number;
+  height?: number | null;
+  scaleResolutionDownBy?: number | null;
 }
 export interface BudgetTrack {
   id: string;
@@ -19,6 +21,7 @@ export interface BudgetTrack {
   preference: SubscriberQualityMode;
   layers: readonly VideoLayer[];
   current: SelectedVideoQuality | null;
+  currentSpatialLayer?: number;
 }
 export const qualityRank: Record<SelectedVideoQuality, number> = {
   "audio-only": 0,
@@ -26,6 +29,40 @@ export const qualityRank: Record<SelectedVideoQuality, number> = {
   "720p": 2,
   "1080p": 3,
 };
+
+export const videoUpgradeHeadroomRatio = 0.1;
+
+export function subscriberBudget(stats: SubscriberNetworkStats | undefined, audioTracks: number) {
+  const packetLossRatio =
+    stats?.packetLossRatio ??
+    (stats && stats.packetsLost + stats.packetsReceived > 0
+      ? stats.packetsLost / (stats.packetsLost + stats.packetsReceived)
+      : 0);
+  const capacity = stats?.availableIncomingBitrate ?? null;
+  const audioBitrate = Math.max(64_000, audioTracks * 64_000);
+  const blocked = stats?.stale
+    ? "stale"
+    : packetLossRatio >= 0.2
+      ? "packet-loss"
+      : (stats?.roundTripTime ?? 0) >= 1
+        ? "round-trip-time"
+        : null;
+  return {
+    capacity,
+    audioBitrate,
+    packetLossRatio,
+    statsTimestamp: stats?.timestamp ?? null,
+    roundTripTime: stats?.roundTripTime ?? null,
+    stale: stats?.stale ?? false,
+    blocked,
+    videoBitrate: blocked
+      ? 0
+      : capacity === null
+        ? null
+        : Math.max(0, capacity * (packetLossRatio >= 0.08 ? 0.65 : 0.85) - audioBitrate),
+    upgradeHeadroomRatio: videoUpgradeHeadroomRatio,
+  };
+}
 
 export function availableVideoLayers(producer: Producer, consumer: Consumer): VideoLayer[] {
   const encodings = producer.rtpParameters.encodings ?? [];
@@ -39,19 +76,28 @@ export function availableVideoLayers(producer: Producer, consumer: Consumer): Vi
         : 1;
   const temporal = Math.max(0, Number(mode?.[2] ?? 1) - 1);
   const sourceHeight =
-    typeof producer.appData.sourceHeight === "number" ? producer.appData.sourceHeight : null;
+    typeof producer.appData.sourceHeight === "number" &&
+    Number.isFinite(producer.appData.sourceHeight) &&
+    producer.appData.sourceHeight > 0
+      ? producer.appData.sourceHeight
+      : null;
   const profiles: VideoLayer[] = [];
   for (let index = 0; index < spatial; index++) {
     const encoding = consumer.type === "simulcast" ? encodings[index] : first;
+    const configuredScale = (encoding as { scaleResolutionDownBy?: number } | undefined)
+      ?.scaleResolutionDownBy;
+    const encodingScale =
+      typeof configuredScale === "number" &&
+      Number.isFinite(configuredScale) &&
+      configuredScale >= 1
+        ? configuredScale
+        : null;
     const scale =
-      encoding?.rid === "q"
-        ? 3
-        : encoding?.rid === "h"
-          ? 1.5
-          : encoding?.rid === "f"
-            ? 1
-            : 2 ** (spatial - index - 1);
-    const height = sourceHeight === null ? null : sourceHeight / scale;
+      consumer.type === "svc"
+        ? (encodingScale ?? 1) * 2 ** (spatial - index - 1)
+        : (encodingScale ?? (spatial === 1 ? 1 : null));
+    const height =
+      sourceHeight === null || scale === null ? null : Math.round(sourceHeight / scale);
     const quality =
       height !== null
         ? height > 720
@@ -76,7 +122,14 @@ export function availableVideoLayers(producer: Producer, consumer: Consumer): Vi
       (consumer.type === "svc" && first?.maxBitrate
         ? first.maxBitrate / 2 ** (spatial - index - 1)
         : base);
-    profiles.push({ quality, bitrate, spatialLayer: index, temporalLayer: temporal });
+    profiles.push({
+      quality,
+      bitrate,
+      spatialLayer: index,
+      temporalLayer: temporal,
+      height,
+      scaleResolutionDownBy: scale,
+    });
   }
   return profiles;
 }
@@ -87,38 +140,37 @@ export function allocateSubscriberBudget(
   audioTracks: number,
 ): Map<string, VideoLayer | null> {
   const allocation = new Map(tracks.map((track) => [track.id, null as VideoLayer | null]));
-  if (stats?.stale) return allocation;
-  const loss =
-    stats?.packetLossRatio ??
-    (stats && stats.packetsLost + stats.packetsReceived > 0
-      ? stats.packetsLost / (stats.packetsLost + stats.packetsReceived)
-      : 0);
-  if (loss >= 0.2 || (stats?.roundTripTime ?? 0) >= 1) return allocation;
+  const budget = subscriberBudget(stats, audioTracks);
+  if (budget.blocked) return allocation;
+  const eligible = (track: BudgetTrack): VideoLayer[] => {
+    const preference = track.preference;
+    if (preference === "audio-only") return [];
+    return track.layers.filter((layer) => {
+      if (preference === "auto") return true;
+      const ceiling = { "360p": 360, "720p": 720, "1080p": 1080 }[preference];
+      return layer.height == null
+        ? qualityRank[layer.quality] <= qualityRank[preference]
+        : layer.height <= ceiling;
+    });
+  };
   // Unknown capacity preserves the current layers; it never grants a full budget to each track.
-  const capacity = stats?.availableIncomingBitrate;
-  if (capacity === null || capacity === undefined) {
+  if (budget.videoBitrate === null) {
     for (const track of tracks) {
       if (track.preference === "audio-only") continue;
-      const current =
-        track.current && track.current !== "audio-only"
-          ? track.current
-          : (track.layers[0]?.quality ?? "360p");
-      const ceiling = Math.min(
-        qualityRank[current],
-        track.preference === "auto" ? qualityRank["1080p"] : qualityRank[track.preference],
-      );
+      const currentLayer =
+        track.currentSpatialLayer ??
+        track.layers.find((layer) => layer.quality === track.current)?.spatialLayer ??
+        track.layers[0]?.spatialLayer ??
+        -1;
+      const ceiling = Math.max(currentLayer, track.layers[0]?.spatialLayer ?? -1);
       allocation.set(
         track.id,
-        [...track.layers].reverse().find((layer) => qualityRank[layer.quality] <= ceiling) ??
-          (track.preference === "auto" ? (track.layers[0] ?? null) : null),
+        [...eligible(track)].reverse().find((layer) => layer.spatialLayer <= ceiling) ?? null,
       );
     }
     return allocation;
   }
-  let remaining = Math.max(
-    0,
-    capacity * (loss >= 0.08 ? 0.65 : 0.85) - Math.max(64_000, audioTracks * 64_000),
-  );
+  let remaining = budget.videoBitrate;
   const weight = { high: 3, normal: 2, low: 1 };
   const ordered = [...tracks].sort(
     (left, right) =>
@@ -126,14 +178,6 @@ export function allocateSubscriberBudget(
       Number(right.screen) - Number(left.screen) ||
       left.id.localeCompare(right.id),
   );
-  const eligible = (track: BudgetTrack): VideoLayer[] =>
-    track.preference === "audio-only"
-      ? []
-      : track.layers.filter(
-          (layer) =>
-            track.preference === "auto" ||
-            qualityRank[layer.quality] <= qualityRank[track.preference],
-        );
   // Give each track a base layer before spending the remainder on upgrades.
   for (const track of ordered) {
     const base = eligible(track)[0];
@@ -148,10 +192,11 @@ export function allocateSubscriberBudget(
       if (!current || layer.spatialLayer <= current.spatialLayer) continue;
       const extra = layer.bitrate - current.bitrate;
       // Upgrades need headroom; downgrades are immediate when the shared budget shrinks.
-      const margin =
-        qualityRank[layer.quality] > qualityRank[track.current ?? "audio-only"]
-          ? layer.bitrate * 0.15
-          : 0;
+      const upgrading =
+        track.currentSpatialLayer === undefined
+          ? qualityRank[layer.quality] > qualityRank[track.current ?? "audio-only"]
+          : layer.spatialLayer > track.currentSpatialLayer;
+      const margin = upgrading ? layer.bitrate * videoUpgradeHeadroomRatio : 0;
       if (extra + margin > remaining) break;
       allocation.set(track.id, layer);
       remaining -= extra;

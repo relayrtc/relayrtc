@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fix simulcast layer classification using source height and encoding scale metadata instead of RID names.
+- Align spatial upgrade headroom with mediasoup bandwidth estimates while preserving shared audio reserves, automatic downgrades and audio-only fallback.
+- Expose requested, allocated, preferred and forwarded layers in the optional internal media diagnostics.
+
 ## 0.1.4
 
 ### Phase 1 - room roles, permissions and audit logs

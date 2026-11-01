@@ -1,4 +1,10 @@
 import { persistUsageSample } from "../usage/usage-sample-batch.js";
+import { collectRtpByteCounters, type RtpByteCounters } from "../usage/rtp-byte-counters.js";
+import {
+  describeRtpStats,
+  describeUsageCheckpoint,
+  type UsageCheckpoint,
+} from "../usage/usage-diagnostics.js";
 import { RoomSpeakerObserver } from "../activity/speaker-observer.js";
 import type { SpeakerStore } from "../activity/speaker-store.js";
 import { StreamingExports, type StreamingExportRequest } from "./streaming-export.js";
@@ -52,6 +58,7 @@ import {
   allocateSubscriberBudget,
   availableVideoLayers,
   qualityRank,
+  subscriberBudget,
   type BudgetTrack,
   type VideoLayer,
 } from "./subscriber-budget.js";
@@ -91,6 +98,8 @@ interface WorkerSlot {
 }
 
 interface RoomState {
+  usageDiagnosticReadAt?: number;
+  usageDiagnosticRead?: Promise<unknown>;
   speakers: RoomSpeakerObserver | undefined;
   closing: boolean;
   reservations: { transports: number; producers: number; consumers: number };
@@ -136,9 +145,12 @@ interface ConsumerState {
   negotiationTimer?: ReturnType<typeof setTimeout>;
   consumer: Consumer;
   participantId: string;
+  transportId?: string;
   quality: SubscriberQualityMode;
   selectedQuality: SelectedVideoQuality | null;
   selectedLayer?: number;
+  allocatedLayer?: VideoLayer;
+  budget?: ReturnType<typeof subscriberBudget>;
   upgradeCandidate?: string;
   upgradeSamples?: number;
 }
@@ -151,14 +163,16 @@ interface TransportState {
 }
 
 interface UsageSampleState {
+  checkpoint?: UsageCheckpoint;
   pending?: {
     id: string;
-    bytes: number;
+    counters: RtpByteCounters;
     sampledAt: number;
     metrics: Partial<Record<MediaUsageMetric, number>>;
   };
   recording?: Promise<void> | undefined;
-  bytes: number;
+  counters: RtpByteCounters;
+  readonly screenShare: boolean;
   sampledAt: number;
 }
 
@@ -679,7 +693,11 @@ export class MediasoupWorkerPool implements MediaEngine {
       (transport.iceState === "connected" || transport.iceState === "completed")
     )
       room.durationMeter?.start(producer.id, request.participantId, request.trackType);
-    room.producerUsage.set(producer.id, { bytes: 0, sampledAt: Date.now() });
+    room.producerUsage.set(producer.id, {
+      counters: new Map(),
+      screenShare: request.trackType === "screen_video" || request.trackType === "screen_audio",
+      sampledAt: Date.now(),
+    });
     producer.observer.once("close", () => {
       room.durationMeter?.stop(producer.id);
       room.producers.delete(producer.id);
@@ -781,10 +799,16 @@ export class MediasoupWorkerPool implements MediaEngine {
     room.consumers.set(consumer.id, {
       consumer,
       participantId: request.participantId,
+      transportId: transport.id,
       quality,
       selectedQuality,
     });
-    room.consumerUsage.set(consumer.id, { bytes: 0, sampledAt: Date.now() });
+    room.consumerUsage.set(consumer.id, {
+      counters: new Map(),
+      screenShare:
+        producer.appData.trackType === "screen_video" || producer.appData.trackType === "screen_audio",
+      sampledAt: Date.now(),
+    });
     consumer.observer.once("close", () => {
       clearTimeout(room.consumers.get(consumer.id)?.negotiationTimer);
       room.consumers.delete(consumer.id);
@@ -1061,15 +1085,15 @@ export class MediasoupWorkerPool implements MediaEngine {
 
   async #recordSample(
     roomId: string,
-    sample: UsageSampleState | undefined,
+    sample: UsageSampleState,
     collect: () => Promise<{
-      bytes: number;
+      counters: RtpByteCounters;
       sampledAt: number;
       metrics: Partial<Record<MediaUsageMetric, number>>;
-    }>,
+    } | undefined>,
   ): Promise<void> {
     const store = this.#quality.usageMetricsStore;
-    if (!store || !sample) return;
+    if (!store) return;
     const operation = (sample.recording ?? Promise.resolve())
       .catch(() => undefined)
       .then(async () => {
@@ -1082,6 +1106,7 @@ export class MediasoupWorkerPool implements MediaEngine {
             this.#quality.onUsageError?.(error);
             return;
           }
+          if (!collected) return;
           sample.pending = { id: randomUUID(), ...collected };
           await this.#persistSample(roomId, sample);
         } catch (error) {
@@ -1108,7 +1133,9 @@ export class MediasoupWorkerPool implements MediaEngine {
       pending.metrics,
       new Date(pending.sampledAt),
     );
-    sample.bytes = pending.bytes;
+    if (this.#config.usageDiagnosticsEnabled)
+      sample.checkpoint = { ...pending, previous: sample.counters };
+    sample.counters = pending.counters;
     sample.sampledAt = pending.sampledAt;
     delete sample.pending;
   }
@@ -1147,23 +1174,18 @@ export class MediasoupWorkerPool implements MediaEngine {
     producer: Producer,
     sample?: UsageSampleState,
   ): Promise<void> {
+    if (!sample) return;
     await this.#recordSample(roomId, sample, async () => {
       const stats = await producer.getStats();
-      const bytes = stats.reduce(
-        (total, entry) => total + ("byteCount" in entry ? entry.byteCount : 0),
-        0,
-      );
+      const collected = collectRtpByteCounters(stats, "inbound-rtp", sample.counters);
+      if (!collected) return;
       const sampledAt = Date.now();
-      const delta = bytes >= (sample?.bytes ?? 0) ? bytes - (sample?.bytes ?? 0) : 0;
-      const trackType = String(producer.appData.trackType);
       return {
-        bytes,
+        counters: collected.counters,
         sampledAt,
         metrics: {
-          sfuIngressBytes: delta,
-          ...(trackType === "screen_video" || trackType === "screen_audio"
-            ? { screenShareIngressBytes: delta }
-            : {}),
+          sfuIngressBytes: collected.delta,
+          ...(sample.screenShare ? { screenShareIngressBytes: collected.delta } : {}),
         },
       };
     });
@@ -1174,23 +1196,17 @@ export class MediasoupWorkerPool implements MediaEngine {
     consumer: Consumer,
     sample?: UsageSampleState,
   ): Promise<void> {
+    if (!sample) return;
     await this.#recordSample(roomId, sample, async () => {
       const stats = await consumer.getStats();
-      const bytes = stats.reduce(
-        (total, entry) => total + ("byteCount" in entry ? entry.byteCount : 0),
-        0,
-      );
-      const delta = bytes >= (sample?.bytes ?? 0) ? bytes - (sample?.bytes ?? 0) : 0;
-      const producer = this.#rooms.get(roomId)?.producers.get(consumer.producerId);
+      const collected = collectRtpByteCounters(stats, "outbound-rtp", sample.counters);
+      if (!collected) return;
       return {
-        bytes,
+        counters: collected.counters,
         sampledAt: Date.now(),
         metrics: {
-          sfuEgressBytes: delta,
-          ...(producer?.appData.trackType === "screen_video" ||
-          producer?.appData.trackType === "screen_audio"
-            ? { screenShareEgressBytes: delta }
-            : {}),
+          sfuEgressBytes: collected.delta,
+          ...(sample.screenShare ? { screenShareEgressBytes: collected.delta } : {}),
         },
       };
     });
@@ -1202,6 +1218,147 @@ export class MediasoupWorkerPool implements MediaEngine {
       this.#usageFlush = null;
     });
     return this.#usageFlush;
+  }
+
+  async getUsageDiagnostics(request: MediaRoomRequest): Promise<unknown> {
+    if (!this.#config.usageDiagnosticsEnabled)
+      throw new MediaEngineError("UNSUPPORTED_OPERATION", "Media usage diagnostics are disabled");
+    const room = this.#getRoom(request.roomId);
+    if (room.usageDiagnosticRead || Date.now() - (room.usageDiagnosticReadAt ?? 0) < 5_000)
+      throw new MediaEngineError(
+        "CAPACITY_EXCEEDED",
+        "Read usage diagnostics at most once every five seconds per room",
+      );
+    room.usageDiagnosticReadAt = Date.now();
+    const work = this.#readUsageDiagnostics(request.roomId, room);
+    room.usageDiagnosticRead = work;
+    try {
+      return await work;
+    } finally {
+      delete room.usageDiagnosticRead;
+    }
+  }
+
+  async #readUsageDiagnostics(roomId: string, room: RoomState) {
+    const observedAt = new Date().toISOString();
+    const usage = (sample: UsageSampleState | undefined) => ({
+      acknowledged: describeUsageCheckpoint(sample?.checkpoint),
+      pending: sample?.pending
+        ? describeUsageCheckpoint({ ...sample.pending, previous: sample.counters })
+        : null,
+    });
+    const readResource = async <Value>(read: () => Promise<Value>) => {
+      try {
+        return { status: "available" as const, data: await read() };
+      } catch {
+        return { status: "unavailable" as const };
+      }
+    };
+    const producers = await Promise.all(
+      [...room.producers].slice(0, 16).map(([id, producer]) =>
+        readResource(async () => {
+          const stats = await producer.getStats();
+          return {
+            id,
+            kind: producer.kind,
+            trackType: producer.appData.trackType as string | undefined,
+            sourceHeight: producer.appData.sourceHeight ?? null,
+            encodings: (producer.rtpParameters.encodings ?? []).slice(0, 16).map((encoding) => ({
+              rid: encoding.rid ?? null,
+              maxBitrate: encoding.maxBitrate ?? null,
+              scalabilityMode: encoding.scalabilityMode ?? null,
+              scaleResolutionDownBy:
+                (encoding as { scaleResolutionDownBy?: number }).scaleResolutionDownBy ?? null,
+            })),
+            paused: producer.paused,
+            statsTruncated: stats.length > 16,
+            stats: describeRtpStats(stats),
+            ...usage(room.producerUsage.get(id)),
+          };
+        }),
+      ),
+    );
+    const consumers = await Promise.all(
+      [...room.consumers].slice(0, 16).map(([id, state]) =>
+        readResource(async () => {
+          const stats = await state.consumer.getStats();
+          const producer = room.producers.get(state.consumer.producerId);
+          const layers =
+            producer && state.consumer.kind === "video"
+              ? availableVideoLayers(producer, state.consumer)
+              : [];
+          const forwarded = state.consumer.currentLayers;
+          return {
+            id,
+            transportId: state.transportId ?? null,
+            producerId: state.consumer.producerId,
+            kind: state.consumer.kind,
+            paused: state.consumer.paused,
+            producerPaused: state.consumer.producerPaused,
+            selectedLayers: state.consumer.currentLayers ?? null,
+            requestedQuality: state.quality,
+            availableLayers: layers.slice(0, 16),
+            allocatedLayer: state.allocatedLayer ?? null,
+            preferredLayers: state.consumer.preferredLayers ?? null,
+            forwardedLayer: forwarded
+              ? {
+                  ...forwarded,
+                  estimatedHeight:
+                    layers.find((layer) => layer.spatialLayer === forwarded.spatialLayer)?.height ??
+                    null,
+                }
+              : null,
+            budget: state.budget ?? null,
+            upgrade: {
+              candidate: state.upgradeCandidate ?? null,
+              samples: state.upgradeSamples ?? 0,
+              requiredSamples: 3,
+            },
+            statsTruncated: stats.length > 16,
+            stats: describeRtpStats(stats),
+            ...usage(room.consumerUsage.get(id)),
+          };
+        }),
+      ),
+    );
+    const transports = await Promise.all(
+      [...room.transports].slice(0, 16).map(([id, state]) =>
+        readResource(async () => {
+          const stats = await state.transport.getStats();
+          return {
+            id,
+            direction: state.direction,
+            stats: stats.slice(0, 1).map((entry) => ({
+              timestamp: entry.timestamp,
+              bytesReceived: entry.bytesReceived,
+              bytesSent: entry.bytesSent,
+              rtpBytesReceived: entry.rtpBytesReceived,
+              rtpBytesSent: entry.rtpBytesSent,
+              rtxBytesReceived: entry.rtxBytesReceived,
+              rtxBytesSent: entry.rtxBytesSent,
+              probationBytesSent: entry.probationBytesSent,
+              availableOutgoingBitrate: entry.availableOutgoingBitrate,
+              protocol: state.transport.iceSelectedTuple?.protocol ?? null,
+            })),
+          };
+        }),
+      ),
+    );
+    return {
+      roomId,
+      observedAt,
+      completedAt: new Date().toISOString(),
+      limits: { resourcesPerKind: 16, streamsPerResource: 16, minimumIntervalMs: 5_000 },
+      totals: {
+        producers: room.producers.size,
+        consumers: room.consumers.size,
+        transports: room.transports.size,
+      },
+      truncated: room.producers.size > 16 || room.consumers.size > 16 || room.transports.size > 16,
+      producers,
+      consumers,
+      transports,
+    };
   }
 
   async #flushDurations(roomId: string, room: RoomState): Promise<void> {
@@ -1266,6 +1423,7 @@ export class MediasoupWorkerPool implements MediaEngine {
         id: state.consumer.id,
         preference: state.quality,
         current: state.selectedQuality,
+        currentSpatialLayer: state.selectedLayer ?? -1,
         screen: producer.appData.trackType === "screen_video",
         priority:
           (producer.appData.priority as MediaPriority | undefined) ??
@@ -1279,11 +1437,10 @@ export class MediasoupWorkerPool implements MediaEngine {
     const stats =
       interval ??
       (cumulative ? { ...cumulative, packetsLost: 0, packetsReceived: 0, stale } : undefined);
-    const allocation = allocateSubscriberBudget(
-      tracks,
-      stats,
-      states.filter((state) => state.consumer.kind === "audio").length,
-    );
+    const audioTracks = states.filter((state) => state.consumer.kind === "audio").length;
+    const budget = subscriberBudget(stats, audioTracks);
+    const allocation = allocateSubscriberBudget(tracks, stats, audioTracks);
+    for (const state of states) state.budget = budget;
     // Apply every downgrade first so temporary upgrades cannot overspend the connection budget.
     const choices = states
       .filter((state) => state.consumer.kind === "video")
@@ -1313,8 +1470,13 @@ export class MediasoupWorkerPool implements MediaEngine {
       if (state.consumer.closed || state.negotiationTimer) continue;
       await this.#applyQuality(state.consumer, layer);
       state.selectedQuality = selected;
-      if (layer) state.selectedLayer = layer.spatialLayer;
-      else delete state.selectedLayer;
+      if (layer) {
+        state.selectedLayer = layer.spatialLayer;
+        state.allocatedLayer = layer;
+      } else {
+        delete state.selectedLayer;
+        delete state.allocatedLayer;
+      }
     }
   }
 
