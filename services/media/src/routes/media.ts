@@ -522,5 +522,15 @@ export const mediaRoutes: FastifyPluginCallback<MediaRoutesOptions> = (app, opti
       return reply.code(204).send();
     },
   );
+  app.get<{ Params: RoomParameters }>(
+    "/rooms/:roomId/usage-diagnostics",
+    { schema: { params: roomParametersSchema } },
+    async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      if (!options.engine.getUsageDiagnostics)
+        throw new MediaEngineError("UNSUPPORTED_OPERATION", "Media usage diagnostics are unavailable");
+      return options.engine.getUsageDiagnostics(request.params);
+    },
+  );
   done();
 };

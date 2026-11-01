@@ -6,6 +6,7 @@ const roomRoutes = new Set([
   "DELETE /internal/v1/rooms/:roomId",
   "GET /internal/v1/rooms/:roomId/capabilities",
   "GET /internal/v1/rooms/:roomId/tracks",
+  "GET /internal/v1/rooms/:roomId/usage-diagnostics",
 ]);
 
 const participantRoutes = new Set([

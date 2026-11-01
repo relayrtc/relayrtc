@@ -132,6 +132,7 @@ export interface SetPriorityRequest extends MediaRoomRequest {
 }
 
 export interface MediaEngine {
+  getUsageDiagnostics?(request: MediaRoomRequest): Promise<unknown>;
   createStreamingExport?(
     request: StreamingExportRequest,
   ): Promise<{ tracks: StreamingExportTrack[] }>;
