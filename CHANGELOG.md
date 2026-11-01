@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Wait for the browser to return online without spending room recovery attempts, while retaining the recovery deadline and cancellation rules.
+- Close media resources independently of usage persistence, retain final accounting snapshots for retry and bound the shutdown accounting drain.
+- Reject duplicate subscriptions for the same session, receive transport and track while preserving request replay and independent transports.
+- Protect newer speaker observations from delayed cleanup of a previous room runtime.
 - Fix simulcast layer classification using source height and encoding scale metadata instead of RID names.
 - Align spatial upgrade headroom with mediasoup bandwidth estimates while preserving shared audio reserves, automatic downgrades and audio-only fallback.
 - Expose requested, allocated, preferred and forwarded layers in the optional internal media diagnostics.

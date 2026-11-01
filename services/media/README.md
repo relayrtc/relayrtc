@@ -34,6 +34,30 @@ Set `MEDIA_USAGE_DIAGNOSTICS=true` when recreating the media service to enable t
 Requests require a signed media-control token with room authority for that exact room,
 method and path. Participant grants cannot read diagnostics.
 
+## Subscription lifecycle and accounting
+
+A participant session can have one pending or active consumer for each receive
+transport and published track combination. Distinct requests for that same
+combination return a conflict. Different receive transports remain independent.
+Signaling continues to replay a successful request with its original request ID.
+
+Removing a subscription, publication, participant or room captures final RTP
+counters with a one-second statistics deadline. Media resources then close in
+cleanup handlers without waiting for usage persistence. Final counter snapshots
+and pending duration samples remain available to the periodic accounting flush
+after their resources have closed. Pending samples retain their idempotency keys,
+and final RTP deltas are calculated after earlier checkpoints have persisted.
+
+Shutdown closes routers, WebRTC servers and workers before attempting a final
+accounting drain with a five-second deadline. A failed drain reports an error
+after native media resources have closed. It does not make usage durable across
+a process crash or restart. Unpersisted snapshots are retained only in memory.
+Failed or timed-out final statistics reads can leave an unmeasured tail.
+
+Speaker cleanup also closes its native observer before storage operations. A
+delayed cleanup only deletes snapshots observed by its close time, preserving
+newer observations if a room runtime has been recreated.
+
 ## Adaptive video quality
 
 Receive quality defaults to `auto`. The allocator selects the highest eligible spatial
