@@ -15,6 +15,7 @@ var ErrUnsupported = errors.New("unsupported RTC operation")
 var ErrUnavailable = errors.New("RTC allocation unavailable")
 var ErrCapacityExceeded = fmt.Errorf("%w: resource capacity exhausted", ErrUnavailable)
 var ErrRequestConflict = errors.New("RTC request ID was reused with a different payload")
+var ErrDuplicateSubscription = errors.New("RTC subscription already exists for this track and receive transport")
 
 type Scope struct {
 	ProjectID          string `json:"projectId"`
