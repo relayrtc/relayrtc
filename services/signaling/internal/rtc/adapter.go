@@ -115,6 +115,13 @@ func (adapter *Adapter) Handle(ctx context.Context, claims auth.Claims, sessionI
 		if err != nil {
 			return err
 		}
+		if command.Request.Operation == "track.subscribe" && resources.Track != nil && resources.Transport != nil {
+			for _, binding := range session.Subscriptions {
+				if binding.TrackID == resources.Track.ID && binding.TransportID == resources.Transport.ID && binding.Generation == scope.Generation && binding.MediaNodeID == scope.MediaNodeID {
+					return ErrDuplicateSubscription
+				}
+			}
+		}
 		if command.Request.Operation == "subscription.already-removed" {
 			response = Response{Type: command.ResponseType, Payload: map[string]any{
 				"roomId": scope.RoomID, "sessionId": scope.SessionID,

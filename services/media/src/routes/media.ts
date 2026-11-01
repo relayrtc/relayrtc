@@ -139,17 +139,19 @@ export const mediaRoutes: FastifyPluginCallback<MediaRoutesOptions> = (app, opti
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof MediaEngineError) {
       const statusCode =
-        error.code === "NOT_FOUND"
-          ? 404
-          : error.code === "FORBIDDEN"
-            ? 403
-            : error.code === "INVALID_REQUEST"
-              ? 400
-              : error.code === "CAPACITY_EXCEEDED"
-                ? 429
-                : error.code === "NOT_READY"
-                  ? 503
-                  : 501;
+        error.code === "CONFLICT"
+          ? 409
+          : error.code === "NOT_FOUND"
+            ? 404
+            : error.code === "FORBIDDEN"
+              ? 403
+              : error.code === "INVALID_REQUEST"
+                ? 400
+                : error.code === "CAPACITY_EXCEEDED"
+                  ? 429
+                  : error.code === "NOT_READY"
+                    ? 503
+                    : 501;
       return reply.code(statusCode).send({ code: error.code, description: error.message });
     }
     throw error;
@@ -528,7 +530,10 @@ export const mediaRoutes: FastifyPluginCallback<MediaRoutesOptions> = (app, opti
     async (request, reply) => {
       reply.header("cache-control", "no-store");
       if (!options.engine.getUsageDiagnostics)
-        throw new MediaEngineError("UNSUPPORTED_OPERATION", "Media usage diagnostics are unavailable");
+        throw new MediaEngineError(
+          "UNSUPPORTED_OPERATION",
+          "Media usage diagnostics are unavailable",
+        );
       return options.engine.getUsageDiagnostics(request.params);
     },
   );

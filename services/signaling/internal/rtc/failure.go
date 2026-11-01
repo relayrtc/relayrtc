@@ -20,6 +20,8 @@ func FailureFor(err error) ProtocolFailure {
 		return ProtocolFailure{Code: "invalid_message", Message: "The RTC operation is not supported"}
 	case errors.Is(err, ErrRequestConflict):
 		return ProtocolFailure{Code: "conflict", Message: "The request ID was already used for a different operation"}
+	case errors.Is(err, ErrDuplicateSubscription):
+		return ProtocolFailure{Code: "conflict", Message: "This session already has a subscription to that track on the receive transport"}
 	case errors.Is(err, ErrUnavailable):
 		return ProtocolFailure{Code: "temporarily_unavailable", Message: "The RTC media service is not available", Retryable: true}
 	default:

@@ -18,6 +18,14 @@ export class MediaDurationMeter {
   readonly #tracks = new Map<string, string[]>();
   constructor(private readonly store: MediaUsageMetricsStore) {}
 
+  get pending(): boolean {
+    return this.#groups.size > 0;
+  }
+
+  get flushing(): boolean {
+    return [...this.#groups.values()].some((group) => group.recording !== undefined);
+  }
+
   start(trackId: string, participantId: string, trackType: string, at = Date.now()) {
     if (this.#tracks.has(trackId)) return;
     if (!Object.hasOwn(usageMediaDurationMetrics, trackType))

@@ -6,6 +6,19 @@ Broadcast, recording, playback, clip, mixer and scheduled-broadcast clients appl
 
 When forwarding an HTTP failure from your application backend, throw an error with a numeric HTTP `status` and `retryAfterMs` in milliseconds, parsed from `Retry-After`. The SDK exposes a sanitized `StreamingRequestError` in the snapshot: `status` and `retryAfterMs` are retained, but endpoint URLs, response bodies and original causes are not. Import `StreamingRequestError` to inspect those fields. Each client owns its cooldown; applications sharing an IP/project budget should additionally coordinate cooldown across their HTTP callbacks. REST polling is intentional; this change does not replace it with server push.
 
+## Room recovery
+
+Automatic recovery keeps the existing session and allows up to six attempts within
+25 seconds by default. While the browser reports it is offline, recovery waits
+for the online event without spending further attempts. The deadline continues
+to run while offline. Returning online within that deadline resumes recovery,
+subject to the server retaining the session and the network becoming reachable.
+
+React uses this browser SDK behavior without additional configuration. Leave,
+revoked access, expired credentials and terminal failures still cancel recovery.
+After terminal failure, request a newly authorized join instead of restarting
+the failed session automatically.
+
 ## Join and leave a room
 
 ```ts
