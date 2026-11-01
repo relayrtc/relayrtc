@@ -76,6 +76,33 @@ export function duringRecovery<Value>(
   });
 }
 
+async function waitUntilOnline(signal: AbortSignal): Promise<void> {
+  if (typeof window === "undefined" || typeof navigator === "undefined" || navigator.onLine) return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      window.removeEventListener("online", online);
+      signal.removeEventListener("abort", abort);
+    };
+    const online = (): void => {
+      if (!navigator.onLine) return;
+      cleanup();
+      resolve();
+    };
+    const abort = (): void => {
+      cleanup();
+      reject(
+        signal.reason instanceof RoomError
+          ? signal.reason
+          : new RoomError("NOT_CONNECTED", "Room recovery was cancelled"),
+      );
+    };
+    window.addEventListener("online", online);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    else online();
+  });
+}
+
 export async function recoverRoom(
   operation: (signal: AbortSignal) => Promise<void>,
   options: Required<RoomReconnectOptions>,
@@ -89,6 +116,7 @@ export async function recoverRoom(
   let failure = initialError;
   try {
     for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
+      await waitUntilOnline(controller.signal);
       const delayMs = Math.round(
         Math.min(options.maxDelayMs, options.initialDelayMs * 2 ** (attempt - 1)) *
           (0.75 + Math.random() * 0.25),
@@ -110,6 +138,7 @@ export async function recoverRoom(
         if (controller.signal.aborted) abort();
         else controller.signal.addEventListener("abort", abort, { once: true });
       });
+      await waitUntilOnline(controller.signal);
       try {
         await duringRecovery(operation(controller.signal), controller.signal);
         return attempt;
